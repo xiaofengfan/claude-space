@@ -11,6 +11,7 @@ export function GitPanel({ projectPath }: Props) {
   const [commitMsg, setCommitMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
+  const [isRepo, setIsRepo] = useState(true)
 
   const refresh = useCallback(async () => {
     if (!projectPath) return
@@ -21,6 +22,13 @@ export function GitPanel({ projectPath }: Props) {
         setStatus(s.output)
         const m = s.output.match(/^## (.+)/m)
         setBranch(m ? m[1].split('...')[0] : '')
+        setIsRepo(true)
+      } else if (s?.error?.includes('not a git repository')) {
+        setIsRepo(false)
+        setStatus('')
+        setBranch('')
+      } else {
+        setMsg(s?.error || '获取状态失败')
       }
       const l = await window.electronAPI.gitLog?.(projectPath)
       if (l?.success) setLog(l.output)
@@ -63,6 +71,27 @@ export function GitPanel({ projectPath }: Props) {
 
   if (!projectPath) {
     return <div className="git-panel"><p className="empty-hint">请先选择一个项目</p></div>
+  }
+
+  if (!isRepo) {
+    return (
+      <div className="git-panel">
+        <div className="git-header">
+          <span className="git-branch">⎇ 未初始化</span>
+          <button className="icon-btn" onClick={refresh} disabled={loading} title="刷新">🔄</button>
+        </div>
+        <div className="git-section" style={{ textAlign: 'center', padding: 24 }}>
+          <p style={{ color: '#888', marginBottom: 12 }}>此项目不是 Git 仓库</p>
+          <button className="btn-primary" onClick={async () => {
+            setLoading(true)
+            const r = await window.electronAPI.gitInit?.(projectPath)
+            setMsg(r?.success ? '✅ Git 仓库已初始化' : `❌ ${r?.error}`)
+            setLoading(false)
+            refresh()
+          }} disabled={loading}>🔧 初始化 Git 仓库</button>
+        </div>
+      </div>
+    )
   }
 
   const changedFiles = status.split('\n').filter(l => l.trim() && !l.startsWith('##')).length

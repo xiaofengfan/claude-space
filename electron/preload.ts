@@ -109,6 +109,7 @@ const electronAPI = {
   approvalHistory: () => ipcRenderer.invoke('approval:history'),
 
   // ── Git 操作 ────────────────────────────────────────
+  gitInit: (projectPath: string) => ipcRenderer.invoke('git:init', projectPath),
   gitStatus: (projectPath: string) => ipcRenderer.invoke('git:status', projectPath),
   gitLog: (projectPath: string) => ipcRenderer.invoke('git:log', projectPath),
   gitBranch: (projectPath: string) => ipcRenderer.invoke('git:branch', projectPath),

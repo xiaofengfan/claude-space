@@ -755,6 +755,13 @@ function registerIPC(): void {
     })
   }
 
+  ipcMain.handle('git:init', async (_e, projectPath: string) => {
+    // Check if git repo already exists
+    try {
+      if (fs.existsSync(path.join(projectPath, '.git'))) return { success: true, output: 'Already a git repository' }
+    } catch {}
+    return runGit(projectPath, ['init'])
+  })
   ipcMain.handle('git:status', async (_e, projectPath: string) => runGit(projectPath, ['status', '--porcelain', '--branch']))
   ipcMain.handle('git:log', async (_e, projectPath: string) => runGit(projectPath, ['log', '--oneline', '-20']))
   ipcMain.handle('git:branch', async (_e, projectPath: string) => runGit(projectPath, ['branch', '-a']))
