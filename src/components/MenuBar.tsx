@@ -18,11 +18,13 @@ export function MenuBar({
   onOpenProjectManager,
   theme,
   onThemeToggle,
+  onGitToggle,
 }: {
   menus: MenuGroup[]
   onOpenProjectManager: () => void
   theme: 'dark' | 'light'
   onThemeToggle: () => void
+  onGitToggle: () => void
 }) {
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -74,6 +76,7 @@ export function MenuBar({
       ))}
       {/* 窗口控制按钮 */}
       <div className="menubar-win-controls">
+        <button className="menubar-win-btn" onClick={onGitToggle} title="Git">⎇</button>
         <button className="menubar-win-btn" onClick={onThemeToggle} title={`主题: ${theme}`}>
           {theme === 'dark' ? '☀️' : '🌙'}
         </button>

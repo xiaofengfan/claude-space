@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { ProjectInfo } from '../types/project'
 
 interface FileNode {
@@ -6,6 +6,9 @@ interface FileNode {
 }
 
 const DOC_EXTENSIONS = ['.md', '.markdown', '.docx', '.xlsx', '.xls', '.pdf', '.txt', '.json', '.yaml', '.yml']
+
+// Git status map: path → status char (M=modified, A=added, ?=untracked, D=deleted, ' '=staged)
+type GitStatusMap = Record<string, string>
 
 export function ProjectBrowser({
   projects, activeProject, onSelect, onRefresh, mode,
@@ -16,14 +19,32 @@ export function ProjectBrowser({
 }) {
   const [fileTree, setFileTree] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
+  const [gitStatus, setGitStatus] = useState<GitStatusMap>({})
 
   useEffect(() => {
     if (activeProject?.path) {
       loadFileTree(activeProject.path)
+      loadGitStatus(activeProject.path)
     } else {
-      setFileTree([])
+      setFileTree([]); setGitStatus({})
     }
   }, [activeProject?.path])
+
+  async function loadGitStatus(projectPath: string) {
+    try {
+      const s = await window.electronAPI.gitStatus?.(projectPath)
+      if (s?.success) {
+        const map: GitStatusMap = {}
+        s.output.split('\n').forEach(line => {
+          if (line.startsWith('##')) return
+          const status = line.slice(0, 2).trim()
+          const file = line.slice(3).trim()
+          if (file) map[file] = status || 'M'
+        })
+        setGitStatus(map)
+      }
+    } catch {}
+  }
 
   async function loadFileTree(dirPath: string) {
     setLoading(true)
@@ -98,7 +119,7 @@ export function ProjectBrowser({
               <div className="project-file-tree-label">📄 项目文件</div>
               <div className="file-tree">
                 {fileTree.length > 0 ? (
-                  <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} />
+                  <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} gitStatus={gitStatus} projectPath={activeProject?.path} />
                 ) : (
                   <div className="empty-hint" style={{ fontSize: 11, padding: 8 }}>
                     {loading ? '加载中...' : '点击 🔄 加载文件树'}
@@ -129,7 +150,7 @@ export function ProjectBrowser({
         )}
         <div className="file-tree">
           {loading ? <div className="empty-hint">加载中...</div>
-            : fileTree.length > 0 ? <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} />
+            : fileTree.length > 0 ? <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} gitStatus={gitStatus} projectPath={activeProject?.path} />
             : <div className="empty-hint">{activeProject ? '加载文件树...' : '选择项目自动加载'}</div>}
         </div>
       </div>
@@ -161,26 +182,66 @@ export function ProjectBrowser({
 
 // ── File tree ──────────────────────────────────────
 
-function FileTreeNodes({ nodes, depth, onOpenFile }: { nodes: FileNode[]; depth: number; onOpenFile?: (path: string) => void }) {
-  return <div className="file-tree-nodes">{nodes.map(node => <FileTreeNode key={node.path} node={node} depth={depth} onOpenFile={onOpenFile} />)}</div>
+function FileTreeNodes({ nodes, depth, onOpenFile, gitStatus, projectPath }: {
+  nodes: FileNode[]; depth: number; onOpenFile?: (path: string) => void
+  gitStatus?: GitStatusMap; projectPath?: string
+}) {
+  return <div className="file-tree-nodes">{nodes.map(node =>
+    <FileTreeNode key={node.path} node={node} depth={depth} onOpenFile={onOpenFile} gitStatus={gitStatus} projectPath={projectPath} />
+  )}</div>
 }
 
-function FileTreeNode({ node, depth, onOpenFile }: { node: FileNode; depth: number; onOpenFile?: (path: string) => void }) {
+function FileTreeNode({ node, depth, onOpenFile, gitStatus, projectPath }: {
+  node: FileNode; depth: number; onOpenFile?: (path: string) => void
+  gitStatus?: GitStatusMap; projectPath?: string
+}) {
   const [expanded, setExpanded] = useState(depth < 2)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const icon = node.type === 'directory' ? (expanded ? '📂' : '📁') : getFileIcon(node.name)
+
+  // Git status for this file
+  const gitChar = gitStatus?.[node.name]
+  const gitBadge = gitChar === 'M' || gitChar === 'MM' ? '~' : gitChar === 'A' || gitChar === 'AM' ? '+' : gitChar === '?' || gitChar === '??' ? '?' : gitChar === 'D' ? '-' : ''
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    if (node.type === 'file' && projectPath) {
+      setCtxMenu({ x: e.clientX, y: e.clientY })
+    }
+  }, [node.type, projectPath])
 
   return (
     <div className="file-tree-item">
       <div className="file-tree-row" style={{ paddingLeft: depth * 14 + 8 }}
         onClick={() => {
+          setCtxMenu(null)
           if (node.type === 'directory') setExpanded(!expanded)
           else onOpenFile?.(node.path)
-        }}>
+        }}
+        onContextMenu={handleContextMenu}>
         <span className="file-tree-icon">{icon}</span>
         <span className="file-tree-name">{node.name}</span>
+        {gitBadge && <span className={`git-badge git-badge-${gitChar === '~' ? 'M' : gitChar === '+' ? 'A' : gitChar === '?' ? 'U' : 'D'}`}>{gitBadge}</span>}
       </div>
       {expanded && node.children && node.children.length > 0 && (
-        <FileTreeNodes nodes={node.children} depth={depth + 1} />
+        <FileTreeNodes nodes={node.children} depth={depth + 1} onOpenFile={onOpenFile} gitStatus={gitStatus} projectPath={projectPath} />
+      )}
+      {/* Context menu */}
+      {ctxMenu && (
+        <div className="git-ctx-overlay" onClick={() => setCtxMenu(null)}>
+          <div className="git-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+            <button onClick={async () => {
+              setCtxMenu(null)
+              const r = await window.electronAPI.gitDiff?.({ projectPath: projectPath!, file: node.name })
+              alert(r?.success ? r.output.slice(0, 2000) : '获取差异失败')
+            }}>📊 查看差异</button>
+            <button onClick={async () => {
+              setCtxMenu(null)
+              await window.electronAPI.gitAdd?.({ projectPath: projectPath!, files: [node.name] })
+              window.location.reload()
+            }}>📦 暂存此文件</button>
+          </div>
+        </div>
       )}
     </div>
   )

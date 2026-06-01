@@ -118,6 +118,12 @@ const electronAPI = {
   gitCommit: (opts: { projectPath: string; message: string }) => ipcRenderer.invoke('git:commit', opts),
   gitAdd: (opts: { projectPath: string; files: string[] }) => ipcRenderer.invoke('git:add', opts),
   gitConfig: (projectPath: string) => ipcRenderer.invoke('git:config', projectPath),
+  gitConfigSet: (opts: { projectPath: string; key: string; value: string }) => ipcRenderer.invoke('git:config-set', opts),
+  gitRemote: (projectPath: string) => ipcRenderer.invoke('git:remote', projectPath),
+  gitRemoteSet: (opts: { projectPath: string; name: string; url: string }) => ipcRenderer.invoke('git:remote-set', opts),
+  gitDiff: (opts: { projectPath: string; file?: string }) => ipcRenderer.invoke('git:diff', opts),
+  gitShow: (opts: { projectPath: string; file: string }) => ipcRenderer.invoke('git:show', opts),
+  gitDiffStaged: (projectPath: string) => ipcRenderer.invoke('git:diff-staged', projectPath),
 
   // ── 终端管理 ────────────────────────────────────────
 

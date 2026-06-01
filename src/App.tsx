@@ -17,6 +17,7 @@ import { StatusBar } from './components/StatusBar'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { TerminalPanel } from './components/TerminalPanel'
 import { GitPanel } from './components/GitPanel'
+import { GitSlidePanel } from './components/GitSlidePanel'
 import { ApprovalDialog } from './components/ApprovalDialog'
 import { useSplitter } from './hooks/useSplitter'
 import { useTaskSync, ApprovalRequest } from './hooks/useTaskSync'
@@ -44,6 +45,7 @@ const DEFAULT_TEAM = [
   const [showSettings, setShowSettings] = useState(false)
   const [showProjectManager, setShowProjectManager] = useState(false)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
+  const [showGitPanel, setShowGitPanel] = useState(false)
 
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [activeProject, setActiveProject] = useState<ProjectInfo | null>(null)
@@ -334,7 +336,9 @@ const DEFAULT_TEAM = [
 
   return (
     <div className="app">
-      <MenuBar menus={menus} onOpenProjectManager={openProjectManager} theme={theme} onThemeToggle={() => setThemeState(t => t === 'dark' ? 'light' : 'dark')} />
+      <MenuBar menus={menus} onOpenProjectManager={openProjectManager} theme={theme}
+        onThemeToggle={() => setThemeState(t => t === 'dark' ? 'light' : 'dark')}
+        onGitToggle={() => activeProject && setShowGitPanel(v => !v)} />
 
       {noProject ? (
         <WelcomePage
@@ -488,6 +492,9 @@ const DEFAULT_TEAM = [
         onApprove={handleApprove}
         onDismiss={handleDismissApproval}
       />
+      {showGitPanel && activeProject && (
+        <GitSlidePanel projectPath={activeProject.path} onClose={() => setShowGitPanel(false)} />
+      )}
       {pendingProject && activeProject && (
         <ProjectSwitchDialog
           currentProject={activeProject}

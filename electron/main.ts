@@ -781,6 +781,17 @@ function registerIPC(): void {
     }
     return cfg
   })
+  ipcMain.handle('git:config-set', async (_e, opts: { projectPath: string; key: string; value: string }) =>
+    runGit(opts.projectPath, ['config', opts.key, opts.value]))
+  ipcMain.handle('git:remote', async (_e, projectPath: string) => runGit(projectPath, ['remote', '-v']))
+  ipcMain.handle('git:remote-set', async (_e, opts: { projectPath: string; name: string; url: string }) =>
+    runGit(opts.projectPath, ['remote', 'add', opts.name, opts.url]))
+  ipcMain.handle('git:diff', async (_e, opts: { projectPath: string; file?: string }) =>
+    runGit(opts.projectPath, opts.file ? ['diff', opts.file] : ['diff', '--stat']))
+  ipcMain.handle('git:show', async (_e, opts: { projectPath: string; file: string }) =>
+    runGit(opts.projectPath, ['show', 'HEAD:' + opts.file]))
+  ipcMain.handle('git:diff-staged', async (_e, projectPath: string) =>
+    runGit(projectPath, ['diff', '--staged', '--stat']))
 
   // ── 终端管理 ────────────────────────────────────────────
 
