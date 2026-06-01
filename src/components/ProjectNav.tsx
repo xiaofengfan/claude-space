@@ -4,10 +4,12 @@ export function ProjectNav({
   project,
   leftView,
   onLeftViewChange,
+  onGitClick,
 }: {
   project: ProjectInfo | null
   leftView: string
   onLeftViewChange: (view: string) => void
+  onGitClick?: () => void
 }) {
   if (!project) return null
 
@@ -28,7 +30,7 @@ export function ProjectNav({
         </div>
       </div>
       <div className="project-nav-actions">
-        <button className="nav-action-btn" disabled title="即将推出">🔀 Git</button>
+        <button className="nav-action-btn" onClick={onGitClick} title="Git 版本管理">⎇ Git</button>
         <button className="nav-action-btn" disabled title="即将推出">▶ 运行</button>
         <button className="nav-action-btn" disabled title="即将推出">🐛 调试</button>
       </div>

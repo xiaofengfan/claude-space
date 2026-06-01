@@ -12,10 +12,10 @@ import { TerminalProcess } from './terminalProcess'
 
 // ── 全局状态 ────────────────────────────────────────────
 
-let mainWindow: BrowserWindow | null = null
+let mainWindow: BrowserWindow | null = null  // 首个窗口，兼容旧代码引用
 let claudeProcess: ClaudeProcess | null = null
 let terminalProcess: TerminalProcess | null = null
-const windows: BrowserWindow[] = []
+const windows: BrowserWindow[] = []  // 所有窗口追踪
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || 'E:/claudespace'
 const CLAUDE_HOME = path.join(os.homedir(), '.claude')
@@ -46,28 +46,21 @@ function createWindow(projectPath?: string): void {
 
   win.on('ready-to-show', () => win.show())
 
-  win.on('close', () => {
-    // Remove from tracking list
+  // 窗口关闭 — 仅从追踪列表移除，不干扰其他窗口
+  win.on('closed', () => {
     const idx = windows.indexOf(win)
     if (idx >= 0) windows.splice(idx, 1)
-    // Only kill claude if this was the main window
     if (win === mainWindow) {
+      mainWindow = windows.length > 0 ? windows[0] : null
+    }
+    // 所有窗口关闭 → 退出应用
+    if (windows.length === 0) {
       claudeProcess?.kill()
-      mainWindow = null
+      app.quit()
     }
   })
 
-  win.on('closed', () => {
-    // Ensure cleanup
-    const idx = windows.indexOf(win)
-    if (idx >= 0) windows.splice(idx, 1)
-    if (win === mainWindow) mainWindow = null
-  })
-
-  // Track in windows list
   windows.push(win)
-
-  // First window becomes mainWindow
   if (!mainWindow) mainWindow = win
 
   const url = isDev
@@ -78,7 +71,7 @@ function createWindow(projectPath?: string): void {
     ? `${url}?project=${encodeURIComponent(projectPath)}`
     : url
 
-  mainWindow.loadURL(fullUrl)
+  win.loadURL(fullUrl)
 }
 
 // ── 菜单 ────────────────────────────────────────────────
@@ -894,17 +887,22 @@ function registerIPC(): void {
     }
   })
 
-  // 窗口控制
-  ipcMain.handle('win:minimize', () => mainWindow?.minimize())
-  ipcMain.handle('win:maximize', () => {
-    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
-    else mainWindow?.maximize()
+  // 窗口控制 — 使用 event.sender 定位正确的窗口
+  ipcMain.handle('win:minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
   })
-  ipcMain.handle('win:close', () => {
-    claudeProcess?.kill()
-    mainWindow?.close()
+  ipcMain.handle('win:maximize', (event) => {
+    const w = BrowserWindow.fromWebContents(event.sender)
+    if (w?.isMaximized()) w.unmaximize()
+    else w?.maximize()
   })
-  ipcMain.handle('win:is-maximized', () => mainWindow?.isMaximized())
+  ipcMain.handle('win:close', (event) => {
+    const w = BrowserWindow.fromWebContents(event.sender)
+    w?.close()
+  })
+  ipcMain.handle('win:is-maximized', (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+  })
 }
 
 // ── 应用生命周期 ────────────────────────────────────────
@@ -923,14 +921,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   claudeProcess?.kill()
-  if (process.platform !== 'darwin') app.quit()
+  app.quit()
 })
 
 app.on('before-quit', () => {
   claudeProcess?.kill()
-  // Close all tracked windows
+  // 强制关闭所有窗口（保底清理）
   for (const w of [...windows]) {
-    try { if (!w.isDestroyed()) w.close() } catch {}
+    try { if (!w.isDestroyed()) w.destroy() } catch {}
   }
   windows.length = 0
 })

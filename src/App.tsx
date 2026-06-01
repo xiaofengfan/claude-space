@@ -351,7 +351,7 @@ const DEFAULT_TEAM = [
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={setLeftView} />
+          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={setLeftView} onGitClick={() => setShowGitPanel(v => !v)} />
           <div className="app-body">
             <aside className="sidebar left-sidebar" style={{ width: leftSplitter.size }}>
               <div className="sidebar-tabs">
