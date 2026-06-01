@@ -23,6 +23,19 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
 
   useEffect(() => {
     const unsub = window.electronAPI.onClaudeEvent((event: any) => {
+      // Handle tool_result → mark tool tasks as done
+      if (event.type === 'user' && event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === 'tool_result' && block.tool_use_id) {
+            const updated = tasksRef.current.map(t =>
+              t.toolCallId === block.tool_use_id ? { ...t, status: 'done' as const, updatedAt: new Date().toISOString() } : t
+            )
+            onTasksChange(updated)
+          }
+        }
+        return
+      }
+
       const blocks = event.message?.content
       if (!Array.isArray(blocks)) return
 
@@ -49,13 +62,6 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
           if (!tasksRef.current.some(t => t.toolCallId === toolId)) {
             onTasksChange([...tasksRef.current, toolTask])
           }
-          // Mark tool task as done when result arrives
-          setTimeout(() => {
-            const updated = tasksRef.current.map(t =>
-              t.toolCallId === toolId ? { ...t, status: 'done' as const, updatedAt: new Date().toISOString() } : t
-            )
-            onTasksChange(updated)
-          }, 30000) // Auto-complete tool tasks after 30s if no result event
         }
 
         // ── TaskCreate → 创建 TaskItem ──

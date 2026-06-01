@@ -11,6 +11,7 @@ interface MonitorEvent {
 
 export function TaskMonitor({
   embedded,
+  events: externalEvents,
 }: {
   visible?: boolean
   onClose?: () => void
@@ -20,8 +21,24 @@ export function TaskMonitor({
   const [monitorEvents, setMonitorEvents] = useState<MonitorEvent[]>([])
   const [stats, setStats] = useState({ total: 0, completed: 0, running: 0 })
 
-  // 监听 Claude 事件流 — 始终监听
+  // 通过 props 接收事件，不使用独立订阅（避免重复监听）
   useEffect(() => {
+    if (externalEvents && externalEvents.length > 0) {
+      setMonitorEvents(prev => {
+        const next = [...externalEvents, ...prev].slice(0, 50)
+        setStats({
+          total: next.length,
+          completed: next.filter(e => e.status === 'completed').length,
+          running: next.filter(e => e.status === 'running').length,
+        })
+        return next
+      })
+    }
+  }, [externalEvents])
+
+  // Fallback: 如果没有外部事件源，保持独立监听（兼容旧调用）
+  useEffect(() => {
+    if (externalEvents !== undefined) return // Already handled above
     const unsub = window.electronAPI.onClaudeEvent((event: any) => {
       if (event.type === 'assistant' && event.message?.content) {
         for (const block of event.message.content) {

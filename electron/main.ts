@@ -15,6 +15,7 @@ import { TerminalProcess } from './terminalProcess'
 let mainWindow: BrowserWindow | null = null
 let claudeProcess: ClaudeProcess | null = null
 let terminalProcess: TerminalProcess | null = null
+const windows: BrowserWindow[] = []
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || 'E:/claudespace'
 const CLAUDE_HOME = path.join(os.homedir(), '.claude')
@@ -26,7 +27,7 @@ const isDev = !app.isPackaged
 // ── 窗口创建 ────────────────────────────────────────────
 
 function createWindow(projectPath?: string): void {
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
@@ -43,13 +44,31 @@ function createWindow(projectPath?: string): void {
     backgroundColor: '#1a1a2e',
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+  win.on('ready-to-show', () => win.show())
+
+  win.on('close', () => {
+    // Remove from tracking list
+    const idx = windows.indexOf(win)
+    if (idx >= 0) windows.splice(idx, 1)
+    // Only kill claude if this was the main window
+    if (win === mainWindow) {
+      claudeProcess?.kill()
+      mainWindow = null
+    }
   })
 
-  mainWindow.on('close', () => {
-    claudeProcess?.kill()
+  win.on('closed', () => {
+    // Ensure cleanup
+    const idx = windows.indexOf(win)
+    if (idx >= 0) windows.splice(idx, 1)
+    if (win === mainWindow) mainWindow = null
   })
+
+  // Track in windows list
+  windows.push(win)
+
+  // First window becomes mainWindow
+  if (!mainWindow) mainWindow = win
 
   const url = isDev
     ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
@@ -904,9 +923,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   claudeProcess?.kill()
-  app.quit()
+  if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
   claudeProcess?.kill()
+  // Close all tracked windows
+  for (const w of [...windows]) {
+    try { if (!w.isDestroyed()) w.close() } catch {}
+  }
+  windows.length = 0
 })

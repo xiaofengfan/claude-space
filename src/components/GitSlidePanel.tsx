@@ -24,10 +24,10 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
     setLoading(true)
     try {
       const [s, l, r, c] = await Promise.all([
-        window.electronAPI.gitStatus?.(projectPath),
-        window.electronAPI.gitLog?.(projectPath),
-        window.electronAPI.gitRemote?.(projectPath),
-        window.electronAPI.gitConfig?.(projectPath),
+        window.electronAPI.gitStatus(projectPath),
+        window.electronAPI.gitLog(projectPath),
+        window.electronAPI.gitRemote(projectPath),
+        window.electronAPI.gitConfig(projectPath),
       ])
       if (s?.success) { setStatus(s.output); const m = s.output.match(/^## (.+)/m); setBranch(m?.[1]?.split('...')[0] || '') }
       if (l?.success) setLog(l.output)
@@ -100,7 +100,7 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
                     placeholder="https://github.com/user/repo.git" />
                   <button className="git-btn" onClick={async () => {
                     if (!remoteUrl || !projectPath) return
-                    const r = await window.electronAPI.gitRemoteSet?.({ projectPath, name: 'origin', url: remoteUrl })
+                    const r = await window.electronAPI.gitRemoteSet({ projectPath, name: 'origin', url: remoteUrl })
                     setMsg(r?.success ? '✅ 已设置' : `❌ ${r?.error}`)
                     load()
                   }}>设置</button>
@@ -128,9 +128,9 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
     </div>
   )
 
-  async function commit() { if (!projectPath || !commitMsg) return; setLoading(true); const r = await window.electronAPI.gitCommit?.({ projectPath, message: commitMsg }); setMsg(r?.success ? '✅ 已提交' : `❌ ${r?.error}`); setCommitMsg(''); setLoading(false); load() }
-  async function stageAll() { if (!projectPath) return; setLoading(true); await window.electronAPI.gitAdd?.({ projectPath, files: ['.'] }); setMsg('✅ 已暂存'); setLoading(false); load() }
-  async function doPull() { if (!projectPath) return; setLoading(true); const r = await window.electronAPI.gitPull?.(projectPath); setMsg(r?.success ? '✅ 已拉取' : `❌ ${r?.error}`); setLoading(false); load() }
-  async function doPush() { if (!projectPath) return; setLoading(true); const r = await window.electronAPI.gitPush?.(projectPath); setMsg(r?.success ? '✅ 已推送' : `❌ ${r?.error}`); setLoading(false); load() }
-  async function saveConfig(key: string, value: string) { if (!projectPath || !value) return; await window.electronAPI.gitConfigSet?.({ projectPath, key, value }); load() }
+  async function commit() { if (!projectPath || !commitMsg) return; setLoading(true); const r = await window.electronAPI.gitCommit({ projectPath, message: commitMsg }); setMsg(r?.success ? '✅ 已提交' : `❌ ${r?.error}`); setCommitMsg(''); setLoading(false); load() }
+  async function stageAll() { if (!projectPath) return; setLoading(true); await window.electronAPI.gitAdd({ projectPath, files: ['.'] }); setMsg('✅ 已暂存'); setLoading(false); load() }
+  async function doPull() { if (!projectPath) return; setLoading(true); const r = await window.electronAPI.gitPull(projectPath); setMsg(r?.success ? '✅ 已拉取' : `❌ ${r?.error}`); setLoading(false); load() }
+  async function doPush() { if (!projectPath) return; setLoading(true); const r = await window.electronAPI.gitPush(projectPath); setMsg(r?.success ? '✅ 已推送' : `❌ ${r?.error}`); setLoading(false); load() }
+  async function saveConfig(key: string, value: string) { if (!projectPath || !value) return; await window.electronAPI.gitConfigSet({ projectPath, key, value }); load() }
 }
