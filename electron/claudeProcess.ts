@@ -1,0 +1,160 @@
+import { ChildProcess, spawn, execSync } from 'child_process'
+import { EventEmitter } from 'events'
+
+// Resolve claude binary path once at module level
+function resolveClaudePath(): string {
+  try {
+    if (process.platform === 'win32') {
+      const out = execSync('where claude.cmd', { timeout: 5000, windowsHide: true })
+      const lines = out.toString().trim().split('\n')
+      return lines[0]?.trim() || 'claude.cmd'
+    }
+    return 'claude'
+  } catch {
+    return process.platform === 'win32' ? 'claude.cmd' : 'claude'
+  }
+}
+const CLAUDE_BIN = resolveClaudePath()
+
+export interface ClaudeProcessOptions {
+  cwd?: string; sessionId?: string; model?: string; apiKey?: string; baseUrl?: string
+}
+
+export interface ClaudeEvent {
+  type: string; subtype?: string; message?: any; result?: string
+  session_id?: string; total_cost_usd?: number; duration_ms?: number
+  usage?: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
+  [key: string]: any
+}
+
+export class ClaudeProcess extends EventEmitter {
+  private proc: ChildProcess | null = null
+  private buffer = ''
+  private options: ClaudeProcessOptions
+  private _sessionId: string | undefined
+  private _isRunning = false
+  private _errorMsg = ''
+
+  constructor(options: ClaudeProcessOptions = {}) { super(); this.options = options }
+
+  get isRunning() { return this._isRunning }
+  get sessionId() { return this._sessionId }
+  get lastError() { return this._errorMsg }
+
+  /** Update sessionId between sends (call from main.ts when user switches sessions) */
+  setSessionId(sessionId: string | undefined): void {
+    this.options.sessionId = sessionId
+    if (sessionId !== this._sessionId) {
+      this._sessionId = undefined
+    }
+  }
+
+  /** Send a prompt to Claude (starts new process if needed) */
+  sendPrompt(content: string): void {
+    this.kill()
+
+    const args = [
+      '-p', content,
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+    ]
+
+    const resumeId = this.options.sessionId || this._sessionId
+    if (resumeId) {
+      args.push('--resume', resumeId)
+    }
+
+    const env: Record<string, string> = { ...(process.env as Record<string, string>) }
+    if (this.options.apiKey) env.ANTHROPIC_API_KEY = this.options.apiKey
+    if (this.options.baseUrl) env.ANTHROPIC_BASE_URL = this.options.baseUrl
+    if (this.options.model) env.ANTHROPIC_MODEL = this.options.model
+    env.CLAUDE_CODE_NO_COLOR = '1'
+
+    this._errorMsg = ''
+    this.buffer = ''
+    this._isRunning = true
+    this.emit('status', { running: true, connected: false, error: '' })
+
+    const cwd = this.options.cwd || process.cwd()
+
+    try {
+      console.log('[claudeProcess] spawning:', CLAUDE_BIN, args.slice(0, 4).join(' '), '...')
+      this.proc = spawn(CLAUDE_BIN, args, {
+        cwd, env, stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+      console.log('[claudeProcess] spawned, pid:', this.proc.pid)
+
+      this.proc.stdout?.on('data', (chunk: Buffer) => {
+        this.buffer += chunk.toString('utf-8')
+        this.processBuffer()
+      })
+
+      this.proc.stderr?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString('utf-8').trim()
+        if (text && !text.startsWith('{')) {
+          this._errorMsg += text + '\n'
+          this.emit('stderr', text)
+          this.emit('status', { running: true, connected: false, error: text })
+        }
+      })
+
+      this.proc.on('close', (code) => {
+        console.log('[claudeProcess] process closed, exit code:', code)
+        this._isRunning = false
+        this.proc = null
+        this.emit('close', code)
+        this.emit('status', { running: false, connected: false, error: code ? `exit code ${code}` : '' })
+      })
+
+      this.proc.on('error', (err) => {
+        console.log('[claudeProcess] process error:', err.message)
+        this._isRunning = false
+        this._errorMsg = err.message
+        this.proc = null
+        this.emit('close', null)
+        this.emit('status', { running: false, connected: false, error: err.message })
+      })
+    } catch (err: any) {
+      console.log('[claudeProcess] spawn exception:', err.message)
+      this._isRunning = false
+      this._errorMsg = err.message
+      this.emit('close', null)
+      this.emit('status', { running: false, connected: false, error: err.message })
+    }
+  }
+
+  kill(): void {
+    if (this.proc) {
+      try { this.proc.kill('SIGTERM') } catch {}
+      setTimeout(() => { try { this.proc?.kill('SIGKILL') } catch {} }, 2000)
+      this.proc = null
+    }
+    this._isRunning = false
+  }
+
+  /** Alias for kill() — for backward compatibility */
+  stop(): void { this.kill() }
+
+  private processBuffer(): void {
+    const lines = this.buffer.split('\n')
+    this.buffer = lines.pop() || ''
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const event: ClaudeEvent = JSON.parse(line)
+        if (event.type === 'system' && event.subtype === 'init') {
+          console.log('[claudeProcess] system/init, model:', event.model, 'session:', event.session_id?.slice(0, 12))
+          this._sessionId = event.session_id
+          this._errorMsg = ''
+          this.emit('status', { running: true, connected: true, error: '', sessionId: event.session_id })
+        }
+        if (event.type === 'assistant' || event.type === 'result') {
+          console.log('[claudeProcess] event:', event.type, event.subtype || '')
+        }
+        this.emit('event', event)
+      } catch {}
+    }
+  }
+}

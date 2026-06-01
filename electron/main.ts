@@ -1,0 +1,894 @@
+/**
+ * Electron 主进程 — 窗口管理、IPC 路由、Claude 进程生命周期。
+ */
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell } from 'electron'
+import path from 'path'
+import fs from 'fs'
+import os from 'os'
+import { spawn } from 'child_process'
+import { ClaudeProcess, ClaudeEvent } from './claudeProcess'
+import { detectCli, testApiEndpoint, runHealthCheck, getEnvConfig } from './connectionService'
+import { TerminalProcess } from './terminalProcess'
+
+// ── 全局状态 ────────────────────────────────────────────
+
+let mainWindow: BrowserWindow | null = null
+let claudeProcess: ClaudeProcess | null = null
+let terminalProcess: TerminalProcess | null = null
+
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || 'E:/claudespace'
+const CLAUDE_HOME = path.join(os.homedir(), '.claude')
+const TASKS_FILE = path.join(os.homedir(), '.claude', 'claude-space-tasks.json')
+const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'claude-space-settings.json')
+
+const isDev = !app.isPackaged
+
+// ── 窗口创建 ────────────────────────────────────────────
+
+function createWindow(projectPath?: string): void {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 900,
+    minHeight: 600,
+    frame: false,
+    titleBarStyle: 'hidden',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+    show: false,
+    backgroundColor: '#1a1a2e',
+  })
+
+  mainWindow.on('ready-to-show', () => {
+    mainWindow?.show()
+  })
+
+  mainWindow.on('close', () => {
+    claudeProcess?.kill()
+  })
+
+  const url = isDev
+    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
+    : `file://${path.join(__dirname, '../dist/index.html')}`
+
+  const fullUrl = projectPath
+    ? `${url}?project=${encodeURIComponent(projectPath)}`
+    : url
+
+  mainWindow.loadURL(fullUrl)
+}
+
+// ── 菜单 ────────────────────────────────────────────────
+
+function applyMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: '文件',
+      submenu: [
+        { label: '新建会话', click: () => mainWindow?.webContents.send('menu:new-session') },
+        { type: 'separator' },
+        { label: '打开项目文件夹...', click: () => dialog.showOpenDialog({ properties: ['openDirectory'] }).then(r => {
+          if (!r.canceled && r.filePaths[0]) {
+            mainWindow?.webContents.send('menu:add-project', r.filePaths[0])
+          }
+        })},
+        { type: 'separator' },
+        { role: 'quit', label: '退出' },
+      ],
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload', label: '刷新' },
+        { role: 'toggleDevTools', label: '开发者工具' },
+        { type: 'separator' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { role: 'resetZoom', label: '重置缩放' },
+      ],
+    },
+  ]
+
+  const menu = Menu.buildFromTemplate(template)
+  Menu.setApplicationMenu(menu)
+}
+
+// ── 项目扫描 ────────────────────────────────────────────
+
+interface ProjectInfo {
+  name: string
+  path: string
+  description: string
+  techStack: string
+  sessions: number
+  modifiedAt: string
+}
+
+function scanProjects(rootPath?: string): ProjectInfo[] {
+  const root = rootPath || WORKSPACE_ROOT
+  const projects: ProjectInfo[] = []
+
+  try {
+    const entries = fs.readdirSync(root, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+
+      const projectPath = path.join(root, entry.name)
+      const claudeMdPath = path.join(projectPath, 'CLAUDE.md')
+      let description = ''
+      let techStack = ''
+
+      // 读取 CLAUDE.md 获取项目信息
+      if (fs.existsSync(claudeMdPath)) {
+        const content = fs.readFileSync(claudeMdPath, 'utf-8')
+        const lines = content.split('\n')
+        // 提取第一行作为描述
+        for (const line of lines) {
+          if (line.startsWith('## 项目定位') || line.startsWith('## Project Overview')) {
+            const idx = lines.indexOf(line) + 1
+            if (idx < lines.length && lines[idx].trim()) {
+              description = lines[idx].trim()
+            }
+          }
+          if (line.startsWith('## 技术栈') || line.includes('技术栈') || line.includes('Tech Stack')) {
+            const idx = lines.indexOf(line) + 1
+            for (let i = idx; i < Math.min(idx + 5, lines.length); i++) {
+              const t = lines[i].trim()
+              if (t && !t.startsWith('##') && !t.startsWith('|')) {
+                techStack += (techStack ? ', ' : '') + t.replace(/^-\s*/, '')
+              }
+            }
+          }
+        }
+      }
+
+      // 读取 package.json 或 pom.xml 判断技术栈
+      if (!techStack) {
+        if (fs.existsSync(path.join(projectPath, 'package.json'))) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(path.join(projectPath, 'package.json'), 'utf-8'))
+            const deps = { ...pkg.dependencies, ...pkg.devDependencies }
+            const keys = Object.keys(deps || {})
+            if (keys.includes('electron')) techStack = 'Electron'
+            else if (keys.includes('vue')) techStack = 'Vue'
+            else if (keys.includes('react')) techStack = 'React'
+            else if (keys.includes('next')) techStack = 'Next.js'
+            else techStack = 'Node.js'
+          } catch {}
+        }
+        if (!techStack && fs.existsSync(path.join(projectPath, 'pom.xml'))) {
+          techStack = 'Java/Maven'
+        }
+        if (!techStack && fs.existsSync(path.join(projectPath, 'requirements.txt'))) {
+          techStack = 'Python'
+        }
+        if (!techStack && fs.existsSync(path.join(projectPath, 'backend'))) {
+          techStack = 'Fullstack'
+        }
+      }
+
+      // 统计活跃会话
+      let sessions = 0
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+      if (fs.existsSync(sessionDir)) {
+        try {
+          sessions = fs.readdirSync(sessionDir).filter(f => f.endsWith('.jsonl')).length
+        } catch {}
+      }
+
+      // 最近修改时间
+      const stat = fs.statSync(projectPath)
+      const modifiedAt = stat.mtime.toISOString()
+
+      projects.push({
+        name: entry.name,
+        path: projectPath,
+        description: description || `${techStack || '未知'} 项目`,
+        techStack: techStack || '未知',
+        sessions,
+        modifiedAt,
+      })
+    }
+  } catch (err) {
+    console.error('扫描项目失败:', err)
+  }
+
+  // 按修改时间降序
+  projects.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime())
+  return projects
+}
+
+// ── 目录扫描 ────────────────────────────────────────────
+
+function scanDirectory(dirPath: string, maxDepth: number, depth: number = 0): any[] {
+  if (depth > maxDepth) return []
+  const result: any[] = []
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'target' && e.name !== '.git' && e.name !== 'dist' && e.name !== '__pycache__')
+    const files = entries.filter(e => e.isFile() && !e.name.startsWith('.'))
+
+    for (const d of dirs) {
+      const children = scanDirectory(path.join(dirPath, d.name), maxDepth, depth + 1)
+      result.push({ name: d.name, path: path.join(dirPath, d.name), type: 'directory', children })
+    }
+    for (const f of files) {
+      result.push({ name: f.name, path: path.join(dirPath, f.name), type: 'file' })
+    }
+  } catch {}
+  return result
+}
+
+// ── 路径编码 (Claude Code Windows: :/ → --, / → -) ──────
+function encodeClaudePath(p: string): string {
+  return p.replace(':\\', '--').replace(':/', '--').replace(/\//g, '-').replace(/\\/g, '-')
+}
+
+// ── 会话管理 ────────────────────────────────────────────
+
+function listSessions(projectPath?: string): any[] {
+  const sessions: any[] = []
+  try {
+    if (projectPath) {
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+      if (fs.existsSync(sessionDir)) {
+        for (const file of fs.readdirSync(sessionDir)) {
+          if (!file.endsWith('.jsonl')) continue
+          const sessionId = file.replace('.jsonl', '')
+          const stat = fs.statSync(path.join(sessionDir, file))
+          sessions.push({
+            sessionId,
+            projectPath,
+            modifiedAt: stat.mtime.toISOString(),
+            size: stat.size,
+          })
+        }
+      }
+    } else {
+      // 扫描所有项目会话
+      const projectsDir = path.join(CLAUDE_HOME, 'projects')
+      if (fs.existsSync(projectsDir)) {
+        for (const encoded of fs.readdirSync(projectsDir)) {
+          const decoded = decodeURIComponent(encoded)
+          const sessionDir = path.join(projectsDir, encoded)
+          if (!fs.statSync(sessionDir).isDirectory()) continue
+          for (const file of fs.readdirSync(sessionDir)) {
+            if (!file.endsWith('.jsonl')) continue
+            const sessionId = file.replace('.jsonl', '')
+            sessions.push({
+              sessionId,
+              projectPath: decoded,
+              modifiedAt: fs.statSync(path.join(sessionDir, file)).mtime.toISOString(),
+            })
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('列出会话失败:', err)
+  }
+
+  sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime())
+  return sessions
+}
+
+// ── 任务管理 ────────────────────────────────────────────
+
+function loadTasks(): any[] {
+  try {
+    if (fs.existsSync(TASKS_FILE)) {
+      return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf-8'))
+    }
+  } catch {}
+  return []
+}
+
+function saveTasks(tasks: any[]): void {
+  const dir = path.dirname(TASKS_FILE)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2), 'utf-8')
+}
+
+// ── 设置管理 ────────────────────────────────────────────
+
+interface ModelConfig {
+  id: string; name: string; provider: string; apiKey: string
+  baseUrl: string; model: string; apiKeySource: 'env' | 'user'
+}
+interface AppSettings {
+  version: number; activeModelId: string | null; models: ModelConfig[]
+}
+interface ModelConfigSafe {
+  id: string; name: string; provider: string; apiKeyHint: string
+  baseUrl: string; model: string; apiKeySource: 'env' | 'user'
+}
+interface AppSettingsSafe {
+  version: number; activeModelId: string | null; models: ModelConfigSafe[]
+}
+
+function loadSettings(): AppSettings | null {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'))
+    }
+  } catch (err) { console.error('加载设置失败:', err) }
+  return null
+}
+
+function saveSettings(settings: AppSettings): void {
+  const dir = path.dirname(SETTINGS_FILE)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8')
+}
+
+function maskApiKey(key: string): string {
+  if (!key || key.length < 8) return '****'
+  return key.slice(0, 3) + '****' + key.slice(-4)
+}
+
+// ── IPC 注册 ────────────────────────────────────────────
+
+function registerIPC(): void {
+  // Claude 会话控制
+  ipcMain.handle('claude:status', async () => {
+    return {
+      running: claudeProcess?.isRunning || false,
+      sessionId: claudeProcess?.sessionId || null,
+      error: claudeProcess?.lastError || '',
+    }
+  })
+
+  ipcMain.handle('claude:send', async (_event, opts: {
+    content: string; projectPath?: string; sessionId?: string; modelId?: string;
+  }) => {
+    // 从设置中解析模型配置
+    let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
+    let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
+    let model: string | undefined = process.env.ANTHROPIC_MODEL
+
+    if (opts.modelId) {
+      const raw = loadSettings()
+      const cfg = raw?.models.find(m => m.id === opts.modelId)
+      if (cfg) {
+        apiKey = cfg.apiKey || apiKey
+        baseUrl = cfg.baseUrl || baseUrl
+        model = cfg.model || model
+      }
+    }
+
+    if (!claudeProcess) {
+      claudeProcess = new ClaudeProcess({
+        cwd: opts.projectPath,
+        sessionId: opts.sessionId,
+        model,
+        apiKey,
+        baseUrl,
+      })
+
+      claudeProcess.on('event', (event: ClaudeEvent) => {
+        mainWindow?.webContents.send('claude:event', event)
+      })
+      claudeProcess.on('status', (s: any) => {
+        mainWindow?.webContents.send('claude:status-update', s)
+      })
+      claudeProcess.on('stderr', (text: string) => {
+        mainWindow?.webContents.send('claude:stderr', text)
+      })
+      claudeProcess.on('close', (code: number | null) => {
+        mainWindow?.webContents.send('claude:close', code)
+        claudeProcess = null
+      })
+    } else if (opts.sessionId !== undefined) {
+      // Session changed between sends — update so sendPrompt() uses new --resume
+      claudeProcess.setSessionId(opts.sessionId)
+    } else {
+      // New session (opts.sessionId is undefined) — clear any old session ID
+      claudeProcess.setSessionId(undefined)
+    }
+
+    console.log('[main] claude:send contentLen:', opts.content.length, 'modelId:', opts.modelId, 'sessionId:', opts.sessionId)
+    claudeProcess.sendPrompt(opts.content)
+    return { success: true }
+  })
+
+  ipcMain.handle('claude:stop', async () => {
+    claudeProcess?.kill()
+    claudeProcess = null
+    return { success: true }
+  })
+
+  // 项目扫描
+  ipcMain.handle('project:scan', async (_event, rootPath?: string) => {
+    return scanProjects(rootPath)
+  })
+
+  ipcMain.handle('project:new', async (_event, name?: string) => {
+    const result = await dialog.showSaveDialog({
+      title: '新建项目目录',
+      defaultPath: name ? path.join(WORKSPACE_ROOT, name) : WORKSPACE_ROOT,
+      properties: ['createDirectory'],
+    })
+    if (result.canceled || !result.filePath) return { canceled: true }
+    try {
+      fs.mkdirSync(result.filePath, { recursive: true })
+      // 生成基础 CLAUDE.md
+      const projectName = path.basename(result.filePath)
+      const claudeMd = `# ${projectName}\n\n## 项目概述\n\n新建项目\n\n## 技术栈\n\n待定\n\n## 开发命令\n\n\`\`\`bash\n# TODO: 添加开发命令\n\`\`\`\n`
+      fs.writeFileSync(path.join(result.filePath, 'CLAUDE.md'), claudeMd, 'utf-8')
+      return { canceled: false, path: result.filePath, name: projectName }
+    } catch (err: any) {
+      return { canceled: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('project:open-folder', async (_event, projectPath: string) => {
+    shell.openPath(projectPath)
+  })
+
+  ipcMain.handle('project:open-in-new-window', async (_event, projectPath: string) => {
+    createWindow(projectPath)
+    return { success: true }
+  })
+
+  ipcMain.handle('project:scan-directory', async (_event, dirPath: string) => {
+    return scanDirectory(dirPath, 5)
+  })
+
+  ipcMain.handle('project:open-terminal', async (_event, projectPath: string) => {
+    // 在系统终端中打开，自动启动 claude
+    spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${projectPath}" && claude`], { shell: true, windowsHide: true })
+  })
+
+  // 文件操作
+  ipcMain.handle('file:read', async (_event, filePath: string) => {
+    try {
+      return { success: true, content: fs.readFileSync(filePath, 'utf-8') }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:open-dialog', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: '所有文件', extensions: ['*'] }],
+    })
+    if (result.canceled) return { canceled: true }
+    return { canceled: false, filePath: result.filePaths[0] }
+  })
+
+  // 会话管理
+  ipcMain.handle('session:list', async (_event, projectPath?: string) => {
+    return listSessions(projectPath)
+  })
+
+  ipcMain.handle('session:list-all', async () => {
+    return listSessions()
+  })
+
+  ipcMain.handle('session:recent', async (_event, projectPath: string) => {
+    const sessions = listSessions(projectPath)
+    if (sessions.length === 0) return null
+    // 取最近一条会话
+    const recent = sessions[0]
+    try {
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const jsonlFile = path.join(CLAUDE_HOME, 'projects', encodedPath, `${recent.sessionId}.jsonl`)
+      if (fs.existsSync(jsonlFile)) {
+        const lines = fs.readFileSync(jsonlFile, 'utf-8').split('\n').filter(Boolean)
+        // 提取用户消息和助手最终响应
+        const msgs: any[] = []
+        for (const line of lines) {
+          try {
+            const ev = JSON.parse(line)
+            if (ev.type === 'user' || (ev.type === 'assistant' && ev.message?.content)) {
+              msgs.push(ev)
+            }
+          } catch {}
+        }
+        return {
+          sessionId: recent.sessionId,
+          modifiedAt: recent.modifiedAt,
+          messages: msgs.slice(-10), // 最近10条
+        }
+      }
+    } catch {}
+    return null
+  })
+
+  ipcMain.handle('session:transcript', async (_event, sessionId: string) => {
+    // 搜索所有项目目录找到对应 session
+    const projectsDir = path.join(CLAUDE_HOME, 'projects')
+    if (!fs.existsSync(projectsDir)) return { events: [] }
+
+    for (const encoded of fs.readdirSync(projectsDir)) {
+      const jsonlFile = path.join(projectsDir, encoded, `${sessionId}.jsonl`)
+      if (fs.existsSync(jsonlFile)) {
+        const lines = fs.readFileSync(jsonlFile, 'utf-8').split('\n').filter(Boolean)
+        const events = lines.map(l => {
+          try { return JSON.parse(l) } catch { return null }
+        }).filter(Boolean)
+        return { events }
+      }
+    }
+    return { events: [] }
+  })
+
+  // Extract historical tasks from session JSONL files
+  ipcMain.handle('session:extract-tasks', async (_event, projectPath: string) => {
+    const tasks: any[] = []
+    try {
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+      if (!fs.existsSync(sessionDir)) return tasks
+
+      const jsonlFiles = fs.readdirSync(sessionDir)
+        .filter(f => f.endsWith('.jsonl'))
+        .sort((a, b) => {
+          const statA = fs.statSync(path.join(sessionDir, a))
+          const statB = fs.statSync(path.join(sessionDir, b))
+          return statB.mtime.getTime() - statA.mtime.getTime()
+        })
+
+      const seenIds = new Set<string>()
+      for (const file of jsonlFiles.slice(0, 5)) { // Last 5 sessions
+        const lines = fs.readFileSync(path.join(sessionDir, file), 'utf-8')
+          .split('\n').filter(Boolean)
+        for (const line of lines) {
+          try {
+            const ev = JSON.parse(line)
+            if (ev.type !== 'assistant' || !ev.message?.content) continue
+            for (const block of ev.message.content) {
+              if (block.type !== 'tool_use') continue
+              const toolId = block.id
+              if (seenIds.has(toolId)) continue
+              seenIds.add(toolId)
+
+              if (block.name === 'TaskCreate') {
+                tasks.push({
+                  title: block.input?.subject || block.input?.title || '历史任务',
+                  description: (block.input?.description || '').slice(0, 200),
+                  status: 'done' as const,
+                  category: 'task' as const,
+                  toolCallId: toolId,
+                  agentType: block.input?.agentType,
+                  createdAt: new Date(ev.uuid ? Date.now() - 86400000 : Date.now()).toISOString(),
+                  updatedAt: new Date().toISOString(),
+                })
+              }
+              if (block.name === 'TaskUpdate') {
+                // Find and update existing task
+                const targetId = block.input?.taskId
+                const existing = tasks.find(t => t.toolCallId === targetId)
+                if (existing) {
+                  const statusMap: Record<string, string> = {
+                    in_progress: 'in_progress', completed: 'done', done: 'done',
+                  }
+                  existing.status = statusMap[block.input?.status] || existing.status
+                  existing.updatedAt = new Date().toISOString()
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch (err) { console.error('提取历史任务失败:', err) }
+    return tasks.slice(0, 50) // Max 50 historical tasks
+  })
+
+  // Team management
+  ipcMain.handle('team:load', async () => {
+    const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
+    try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) } catch {}
+    return null
+  })
+  ipcMain.handle('team:save', async (_event, team: any[]) => {
+    const dir = path.join(os.homedir(), '.claude')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'claude-space-team.json'), JSON.stringify(team, null, 2), 'utf-8')
+    return { success: true }
+  })
+
+  // 设置管理 — 返回脱敏版本
+  ipcMain.handle('settings:load', async () => {
+    const raw = loadSettings()
+    if (!raw) {
+      // 首次使用：从环境变量生成默认配置
+      const envModel: ModelConfigSafe = {
+        id: 'env-default',
+        name: process.env.ANTHROPIC_MODEL || '默认模型',
+        provider: 'Claude',
+        apiKeyHint: process.env.ANTHROPIC_API_KEY ? '来自环境变量' : '未设置',
+        baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
+        apiKeySource: 'env',
+      }
+      const defaultSettings: AppSettingsSafe = {
+        version: 1,
+        activeModelId: 'env-default',
+        models: [envModel],
+        autoApproval: false,
+      }
+      // 同时写入文件
+      saveSettings({
+        version: 1,
+        activeModelId: 'env-default',
+        models: [{
+          id: 'env-default', name: envModel.name, provider: 'Claude',
+          apiKey: process.env.ANTHROPIC_API_KEY || '',
+          baseUrl: envModel.baseUrl, model: envModel.model,
+          apiKeySource: 'env',
+        }],
+        autoApproval: false,
+      })
+      return defaultSettings
+    }
+    // 返回脱敏版本
+    return {
+      version: raw.version || 1,
+      activeModelId: raw.activeModelId,
+      models: raw.models.map(m => ({
+        id: m.id, name: m.name, provider: m.provider,
+        apiKeyHint: m.apiKeySource === 'env' ? '来自环境变量' : maskApiKey(m.apiKey),
+        baseUrl: m.baseUrl, model: m.model,
+        apiKeySource: m.apiKeySource || 'user',
+      })),
+      autoApproval: raw.autoApproval ?? false,
+    } as AppSettingsSafe
+  })
+
+  ipcMain.handle('settings:save', async (_event, settings: AppSettingsSafe) => {
+    // renderer sends masked version — need to merge with existing full keys
+    const existing = loadSettings()
+    const existingModels = existing?.models || []
+
+    const models: ModelConfig[] = settings.models.map(m => {
+      const existingModel = existingModels.find(em => em.id === m.id)
+      // 保留已有 apiKey（除非用户明确提供了新 key）
+      const apiKey = (m as any).apiKey
+        ? (m as any).apiKey  // 用户输入了新 key
+        : (existingModel?.apiKey || '')  // 保留旧 key
+      return {
+        id: m.id, name: m.name, provider: m.provider as ModelConfig['provider'],
+        apiKey, baseUrl: m.baseUrl, model: m.model,
+        apiKeySource: (apiKey && apiKey !== existingModel?.apiKey) ? 'user' as const : m.apiKeySource,
+      }
+    })
+
+    saveSettings({
+      version: settings.version || 1,
+      activeModelId: settings.activeModelId,
+      models,
+    })
+    return { success: true }
+  })
+
+  ipcMain.handle('settings:get-model', async (_event, modelId: string) => {
+    const raw = loadSettings()
+    if (!raw) return null
+    const m = raw.models.find(m => m.id === modelId)
+    if (!m) return null
+    return {
+      id: m.id, name: m.name, provider: m.provider,
+      apiKeyHint: m.apiKeySource === 'env' ? '来自环境变量' : maskApiKey(m.apiKey),
+      baseUrl: m.baseUrl, model: m.model, apiKeySource: m.apiKeySource,
+    } as ModelConfigSafe
+  })
+
+  // 任务管理
+  ipcMain.handle('task:load', async () => loadTasks())
+  ipcMain.handle('task:save', async (_event, tasks: any[]) => {
+    saveTasks(tasks)
+    return { success: true }
+  })
+
+  // ── 连接管理 ────────────────────────────────────────────
+
+  ipcMain.handle('connection:check-cli', async () => {
+    return detectCli()
+  })
+
+  ipcMain.handle('connection:test-api', async (_event, opts: {
+    baseUrl: string; apiKey: string; timeoutMs?: number
+  }) => {
+    return testApiEndpoint(opts.baseUrl, opts.apiKey, opts.timeoutMs || 10000)
+  })
+
+  ipcMain.handle('connection:health-check', async (_event, opts: {
+    modelId: string; modelName: string; provider: string;
+    apiKey: string; baseUrl: string; model: string;
+  }) => {
+    const activeSessionId = claudeProcess?.sessionId
+    return runHealthCheck(opts, activeSessionId)
+  })
+
+  ipcMain.handle('connection:env-config', async () => {
+    return getEnvConfig()
+  })
+
+  // 审批日志
+  const APPROVAL_LOG = path.join(os.homedir(), '.claude', 'claude-space-approval-log.jsonl')
+  ipcMain.handle('approval:log', async (_event, entry: {
+    timestamp: string; question: string; optionChosen: string; auto: boolean; modelId?: string
+  }) => {
+    const dir = path.dirname(APPROVAL_LOG)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(APPROVAL_LOG, JSON.stringify(entry) + '\n', 'utf-8')
+    return { success: true }
+  })
+  ipcMain.handle('approval:history', async () => {
+    try {
+      if (!fs.existsSync(APPROVAL_LOG)) return []
+      const lines = fs.readFileSync(APPROVAL_LOG, 'utf-8').split('\n').filter(Boolean)
+      return lines.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean).slice(-100)
+    } catch { return [] }
+  })
+
+  // ── Git 操作 ────────────────────────────────────────────
+
+  function runGit(projectPath: string, args: string[]): Promise<{ success: boolean; output: string; error?: string }> {
+    return new Promise((resolve) => {
+      let out = '', err = ''
+      const child = spawn('git', args, { cwd: projectPath, windowsHide: true, timeout: 30000 })
+      child.stdout?.on('data', (d: Buffer) => { out += d.toString() })
+      child.stderr?.on('data', (d: Buffer) => { err += d.toString() })
+      child.on('close', (code) => resolve({ success: code === 0, output: out.trim(), error: err.trim() || undefined }))
+      child.on('error', (e) => resolve({ success: false, output: '', error: e.message }))
+    })
+  }
+
+  ipcMain.handle('git:status', async (_e, projectPath: string) => runGit(projectPath, ['status', '--porcelain', '--branch']))
+  ipcMain.handle('git:log', async (_e, projectPath: string) => runGit(projectPath, ['log', '--oneline', '-20']))
+  ipcMain.handle('git:branch', async (_e, projectPath: string) => runGit(projectPath, ['branch', '-a']))
+  ipcMain.handle('git:pull', async (_e, projectPath: string) => runGit(projectPath, ['pull']))
+  ipcMain.handle('git:push', async (_e, projectPath: string) => runGit(projectPath, ['push']))
+  ipcMain.handle('git:commit', async (_e, opts: { projectPath: string; message: string }) => runGit(opts.projectPath, ['commit', '-am', opts.message]))
+  ipcMain.handle('git:add', async (_e, opts: { projectPath: string; files: string[] }) => runGit(opts.projectPath, ['add', ...opts.files]))
+  ipcMain.handle('git:config', async (_e, projectPath: string) => {
+    const cfg = await runGit(projectPath, ['config', '--list'])
+    if (cfg.success) {
+      const parsed: Record<string, string> = {}
+      cfg.output.split('\n').forEach(line => {
+        const [k, ...v] = line.split('=')
+        if (k) parsed[k.trim()] = v.join('=').trim()
+      })
+      return { success: true, config: parsed }
+    }
+    return cfg
+  })
+
+  // ── 终端管理 ────────────────────────────────────────────
+
+  ipcMain.handle('terminal:start', async (_event, opts: {
+    cwd?: string; sessionId?: string; cols?: number; rows?: number;
+  }) => {
+    // 停掉旧进程
+    claudeProcess?.kill()
+    claudeProcess = null
+    terminalProcess?.kill()
+
+    // 获取 claude 绝对路径
+    const cliInfo = await detectCli()
+    const claudePath = cliInfo.found ? cliInfo.path : undefined
+
+    // 读取模型配置
+    let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
+    let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
+    let model: string | undefined = process.env.ANTHROPIC_MODEL
+
+    const raw = loadSettings()
+    if (raw?.activeModelId) {
+      const cfg = raw.models.find(m => m.id === raw.activeModelId)
+      if (cfg) {
+        apiKey = cfg.apiKey || apiKey
+        baseUrl = cfg.baseUrl || baseUrl
+        model = cfg.model || model
+      }
+    }
+
+    terminalProcess = new TerminalProcess({
+      cwd: opts.cwd,
+      sessionId: opts.sessionId,
+      claudePath,
+      model, apiKey, baseUrl,
+      cols: opts.cols || 120,
+      rows: opts.rows || 40,
+    })
+
+    // 事件转发
+    terminalProcess.on('terminal-data', (data: string) => {
+      mainWindow?.webContents.send('terminal:data', data)
+    })
+    terminalProcess.on('event', (event: any) => {
+      mainWindow?.webContents.send('claude:event', event)
+    })
+    terminalProcess.on('status', (s: any) => {
+      mainWindow?.webContents.send('claude:status-update', s)
+      mainWindow?.webContents.send('terminal:status', s)
+    })
+
+    terminalProcess.start()
+    return { success: true }
+  })
+
+  ipcMain.handle('terminal:restart', async () => {
+    terminalProcess?.restart()
+    return { success: true }
+  })
+
+  ipcMain.on('terminal:input', (_event, data: string) => {
+    terminalProcess?.write(data)
+  })
+
+  ipcMain.on('terminal:resize', (_event, opts: { cols: number; rows: number }) => {
+    terminalProcess?.resize(opts.cols, opts.rows)
+  })
+
+  ipcMain.handle('terminal:kill', async () => {
+    terminalProcess?.kill()
+    terminalProcess = null
+    return { success: true }
+  })
+
+  ipcMain.handle('terminal:status', async () => {
+    return {
+      running: terminalProcess?.isRunning || false,
+      claudeRunning: terminalProcess?.isClaudeRunning || false,
+      sessionId: terminalProcess?.sessionId || null,
+      error: terminalProcess?.lastError || '',
+    }
+  })
+
+  // 窗口控制
+  ipcMain.handle('win:minimize', () => mainWindow?.minimize())
+  ipcMain.handle('win:maximize', () => {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+    else mainWindow?.maximize()
+  })
+  ipcMain.handle('win:close', () => {
+    claudeProcess?.kill()
+    mainWindow?.close()
+  })
+  ipcMain.handle('win:is-maximized', () => mainWindow?.isMaximized())
+}
+
+// ── 应用生命周期 ────────────────────────────────────────
+
+app.whenReady().then(() => {
+  applyMenu()
+  registerIPC()
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
+  })
+})
+
+app.on('window-all-closed', () => {
+  claudeProcess?.kill()
+  app.quit()
+})
+
+app.on('before-quit', () => {
+  claudeProcess?.kill()
+})

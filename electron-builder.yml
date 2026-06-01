@@ -1,0 +1,24 @@
+appId: com.claudespace.app
+productName: Claude Space
+icon: assets/icon.png
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+win:
+  target:
+    - portable
+    - nsis
+  artifactName: ${name}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+portable:
+  artifactName: ${name}-portable-${version}.${ext}
+mac:
+  target: dmg
+  identity: null
+linux:
+  target: AppImage
