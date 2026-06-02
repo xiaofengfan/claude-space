@@ -7,6 +7,8 @@ interface UseTaskSyncOpts {
   activeProjectPath?: string
   onApproval?: (approval: ApprovalRequest) => void
   autoApproval?: boolean
+  onMonitorEvent?: (evt: { id: string; type: string; title: string; detail: string; status: 'running' | 'completed' | 'pending'; timestamp: number }) => void
+  onTaskComplete?: (taskTitle: string) => void
 }
 
 export interface ApprovalRequest {
@@ -14,23 +16,42 @@ export interface ApprovalRequest {
   question: string
   options: { label: string; description: string }[]
   toolCallId: string
+  toolName?: string       // e.g. "Bash", "Write", "Edit"
+  toolInput?: string       // tool input summary (command, file path, etc.)
   timestamp: number
 }
 
-export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApproval, autoApproval }: UseTaskSyncOpts) {
+/** Sensitive tools that typically require user permission */
+const SENSITIVE_TOOLS = ['Bash', 'Write', 'Edit', 'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Agent']
+
+export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApproval, autoApproval, onMonitorEvent, onTaskComplete }: UseTaskSyncOpts) {
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
 
   useEffect(() => {
-    const unsub = window.electronAPI.onClaudeEvent((event: any) => {
-      // Handle tool_result → mark tool tasks as done
+    // ── Listen for Claude stream-json events ──
+    const unsubEvent = window.electronAPI.onClaudeEvent((event: any) => {
+      // Handle tool_result → mark matching tasks as done
       if (event.type === 'user' && event.message?.content) {
         for (const block of event.message.content) {
-          if (block.type === 'tool_result' && block.tool_use_id) {
-            const updated = tasksRef.current.map(t =>
-              t.toolCallId === block.tool_use_id ? { ...t, status: 'done' as const, updatedAt: new Date().toISOString() } : t
-            )
-            onTasksChange(updated)
+          if (block.type === 'tool_result') {
+            const toolUseId = block.tool_use_id
+            const now = new Date().toISOString()
+            let changed = false
+            const updated = tasksRef.current.map(t => {
+              if (t.status === 'done') return t
+              // Match by toolCallId
+              if (toolUseId && t.toolCallId === toolUseId) { changed = true; return { ...t, status: 'done' as const, updatedAt: now } }
+              // Fallback: mark ANY non-done task whose title relates to the completed tool
+              if (toolUseId && t.status !== 'done' && !t.toolCallId) { changed = true; return { ...t, status: 'done' as const, updatedAt: now } }
+              return t
+            })
+            if (changed) {
+              onTasksChange(updated)
+              const doneTask = updated.find(t => t.toolCallId === toolUseId)
+              if (doneTask) onTaskComplete?.(doneTask.title)
+            }
+            if (toolUseId) onMonitorEvent?.({ id: toolUseId, type: 'tool_use', title: '✅ 工具完成', detail: '', status: 'completed', timestamp: Date.now() })
           }
         }
         return
@@ -47,13 +68,14 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
         const toolId = block.id
 
         // ── Track ALL tool uses for monitoring ──
-        if (['Bash', 'Write', 'Edit', 'Read', 'Glob', 'Grep', 'Workflow', 'Agent'].includes(name)) {
+        if (['Bash', 'Write', 'Edit', 'Read', 'Glob', 'Grep', 'Workflow', 'Agent', 'WebFetch', 'WebSearch'].includes(name)) {
           const toolTask: TaskItem = {
             id: 'tool_' + Date.now().toString(36),
             title: `${getToolEmoji(name)} ${name}: ${getToolSummary(name, input)}`,
             description: getToolDetail(name, input).slice(0, 200),
             status: 'in_progress',
             category: 'tool',
+            agentType: inferAgentType(name),
             toolCallId: toolId,
             projectPath: activeProjectPath,
             createdAt: new Date().toISOString(),
@@ -61,6 +83,7 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
           }
           if (!tasksRef.current.some(t => t.toolCallId === toolId)) {
             onTasksChange([...tasksRef.current, toolTask])
+            onMonitorEvent?.({ id: toolId, type: 'tool_use', title: toolTask.title, detail: toolTask.description, status: 'running', timestamp: Date.now() })
           }
         }
 
@@ -80,9 +103,9 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           }
-          // Dedup: skip if same toolCallId already exists
           if (!tasksRef.current.some(t => t.toolCallId === toolId)) {
             onTasksChange([...tasksRef.current, newTask])
+            onMonitorEvent?.({ id: toolId, type: 'task_create', title: title, detail: description, status: 'running', timestamp: Date.now() })
           }
         }
 
@@ -115,10 +138,10 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
               question: q.question || q.header || '需要您的审批',
               options: q.options || [],
               toolCallId: toolId,
+              toolName: 'AskUserQuestion',
               timestamp: Date.now(),
             }
 
-            // Auto-approve if enabled — log and skip dialog
             if (autoApproval) {
               const firstOption = q.options?.[0]
               const approvalTask: TaskItem = {
@@ -127,6 +150,7 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
                 description: `自动审批: ${firstOption?.label || '通过'} | ${q.options?.map((o: any) => o.label).join(', ') || ''}`,
                 status: 'done',
                 category: 'approval',
+                agentType: 'Coordinator',
                 toolCallId: toolId,
                 projectPath: activeProjectPath,
                 createdAt: new Date().toISOString(),
@@ -135,7 +159,6 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
               if (!tasksRef.current.some(t => t.toolCallId === toolId)) {
                 onTasksChange([...tasksRef.current, approvalTask])
               }
-              // Log auto-approval
               window.electronAPI.approvalLog?.({
                 timestamp: new Date().toISOString(),
                 question: approval.question,
@@ -143,13 +166,13 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
                 auto: true,
               })
             } else {
-              // Normal approval flow — show dialog
               const approvalTask: TaskItem = {
                 id: approval.id,
                 title: `🔔 ${approval.question.slice(0, 50)}`,
                 description: q.options?.map((o: any) => o.label).join(', ') || '',
                 status: 'todo',
                 category: 'approval',
+                agentType: 'Coordinator',
                 toolCallId: toolId,
                 projectPath: activeProjectPath,
                 createdAt: new Date().toISOString(),
@@ -162,41 +185,205 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
             }
           }
         }
+
+        // ── Sensitive tool permission → 审批通知 ──
+        // Detect tool_use blocks for tools that typically need permission
+        // Only trigger for tools NOT already handled above (TaskCreate/TaskUpdate/AskUserQuestion)
+        if (name !== 'TaskCreate' && name !== 'TaskUpdate' && name !== 'AskUserQuestion' &&
+            SENSITIVE_TOOLS.includes(name)) {
+          // Check if this tool_use has a permission field indicating it needs approval
+          const needsPermission = block.permission?.status === 'prompt' ||
+            block.permission?.status === 'ask' ||
+            // In interactive mode, sensitive tools without explicit allow may need approval
+            !block.permission  // no permission field = default behavior (may need approval)
+
+          if (needsPermission && !autoApproval) {
+            const toolSummary = getToolDetail(name, input)
+            const approvalId = 'perm_' + Date.now().toString(36)
+
+            const approval: ApprovalRequest = {
+              id: approvalId,
+              question: `工具权限请求: ${name}`,
+              options: [
+                { label: '✅ 允许执行一次', description: toolSummary.slice(0, 100) },
+                { label: '🔄 始终允许此类操作', description: `允许所有 ${name} 工具在本次会话中执行` },
+                { label: '❌ 拒绝', description: '跳过此工具调用' },
+              ],
+              toolCallId: toolId,
+              toolName: name,
+              toolInput: toolSummary.slice(0, 200),
+              timestamp: Date.now(),
+            }
+
+            const approvalTask: TaskItem = {
+              id: approvalId,
+              title: `🔔 ${getToolEmoji(name)} ${name}: ${getToolSummary(name, input)}`,
+              description: toolSummary.slice(0, 200),
+              status: 'todo',
+              category: 'approval',
+              agentType: inferAgentType(name),
+              toolCallId: toolId,
+              projectPath: activeProjectPath,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }
+            if (!tasksRef.current.some(t => t.toolCallId === toolId && t.category === 'approval')) {
+              onTasksChange([...tasksRef.current, approvalTask])
+            }
+            onApproval?.(approval)
+          }
+
+          // Auto-approval: log and mark as done
+          if (autoApproval && SENSITIVE_TOOLS.includes(name)) {
+            const approvalId = 'auto_' + Date.now().toString(36)
+            const toolSummary = getToolDetail(name, input)
+            const autoTask: TaskItem = {
+              id: approvalId,
+              title: `✅ ${getToolEmoji(name)} ${name}: ${getToolSummary(name, input)}`,
+              description: `自动审批: ${toolSummary.slice(0, 150)}`,
+              status: 'done',
+              category: 'approval',
+              agentType: inferAgentType(name),
+              toolCallId: toolId,
+              projectPath: activeProjectPath,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }
+            if (!tasksRef.current.some(t => t.toolCallId === toolId && t.category === 'approval')) {
+              onTasksChange([...tasksRef.current, autoTask])
+            }
+            window.electronAPI.approvalLog?.({
+              timestamp: new Date().toISOString(),
+              question: `${name}: ${toolSummary.slice(0, 80)}`,
+              optionChosen: '自动允许',
+              auto: true,
+            })
+          }
+        }
       }
     })
 
-    return unsub
-  }, [activeProjectPath])
+    // ── Listen for stderr-based permission prompts (fallback detection) ──
+    const unsubPerm = window.electronAPI.onClaudePermissionPrompt?.((prompt: { text: string; timestamp: number }) => {
+      if (autoApproval) {
+        // Auto-approve: send 'y' to stdin
+        window.electronAPI.claudeWriteStdin?.('y\n')
+        // Log it
+        window.electronAPI.approvalLog?.({
+          timestamp: new Date().toISOString(),
+          question: prompt.text.slice(0, 200),
+          optionChosen: '自动允许 (基于 stderr 检测)',
+          auto: true,
+        })
+        return
+      }
+
+      // Manual approval: show dialog
+      const approvalId = 'stderr_' + Date.now().toString(36)
+      const approval: ApprovalRequest = {
+        id: approvalId,
+        question: 'Claude 需要您的确认',
+        options: [
+          { label: '✅ 允许 (y)', description: prompt.text.slice(0, 200) },
+          { label: '❌ 拒绝 (n)', description: '跳过此操作' },
+        ],
+        toolCallId: '',
+        toolName: 'PermissionPrompt',
+        toolInput: prompt.text.slice(0, 200),
+        timestamp: Date.now(),
+      }
+
+      const approvalTask: TaskItem = {
+        id: approvalId,
+        title: `🔔 权限请求: ${prompt.text.slice(0, 50)}`,
+        description: prompt.text.slice(0, 200),
+        status: 'todo',
+        category: 'approval',
+        agentType: 'Architect',
+        projectPath: activeProjectPath,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      if (!tasksRef.current.some(t => t.id === approvalId)) {
+        onTasksChange([...tasksRef.current, approvalTask])
+      }
+      onApproval?.(approval)
+
+      onMonitorEvent?.({
+        id: approvalId,
+        type: 'permission_prompt',
+        title: `🔔 权限请求来自终端`,
+        detail: prompt.text.slice(0, 100),
+        status: 'pending',
+        timestamp: Date.now(),
+      })
+    })
+
+    return () => {
+      unsubEvent()
+      unsubPerm?.()
+    }
+  }, [activeProjectPath, autoApproval])
+}
+
+/** Infer agent type from tool name — maps tools to team roles */
+function inferAgentType(toolName: string): string {
+  const map: Record<string, string> = {
+    Bash: 'Implementer',
+    Write: 'Implementer',
+    Edit: 'Implementer',
+    Read: 'CodeExplorer',
+    Glob: 'CodeExplorer',
+    Grep: 'CodeExplorer',
+    WebFetch: 'CodeExplorer',
+    WebSearch: 'CodeExplorer',
+    Agent: 'Coordinator',
+    Workflow: 'Coordinator',
+    TaskCreate: 'Coordinator',
+    TaskUpdate: 'Coordinator',
+    AskUserQuestion: 'Coordinator',
+  }
+  return map[toolName] || 'Implementer'
 }
 
 function getToolEmoji(name: string): string {
   const m: Record<string, string> = {
     Bash: '💻', Write: '📝', Edit: '✏️', Read: '📖',
     Glob: '🔍', Grep: '🔎', Workflow: '⚙️', Agent: '🤖',
+    WebFetch: '🌐', WebSearch: '🔍',
   }
   return m[name] || '🔧'
 }
 
 function getToolSummary(name: string, input: any): string {
   switch (name) {
-    case 'Bash': return (input.command || '').slice(0, 50)
+    case 'Bash': return (input.command || input.description || '').slice(0, 50)
     case 'Write':
     case 'Edit':
     case 'Read': return (input.file_path || '').split(/[/\\]/).pop() || ''
     case 'Glob':
     case 'Grep': return (input.pattern || '').slice(0, 40)
-    case 'Workflow': return (input.description || '').slice(0, 40)
+    case 'Workflow': return (input.description || input.script || '').slice(0, 40)
     case 'Agent': return (input.description || input.subagent_type || '').slice(0, 40)
+    case 'WebFetch': return (input.url || '').slice(0, 50)
+    case 'WebSearch': return (input.query || '').slice(0, 50)
+    case 'AskUserQuestion': return (input.questions?.[0]?.question || '').slice(0, 50)
     default: return ''
   }
 }
 
 function getToolDetail(name: string, input: any): string {
   switch (name) {
-    case 'Bash': return input.command || ''
+    case 'Bash': return input.command || input.description || ''
     case 'Write':
     case 'Edit': return input.file_path || ''
     case 'Read': return input.file_path || ''
+    case 'Glob': return `pattern: ${input.pattern || ''}`
+    case 'Grep': return `pattern: ${input.pattern || ''}`
+    case 'Workflow': return input.description || input.script?.slice(0, 100) || ''
+    case 'Agent': return input.description || input.prompt?.slice(0, 100) || ''
+    case 'WebFetch': return input.url || ''
+    case 'WebSearch': return input.query || ''
     default: return ''
   }
 }

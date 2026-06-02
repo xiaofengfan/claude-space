@@ -4,12 +4,14 @@ import type { ConnectionHealth, CliDetectionResult, ApiTestResult } from './conn
 export interface ElectronAPI {
   // Claude session
   claudeStatus: () => Promise<{ running: boolean; sessionId?: string; error?: string }>
-  claudeSend: (opts: { content: string; projectPath?: string; sessionId?: string; modelId?: string }) => Promise<{ success: boolean }>
+  claudeSend: (opts: { content: string; projectPath?: string; sessionId?: string; modelId?: string; autoApproval?: boolean }) => Promise<{ success: boolean }>
   stopClaude: () => Promise<{ success: boolean }>
+  claudeWriteStdin: (data: string) => Promise<{ success: boolean }>
   onClaudeEvent: (callback: (event: any) => void) => () => void
   onClaudeStderr: (callback: (text: string) => void) => () => void
   onClaudeClose: (callback: (code: number | null) => void) => () => void
   onClaudeStatusUpdate: (callback: (status: { running: boolean; connected: boolean; error: string; sessionId?: string }) => void) => () => void
+  onClaudePermissionPrompt: (callback: (prompt: { text: string; timestamp: number }) => void) => () => void
 
   // Project management
   scanProjects: (rootPath?: string) => Promise<any[]>

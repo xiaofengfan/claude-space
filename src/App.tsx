@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { ProjectInfo, TaskItem, ChatMessage, SessionInfo } from './types'
 import type { AppSettingsSafe } from './types/settings'
 import { MenuBar, MenuGroup } from './components/MenuBar'
@@ -60,6 +60,7 @@ const DEFAULT_TEAM = [
   const [currentSessionId, setCurrentSessionId] = useState<string | undefined>()
   const [appSettings, setAppSettings] = useState<AppSettingsSafe | null>(null)
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null)
+  const [monitorEvents, setMonitorEvents] = useState<any[]>([])
   const [chatMode, setChatMode] = useState<'chat' | 'terminal'>('chat')
   const [terminalReady, setTerminalReady] = useState(false)
   const [terminalClaudeRunning, setTerminalClaudeRunning] = useState(false)
@@ -161,12 +162,65 @@ const DEFAULT_TEAM = [
     } catch {}
   }, [handleSelectProject])
 
-  const handleTasksChange = useCallback(async (newTasks: TaskItem[]) => {
-    setTasks(newTasks)
-    await window.electronAPI.saveTasks(newTasks)
+  const handleTasksChange = useCallback(async (updater: TaskItem[] | ((prev: TaskItem[]) => TaskItem[])) => {
+    setTasks(prev => {
+      const newTasks = typeof updater === 'function' ? updater(prev) : updater
+      window.electronAPI.saveTasks(newTasks).catch(() => {})
+      return newTasks
+    })
   }, [])
 
   const autoApproval = appSettings?.autoApproval ?? false
+
+  // @mention 处理：创建任务 + 更新办公室员工状态
+  const handleMentionAgent = useCallback((agentName: string, content: string) => {
+    const currentTeam = team.length ? team : DEFAULT_TEAM
+    const cleanContent = content.replace(/@\S+/g, '').trim()
+
+    // @all → 全员通知
+    if (agentName === 'all') {
+      currentTeam.forEach((emp: any, i: number) => {
+        setTimeout(() => {
+          const newTask: TaskItem = {
+            id: `all_${Date.now().toString(36)}_${i}`,
+            title: cleanContent ? `💬 @all→${emp.name}: ${cleanContent.slice(0, 30)}` : `💬 @all→${emp.name}`,
+            description: content, status: 'todo', category: 'task',
+            agentType: emp.agentType, projectPath: activeProject?.path,
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          }
+          setTasks(prev => [...prev, newTask])
+          setMessages(prev => [...prev, {
+            id: `all_${Date.now()}_${i}`,
+            role: 'assistant' as const,
+            content: `📢 **${emp.name}** 收到全员通知`,
+            timestamp: Date.now(), agentIcon: emp.icon || '👤', agentName: emp.name,
+          }])
+        }, i * 150)
+      })
+      return
+    }
+
+    // 单个@员工
+    const emp = currentTeam.find((e: any) =>
+      e.name === agentName || e.role === agentName ||
+      e.name.includes(agentName) || agentName.includes(e.name))
+    if (!emp) return
+    const taskTitle = cleanContent.length > 40 ? cleanContent.slice(0, 40) + '...' : cleanContent
+    const newTask: TaskItem = {
+      id: 'mention_' + Date.now().toString(36),
+      title: cleanContent ? `💬 @${emp.name}: ${taskTitle}` : `💬 @${emp.name} 已指派`,
+      description: content, status: 'todo', category: 'task',
+      agentType: emp.agentType, projectPath: activeProject?.path,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }
+    setTasks(prev => [...prev, newTask])
+    setMessages(prev => [...prev, {
+      id: 'confirm_' + Date.now().toString(36),
+      role: 'assistant' as const,
+      content: cleanContent ? `📋 **${emp.name}** 收到：${cleanContent.slice(0, 60)}` : `📋 **${emp.name}** 收到`,
+      timestamp: Date.now(), agentIcon: emp.icon || '👤', agentName: emp.name,
+    }])
+  }, [team, activeProject])
 
   // Real-time task sync from Claude events
   useTaskSync({
@@ -175,15 +229,49 @@ const DEFAULT_TEAM = [
     activeProjectPath: activeProject?.path,
     onApproval: setPendingApproval,
     autoApproval,
+    onMonitorEvent: (evt) => setMonitorEvents(prev => [evt, ...prev].slice(0, 100)),
+    onTaskComplete: (title: string) => {
+      const resultMsg: ChatMessage = {
+        id: 'complete_' + Date.now().toString(36),
+        role: 'assistant',
+        content: `✅ 任务完成：${title?.slice(0, 80)}`,
+        timestamp: Date.now(),
+        agentIcon: '🤖',
+        agentName: 'Claude',
+      }
+      setMessages(prev => [...prev, resultMsg])
+    },
   })
 
   const handleApprove = useCallback(async (approvalId: string, optionIndex: number) => {
     const approval = pendingApproval
     if (!approval) return
+
+    // Send permission response to Claude stdin
+    const isStderrPrompt = approval.toolName === 'PermissionPrompt'
+    const isToolPermission = approval.toolName && approval.toolName !== 'AskUserQuestion' && approval.toolName !== 'PermissionPrompt'
+
+    if (isStderrPrompt) {
+      // stderr-based permission prompt: send y/n directly
+      const response = optionIndex === 0 ? 'y\n' : 'n\n'
+      window.electronAPI.claudeWriteStdin?.(response)
+    } else if (isToolPermission) {
+      // Tool permission: option 0=allow once, 1=always allow, 2=deny
+      if (optionIndex === 0) {
+        window.electronAPI.claudeWriteStdin?.('y\n')
+      } else if (optionIndex === 1) {
+        window.electronAPI.claudeWriteStdin?.('a\n')  // 'a' = always allow in Claude Code
+      } else {
+        window.electronAPI.claudeWriteStdin?.('n\n')
+      }
+    }
+
+    // Mark approval task as done
     const updated = tasks.map(t =>
       t.id === approvalId ? { ...t, status: 'done' as const, updatedAt: new Date().toISOString() } : t
     )
     handleTasksChange(updated)
+
     // Log approval
     window.electronAPI.approvalLog?.({
       timestamp: new Date().toISOString(),
@@ -197,6 +285,12 @@ const DEFAULT_TEAM = [
 
   const handleDismissApproval = useCallback((approvalId: string) => {
     const approval = pendingApproval
+
+    // Send deny to Claude stdin
+    if (approval?.toolName && approval.toolName !== 'AskUserQuestion') {
+      window.electronAPI.claudeWriteStdin?.('n\n')
+    }
+
     const updated = tasks.map(t =>
       t.id === approvalId ? { ...t, status: 'done' as const, updatedAt: new Date().toISOString() } : t
     )
@@ -426,6 +520,7 @@ const DEFAULT_TEAM = [
                     setAppSettings(updated)
                     await window.electronAPI.saveSettings(updated)
                   }}
+                  onMentionAgent={handleMentionAgent}
                 />
               )}
 
@@ -453,7 +548,7 @@ const DEFAULT_TEAM = [
                 <div className="right-panel-scroll">
                   <TaskStats tasks={tasks.filter(t => !t.projectPath || t.projectPath === activeProject?.path)} />
                   <div className="section-divider" />
-                  <TaskMonitor embedded />
+                  <TaskMonitor embedded events={monitorEvents} />
                   <div className="section-divider" />
                   <InlineTaskBoard tasks={tasks} onTasksChange={handleTasksChange} activeProject={activeProject} />
                 </div>
@@ -516,10 +611,18 @@ const DEFAULT_TEAM = [
 }
 
 function InlineTaskBoard({ tasks, onTasksChange, activeProject }: { tasks: TaskItem[]; onTasksChange: (t: TaskItem[]) => void; activeProject: ProjectInfo | null }) {
+  const tasksRef = useRef(tasks)
+  tasksRef.current = tasks
   const filtered = activeProject ? tasks.filter(t => !t.projectPath || t.projectPath === activeProject.path) : tasks
   const pending = filtered.filter(t => t.status !== 'done')
   const approvals = pending.filter(t => t.category === 'approval')
   const regular = pending.filter(t => t.category !== 'approval')
+
+  const markDone = (taskId: string) => {
+    onTasksChange((prev: TaskItem[]) =>
+      prev.map(x => x.id === taskId ? { ...x, status: 'done' as const, updatedAt: new Date().toISOString() } : x)
+    )
+  }
 
   return (
     <div className="task-board-inline">
@@ -527,7 +630,7 @@ function InlineTaskBoard({ tasks, onTasksChange, activeProject }: { tasks: TaskI
         <span>📋 待处理 ({pending.length})</span>
         <button className="icon-btn" onClick={() => {
           const title = prompt('任务标题:')
-          if (title) onTasksChange([...tasks, { id: Date.now().toString(36), title, description: '', status: 'todo', category: 'task', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])
+          if (title) onTasksChange((prev: TaskItem[]) => [...prev, { id: Date.now().toString(36), title, description: '', status: 'todo', category: 'task', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])
         }}>+</button>
       </div>
 
@@ -550,8 +653,11 @@ function InlineTaskBoard({ tasks, onTasksChange, activeProject }: { tasks: TaskI
         <div key={t.id} className="task-inline-item">
           <span>{t.status === 'in_progress' ? '🔵' : '⚪'}</span>
           <span className="task-inline-title">{t.title}</span>
+          <span className={`task-status-label task-status-${t.status}`}>
+            {t.status === 'todo' ? '待处理' : t.status === 'in_progress' ? '进行中' : '已完成'}
+          </span>
           {t.category === 'tool' && <span className="task-badge tool-badge">工具</span>}
-          <button className="icon-btn" onClick={() => onTasksChange(tasks.map(x => x.id === t.id ? { ...x, status: 'done' as const, updatedAt: new Date().toISOString() } : x))}>✓</button>
+          <button className="icon-btn" onClick={() => markDone(t.id)}>✓</button>
         </div>
       ))}
 

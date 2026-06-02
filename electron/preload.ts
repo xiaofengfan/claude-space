@@ -12,17 +12,27 @@ const electronAPI = {
   claudeStatus: () => ipcRenderer.invoke('claude:status'),
 
   /** 发送消息到 Claude (自动启动进程) */
-  claudeSend: (opts: { content: string; projectPath?: string; sessionId?: string }) =>
+  claudeSend: (opts: { content: string; projectPath?: string; sessionId?: string; modelId?: string; autoApproval?: boolean }) =>
     ipcRenderer.invoke('claude:send', opts),
 
   /** 停止 Claude 进程 */
   stopClaude: () => ipcRenderer.invoke('claude:stop'),
+
+  /** 发送原始数据到 Claude stdin（权限响应） */
+  claudeWriteStdin: (data: string) => ipcRenderer.invoke('claude:write-stdin', data),
 
   /** 监听 Claude 事件 */
   onClaudeEvent: (callback: (event: any) => void) => {
     const handler = (_event: any, data: any) => callback(data)
     ipcRenderer.on('claude:event', handler)
     return () => ipcRenderer.removeListener('claude:event', handler)
+  },
+
+  /** 监听 Claude 权限提示 */
+  onClaudePermissionPrompt: (callback: (prompt: { text: string; timestamp: number }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('claude:permission-prompt', handler)
+    return () => ipcRenderer.removeListener('claude:permission-prompt', handler)
   },
 
   onClaudeStderr: (callback: (text: string) => void) => {

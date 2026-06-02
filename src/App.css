@@ -176,6 +176,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-office-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:12px;color:#666;border-bottom:1px solid #e0dcd6;flex-shrink:0;background:#faf8f5}
 .flat-office-header-right{display:flex;align-items:center;gap:6px;}
 .flat-office-count{font-size:11px;color:#bbb}
+.flat-office-stats{display:flex;gap:4px;align-items:center;}
+.flat-office-stat-chip{font-size:10px;padding:1px 6px;border-radius:8px;
+  background:rgba(108,140,255,0.12);color:#6c8cff;font-weight:600;
+  white-space:nowrap;transition:all 0.2s;}
+.flat-office-stat-chip.idle{background:rgba(158,158,158,0.1);color:#999;}
 
 .flat-office-grid{flex:1;overflow-y:auto;padding:24px 16px;display:flex;flex-direction:column;gap:28px;align-items:center;position:relative}
 .flat-door{position:absolute;top:10px;left:16px;font-size:22px;opacity:.5;z-index:1}
@@ -185,7 +190,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-desk{width:160px;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition:transform .2s;padding:0;position:relative}
 .flat-desk:hover{transform:translateY(-3px)}
 .flat-desk.empty{width:160px;visibility:hidden}
-.flat-name-label{font-size:11px;color:#444;font-weight:700;margin-bottom:6px;white-space:nowrap}
+.flat-name-label{font-size:11px;color:#444;font-weight:700;margin-bottom:6px;white-space:nowrap;text-align:center}
+.flat-status-badge{font-size:8px;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0}
+.flat-status-badge.status-working{background:#e8f5e9;color:#2e7d32}
+.flat-status-badge.status-busy{background:#ffebee;color:#c62828}
+.flat-status-badge.status-idle{background:#e3f2fd;color:#1565c0}
+.flat-task-content{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#555}
+.flat-task-label{font-size:10px;color:#1565c0;font-weight:600;margin-bottom:6px;
+  max-width:148px;max-height:28px;overflow:hidden;text-overflow:ellipsis;
+  line-height:1.3;word-break:break-all}
+.flat-task-label:hover{overflow:auto;max-height:60px;white-space:normal}
 
 /* Cubicle */
 .flat-cubicle{position:relative;width:148px;height:140px;margin:0 auto;background:linear-gradient(180deg,#fcfbf8,#f4f1ea);border-radius:6px;overflow:visible;box-shadow:0 3px 12px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.03)}
@@ -198,7 +212,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-person.look-side{transform:translateX(-50%) rotate(-8deg) translateX(-4px)}
 .flat-person.working svg{animation:person-idle 3s ease-in-out infinite}
 .flat-person.busy svg{animation:person-busy .7s ease-in-out infinite}
-.flat-person.idle svg{opacity:.4}
+.flat-person.idle svg{opacity:1!important}
 .flat-person.away svg{opacity:.18}
 @keyframes person-idle{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
 @keyframes person-busy{0%,100%{transform:translateY(0)}30%{transform:translateY(-2px)}60%{transform:translateY(0)}}
@@ -241,15 +255,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-desk-shadow{position:absolute;bottom:50px;left:14px;right:14px;height:6px;background:rgba(0,0,0,.04);border-radius:50%;z-index:0}
 
 /* Idle bubble */
-.flat-idle-bubble{position:absolute;top:4px;left:50%;transform:translateX(-50%);background:#fff;border:1px solid #e0dcd6;border-radius:10px;padding:2px 8px;font-size:9px;color:#999;white-space:nowrap;z-index:10;animation:bubble-pop .3s ease-out;box-shadow:0 2px 6px rgba(0,0,0,.06)}
-.flat-idle-bubble::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:4px solid #fff}
+.flat-standby-bubble{position:absolute;top:4px;left:50%;transform:translateX(-50%);background:#e3f2fd;border:1px solid #2196f3;border-radius:10px;padding:2px 8px;font-size:9px;color:#1565c0;white-space:nowrap;z-index:10;animation:bubble-pop .3s ease-out;box-shadow:0 2px 6px rgba(33,150,243,.12);font-weight:600}
+.flat-standby-bubble::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:4px solid #2196f3}
+.flat-busy-bubble{position:absolute;top:4px;left:50%;transform:translateX(-50%);background:#ffe0e0;border:1px solid #e05555;border-radius:10px;padding:2px 8px;font-size:9px;color:#c0392b;white-space:nowrap;z-index:10;animation:bubble-pop .3s ease-out;box-shadow:0 2px 6px rgba(224,85,85,.15);font-weight:700}
+.flat-busy-bubble::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:4px solid #e05555}
+.flat-working-bubble{position:absolute;top:4px;left:50%;transform:translateX(-50%);background:#e8f5e9;border:1px solid #4caf50;border-radius:10px;padding:2px 8px;font-size:9px;color:#2e7d32;white-space:nowrap;z-index:10;animation:bubble-pop .3s ease-out;box-shadow:0 2px 6px rgba(76,175,80,.1)}
+.flat-working-bubble::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:4px solid #4caf50}
 @keyframes bubble-pop{0%{opacity:0;transform:translateX(-50%) scale(.8)}100%{opacity:1;transform:translateX(-50%) scale(1)}}
 
 .flat-role-label{font-size:11px;color:#999;margin-top:5px;font-weight:500}
 .flat-status{position:absolute;top:2px;right:8px;width:6px;height:6px;border-radius:50%}
 .flat-status.working{background:#4caf50;box-shadow:0 0 3px rgba(76,175,80,.3)}
 .flat-status.busy{background:#ff9800;box-shadow:0 0 4px rgba(255,152,0,.4);animation:pulse-glow .8s infinite}
-.flat-status.idle{background:#ccc}
+.flat-status.idle{background:#2196f3;box-shadow:0 0 3px rgba(33,150,243,.3)}
 .flat-status.away{background:#f44336;opacity:.5}
 @keyframes pulse-glow{0%,100%{opacity:1}50%{opacity:.3}}
 
@@ -262,7 +280,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-status{position:absolute;top:2px;right:8px;width:6px;height:6px;border-radius:50%}
 .flat-status.working{background:#4caf50;box-shadow:0 0 3px rgba(76,175,80,.3)}
 .flat-status.busy{background:#ff9800;box-shadow:0 0 4px rgba(255,152,0,.4);animation:pulse-glow .8s infinite}
-.flat-status.idle{background:#ccc}
+.flat-status.idle{background:#2196f3;box-shadow:0 0 3px rgba(33,150,243,.3)}
 .flat-status.away{background:#f44336;opacity:.5}
 @keyframes pulse-glow{0%,100%{opacity:1}50%{opacity:.3}}
 
@@ -392,7 +410,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:#3a3a5a; border-radius:3px; }
 ::-webkit-scrollbar-thumb:hover { background:#555; }
-.flat-task-line{position:absolute;bottom:5px;left:4px;right:4px;font-size:9px;color:#999;text-align:center;z-index:1;line-height:1.3;max-height:24px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.flat-task-line{position:absolute;bottom:5px;left:4px;right:4px;font-size:9px;color:#999;text-align:center;z-index:1;line-height:1.3;max-height:24px;overflow:hidden;display:flex;align-items:center;justify-content:center;gap:4px}
 
 /* ── Light Theme ──────────────────────────────── */
 [data-theme="light"] .app{background:#f0f2f5;color:#333}
@@ -519,6 +537,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 [data-theme="light"] .flat-office{background:#fafafa}
 [data-theme="light"] .flat-office-header{background:#fff;color:#555;border-color:#e8e8e8}
+[data-theme="light"] .flat-office-stat-chip{background:rgba(108,140,255,0.1);color:#6c8cff;}
+[data-theme="light"] .flat-office-stat-chip.idle{background:rgba(0,0,0,0.04);color:#bbb;}
 
 [data-theme="light"] .welcome-btn.secondary{color:#555;border-color:#ccc}
 [data-theme="light"] .welcome-subtitle{color:#999}
@@ -619,9 +639,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .mode-switch-btn:hover { color:#ccc; border-color:#3a3a5a; }
 .mode-switch-btn.active { background:#2a2a4a; color:#fff; border-color:#6c8cff; }
 .mode-switch-hint { font-size:10px; color:#555; }
-.terminal-container { background:#1a1a2e; flex:1; overflow:hidden; }
+.terminal-container { background:#1a1a2e; flex:1; overflow:hidden; display:flex; flex-direction:column; }
 .terminal-container .xterm { height:100%; padding:4px; }
-.terminal-container .xterm-viewport { scrollbar-width:thin; }
+.terminal-container .xterm-viewport { scrollbar-width:thin; scrollbar-color:#555 #1a1a2e; }
+.terminal-container .xterm-viewport::-webkit-scrollbar { width:8px; }
+.terminal-container .xterm-viewport::-webkit-scrollbar-track { background:#1a1a2e; }
+.terminal-container .xterm-viewport::-webkit-scrollbar-thumb { background:#555; border-radius:4px; }
+.terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover { background:#888; }
 
 /* Terminal panel wrapper */
 .terminal-panel { flex:1; display:flex; flex-direction:column; overflow:hidden; }
@@ -801,11 +825,47 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .approval-option-label { font-size:14px; font-weight:600; }
 .approval-option-desc { font-size:11px; color:#888; margin-top:2px; }
 
+/* Approval tool info banner */
+.approval-tool-info { display:flex; align-items:center; gap:10px; margin-bottom:12px; padding:8px 12px;
+  background:rgba(108,140,255,0.08); border-radius:8px; border:1px solid rgba(108,140,255,0.15); }
+.approval-tool-badge { font-size:11px; padding:2px 8px; border-radius:4px;
+  background:rgba(108,140,255,0.2); color:#6c8cff; font-weight:700; font-family:monospace; }
+.approval-tool-desc { font-size:12px; color:#999; }
+
+/* Approval tool detail code block */
+.approval-tool-detail { margin-bottom:14px; padding:10px 12px; background:#14142a; border-radius:6px;
+  border:1px solid #2a2a4a; overflow-x:auto; max-height:80px; overflow-y:auto; }
+.approval-tool-detail code { font-size:11px; color:#7ecb8b; font-family:'Cascadia Code','Fira Code','Consolas',monospace;
+  white-space:pre-wrap; word-break:break-all; }
+
+/* Colored option buttons */
+.approval-option-btn.approval-option-allow { border-color:rgba(76,175,80,0.4); }
+.approval-option-btn.approval-option-allow:hover { border-color:#4caf50; background:rgba(76,175,80,0.1); }
+.approval-option-btn.approval-option-deny { border-color:rgba(224,85,85,0.4); }
+.approval-option-btn.approval-option-deny:hover { border-color:#e05555; background:rgba(224,85,85,0.1); }
+
+/* Quick action buttons (for stderr prompts) */
+.approval-quick-actions { display:flex; gap:10px; margin-top:14px; }
+.approval-quick-btn { flex:1; padding:10px; border:1px solid #3a3a5a; border-radius:8px;
+  background:transparent; color:#ccc; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.15s; }
+.approval-quick-btn.allow:hover { border-color:#4caf50; background:rgba(76,175,80,0.15); color:#4caf50; }
+.approval-quick-btn.deny:hover { border-color:#e05555; background:rgba(224,85,85,0.15); color:#e05555; }
+
+/* Always allow button */
+.btn-allow-always { padding:8px 14px; border:1px solid #6c8cff; border-radius:6px;
+  background:rgba(108,140,255,0.08); color:#6c8cff; font-size:12px; cursor:pointer;
+  transition:all 0.15s; margin-right:auto; }
+.btn-allow-always:hover { background:rgba(108,140,255,0.2); color:#fff; }
+
 /* ── Task Badges ──────────────────────────────── */
 .task-badge { font-size:9px; padding:1px 5px; border-radius:3px; font-weight:600; flex-shrink:0; }
 .approval-badge { background:rgba(230,126,34,0.2); color:#e67e22; }
 .tool-badge { background:rgba(108,140,255,0.2); color:#6c8cff; }
 .task-inline-title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-status-label { font-size:9px; padding:1px 5px; border-radius:3px; flex-shrink:0; font-weight:600; }
+.task-status-todo { background:rgba(158,158,158,0.15); color:#9e9e9e; }
+.task-status-in_progress { background:rgba(255,152,0,0.15); color:#ff9800; }
+.task-status-done { background:rgba(76,175,80,0.15); color:#4caf50; }
 .task-inline-section { margin-bottom:6px; }
 .task-inline-section-header { font-size:11px; color:#e67e22; padding:2px 4px; margin-bottom:2px; font-weight:600; }
 .task-inline-item.approval { border-left:2px solid #e67e22; padding-left:6px; }
@@ -816,6 +876,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 [data-theme="light"] .approval-option-btn:hover { border-color:#6c8cff; background:#e8f0fe; }
 [data-theme="light"] .approval-option-desc { color:#999; }
 [data-theme="light"] .task-inline-item.approval { border-left-color:#e67e22; }
+[data-theme="light"] .approval-tool-info { background:rgba(108,140,255,0.05); border-color:rgba(108,140,255,0.1); }
+[data-theme="light"] .approval-tool-desc { color:#777; }
+[data-theme="light"] .approval-tool-detail { background:#f5f5f5; border-color:#e0e0e0; }
+[data-theme="light"] .approval-tool-detail code { color:#2a7d4f; }
+[data-theme="light"] .approval-quick-btn { border-color:#ddd; color:#444; }
+[data-theme="light"] .btn-allow-always { border-color:#6c8cff; color:#6c8cff; }
+[data-theme="light"] .btn-allow-always:hover { color:#fff; }
 
 /* ── Setting Toggle ───────────────────────────── */
 .setting-toggle { display:flex; align-items:center; gap:10px; padding:8px 0; cursor:pointer; font-size:13px; color:#ccc; }
@@ -823,6 +890,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .setting-toggle:hover { color:#fff; }
 [data-theme="light"] .setting-toggle { color:#444; }
 [data-theme="light"] .setting-toggle:hover { color:#000; }
+
+/* ── Setting Toggle Row (label + description + switch) ── */
+.setting-toggle-row { display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px; background:rgba(108,140,255,0.04); border-radius:10px;
+  border:1px solid rgba(108,140,255,0.08); gap:16px; }
+.setting-toggle-info { flex:1; min-width:0; }
+.setting-toggle-label { display:block; font-size:14px; font-weight:600; color:#e0e0e0; margin-bottom:4px; }
+.setting-toggle-desc { display:block; font-size:11px; color:#888; line-height:1.4; }
+
+/* Toggle switch (iOS-style) */
+.toggle-switch { position:relative; display:inline-block; width:44px; height:24px; flex-shrink:0; }
+.toggle-switch input { opacity:0; width:0; height:0; }
+.toggle-slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+  background:#3a3a5a; border-radius:24px; transition:all 0.25s; }
+.toggle-slider::before { content:''; position:absolute; height:18px; width:18px;
+  left:3px; bottom:3px; background:#888; border-radius:50%; transition:all 0.25s; }
+.toggle-switch input:checked + .toggle-slider { background:#6c8cff; }
+.toggle-switch input:checked + .toggle-slider::before { transform:translateX(20px); background:#fff; }
+
+[data-theme="light"] .setting-toggle-label { color:#333; }
+[data-theme="light"] .setting-toggle-desc { color:#777; }
+[data-theme="light"] .toggle-slider { background:#ddd; }
+[data-theme="light"] .toggle-slider::before { background:#999; }
 
 /* ── Chat Error Action Button ──────────────────── */
 .chat-error-text { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

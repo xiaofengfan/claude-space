@@ -325,6 +325,31 @@ export function SettingsDialog({
             </div>
           )}
 
+          {/* ── 审批设置 ── */}
+          <div className="setting-group">
+            <h3>🔔 审批设置</h3>
+            <div className="setting-toggle-row">
+              <div className="setting-toggle-info">
+                <span className="setting-toggle-label">自动审批</span>
+                <span className="setting-toggle-desc">
+                  开启后，所有工具调用（Bash/Write/Edit 等）将自动执行，不再弹出审批窗口。
+                  关闭后，每次敏感工具调用都会弹出审批对话框。
+                </span>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={settings?.autoApproval ?? false}
+                  onChange={(e) => {
+                    if (!settings) return
+                    onSettingsChange({ ...settings, autoApproval: e.target.checked })
+                  }}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
           {/* ── 工作区 ── */}
           <div className="setting-group">
             <h3>📁 工作区路径</h3>

@@ -370,6 +370,7 @@ function registerIPC(): void {
 
   ipcMain.handle('claude:send', async (_event, opts: {
     content: string; projectPath?: string; sessionId?: string; modelId?: string;
+    autoApproval?: boolean;
   }) => {
     // 从设置中解析模型配置
     let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
@@ -393,6 +394,7 @@ function registerIPC(): void {
         model,
         apiKey,
         baseUrl,
+        permissionMode: opts.autoApproval ? 'auto' : 'manual',
       })
 
       claudeProcess.on('event', (event: ClaudeEvent) => {
@@ -408,16 +410,29 @@ function registerIPC(): void {
         mainWindow?.webContents.send('claude:close', code)
         claudeProcess = null
       })
-    } else if (opts.sessionId !== undefined) {
-      // Session changed between sends — update so sendPrompt() uses new --resume
-      claudeProcess.setSessionId(opts.sessionId)
+      // Forward permission prompts to renderer
+      claudeProcess.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
+        mainWindow?.webContents.send('claude:permission-prompt', prompt)
+      })
     } else {
-      // New session (opts.sessionId is undefined) — clear any old session ID
-      claudeProcess.setSessionId(undefined)
+      // Process already exists — update session and permission mode
+      const newPermissionMode: 'auto' | 'manual' = opts.autoApproval ? 'auto' : 'manual'
+      claudeProcess.setPermissionMode(newPermissionMode)
+      if (opts.sessionId !== undefined) {
+        claudeProcess.setSessionId(opts.sessionId)
+      } else {
+        claudeProcess.setSessionId(undefined)
+      }
     }
 
-    console.log('[main] claude:send contentLen:', opts.content.length, 'modelId:', opts.modelId, 'sessionId:', opts.sessionId)
+    console.log('[main] claude:send contentLen:', opts.content.length, 'modelId:', opts.modelId, 'sessionId:', opts.sessionId, 'autoApproval:', opts.autoApproval)
     claudeProcess.sendPrompt(opts.content)
+    return { success: true }
+  })
+
+  // Write raw data to Claude's stdin (for permission y/n responses)
+  ipcMain.handle('claude:write-stdin', async (_event, data: string) => {
+    claudeProcess?.writeStdin(data)
     return { success: true }
   })
 
@@ -689,6 +704,7 @@ function registerIPC(): void {
       version: settings.version || 1,
       activeModelId: settings.activeModelId,
       models,
+      autoApproval: settings.autoApproval ?? false,
     })
     return { success: true }
   })

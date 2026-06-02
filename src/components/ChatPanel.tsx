@@ -26,6 +26,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
   onLaunchClaudeForChat,
   autoApproval,
   onAutoApprovalChange,
+  onMentionAgent,
 }: {
   messages: ChatMessage[]
   streamingText: string
@@ -42,16 +43,13 @@ export const ChatPanel = forwardRef(function ChatPanel({
   sessionId?: string
   onSessionIdChange?: (sessionId: string | undefined) => void
   onSelectSession?: (sessionId: string) => void
-  /** 终端模式：发送走 PTY 而不是 spawn claude -p */
   terminalMode?: boolean
-  /** 终端模式下发消息到 PTY */
   onTerminalSend?: (content: string) => Promise<void>
-  /** 终端中 Claude 是否在运行 */
   terminalClaudeRunning?: boolean
-  /** 在终端中启动 Claude */
   onLaunchClaudeForChat?: () => Promise<void>
   autoApproval?: boolean
   onAutoApprovalChange?: (v: boolean) => void
+  onMentionAgent?: (agentName: string, content: string) => void
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const [pendingTools, setPendingTools] = useState<Map<string, ToolCall>>(new Map())
@@ -254,6 +252,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
     const actualContent = isCmd ? content.slice(5) : content
     const mentionRegex = /@(\S+)/g
     const mentions = [...actualContent.matchAll(mentionRegex)].map(m => m[1])
+    // 通知办公室：@角色 → 实时更新员工状态
+    mentions.forEach(name => onMentionAgent?.(name, content))
 
     // ── 终端模式：写入 PTY，不 spawn 新进程 ──
     if (terminalMode && onTerminalSend) {
@@ -311,6 +311,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
         projectPath: activeProject.path,
         sessionId: sessionId,
         modelId: activeModelId || undefined,
+        autoApproval: autoApproval ?? false,
       })
       if (!result?.success) {
         setConnectionError('Claude 发送失败')
@@ -356,7 +357,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
       setConnectionStatus('error')
       setConnectionError('启动 Claude 失败: ' + (err.message || '未知错误'))
     }
-  }, [activeProject, activeModelId, sessionId, terminalMode, terminalClaudeRunning, onTerminalSend, onLaunchClaudeForChat, onClaudeRunning, onClaudeConnected, onMessagesChange, onStreamingText])
+  }, [activeProject, activeModelId, sessionId, terminalMode, terminalClaudeRunning, onTerminalSend, onLaunchClaudeForChat, onClaudeRunning, onClaudeConnected, onMessagesChange, onStreamingText, autoApproval])
 
   const handleStop = useCallback(async () => {
     await window.electronAPI.stopClaude()

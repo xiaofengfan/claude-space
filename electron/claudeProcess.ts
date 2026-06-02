@@ -18,6 +18,7 @@ const CLAUDE_BIN = resolveClaudePath()
 
 export interface ClaudeProcessOptions {
   cwd?: string; sessionId?: string; model?: string; apiKey?: string; baseUrl?: string
+  permissionMode?: 'auto' | 'manual'  // auto = skip permissions, manual = show dialogs
 }
 
 export interface ClaudeEvent {
@@ -49,16 +50,33 @@ export class ClaudeProcess extends EventEmitter {
     }
   }
 
+  /** Update permission mode between sends */
+  setPermissionMode(mode: 'auto' | 'manual'): void {
+    this.options.permissionMode = mode
+  }
+
   /** Send a prompt to Claude (starts new process if needed) */
   sendPrompt(content: string): void {
     this.kill()
 
-    const args = [
-      '-p', content,
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--include-partial-messages',
-    ]
+    const autoApprove = this.options.permissionMode === 'auto'
+    const args: string[] = []
+
+    if (autoApprove) {
+      // Auto-approval: one-shot mode + skip all permissions
+      args.push('-p', content)
+      args.push('--output-format', 'stream-json')
+      args.push('--verbose')
+      args.push('--include-partial-messages')
+      args.push('--dangerously-skip-permissions')
+    } else {
+      // Manual approval: interactive mode for stdin/stdout permission flow
+      args.push('--input-format', 'stream-json')
+      args.push('--output-format', 'stream-json')
+      args.push('--verbose')
+      args.push('--include-partial-messages')
+      args.push('--permission-mode', 'default')
+    }
 
     const resumeId = this.options.sessionId || this._sessionId
     if (resumeId) {
@@ -79,12 +97,23 @@ export class ClaudeProcess extends EventEmitter {
     const cwd = this.options.cwd || process.cwd()
 
     try {
-      console.log('[claudeProcess] spawning:', CLAUDE_BIN, args.slice(0, 4).join(' '), '...')
+      console.log('[claudeProcess] spawning:', CLAUDE_BIN, args.slice(0, 5).join(' '), '...')
       this.proc = spawn(CLAUDE_BIN, args, {
         cwd, env, stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
       console.log('[claudeProcess] spawned, pid:', this.proc.pid)
+
+      // For interactive mode, send user message via stdin JSON
+      if (!autoApprove) {
+        const userMsg = {
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text: content }] },
+        }
+        const json = JSON.stringify(userMsg) + '\n'
+        console.log('[claudeProcess] writing user message to stdin, len:', json.length)
+        this.proc.stdin?.write(json)
+      }
 
       this.proc.stdout?.on('data', (chunk: Buffer) => {
         this.buffer += chunk.toString('utf-8')
@@ -93,6 +122,18 @@ export class ClaudeProcess extends EventEmitter {
 
       this.proc.stderr?.on('data', (chunk: Buffer) => {
         const text = chunk.toString('utf-8').trim()
+        if (!text) return
+
+        // Detect permission prompts from stderr (interactive y/n prompts)
+        const isPermissionPrompt = /Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(text)
+        if (isPermissionPrompt) {
+          console.log('[claudeProcess] permission prompt detected:', text.slice(0, 120))
+          this.emit('permission-prompt', {
+            text,
+            timestamp: Date.now(),
+          })
+        }
+
         if (text && !text.startsWith('{')) {
           this._errorMsg += text + '\n'
           this.emit('stderr', text)
@@ -122,6 +163,16 @@ export class ClaudeProcess extends EventEmitter {
       this._errorMsg = err.message
       this.emit('close', null)
       this.emit('status', { running: false, connected: false, error: err.message })
+    }
+  }
+
+  /** Write data to Claude's stdin (for permission responses) */
+  writeStdin(data: string): void {
+    if (this.proc?.stdin?.writable) {
+      console.log('[claudeProcess] writeStdin:', data.slice(0, 50))
+      this.proc.stdin.write(data)
+    } else {
+      console.log('[claudeProcess] writeStdin: stdin not writable')
     }
   }
 
