@@ -445,7 +445,7 @@ const DEFAULT_TEAM = [
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={setLeftView} onGitClick={() => setShowGitPanel(v => !v)} />
+          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'docs' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} />
           <div className="app-body">
             <aside className="sidebar left-sidebar" style={{ width: leftSplitter.size }}>
               <div className="sidebar-tabs">
@@ -619,9 +619,7 @@ function InlineTaskBoard({ tasks, onTasksChange, activeProject }: { tasks: TaskI
   const regular = pending.filter(t => t.category !== 'approval')
 
   const markDone = (taskId: string) => {
-    onTasksChange((prev: TaskItem[]) =>
-      prev.map(x => x.id === taskId ? { ...x, status: 'done' as const, updatedAt: new Date().toISOString() } : x)
-    )
+    onTasksChange(tasks.map(x => x.id === taskId ? { ...x, status: 'done' as const, updatedAt: new Date().toISOString() } : x))
   }
 
   return (
@@ -630,7 +628,7 @@ function InlineTaskBoard({ tasks, onTasksChange, activeProject }: { tasks: TaskI
         <span>📋 待处理 ({pending.length})</span>
         <button className="icon-btn" onClick={() => {
           const title = prompt('任务标题:')
-          if (title) onTasksChange((prev: TaskItem[]) => [...prev, { id: Date.now().toString(36), title, description: '', status: 'todo', category: 'task', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])
+          if (title) onTasksChange([...tasks, { id: Date.now().toString(36), title, description: '', status: 'todo', category: 'task', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])
         }}>+</button>
       </div>
 

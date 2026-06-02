@@ -69,6 +69,13 @@ export interface ElectronAPI {
   gitCommit: (opts: { projectPath: string; message: string }) => Promise<{ success: boolean; output: string; error?: string }>
   gitAdd: (opts: { projectPath: string; files: string[] }) => Promise<{ success: boolean; output: string; error?: string }>
   gitConfig: (projectPath: string) => Promise<{ success: boolean; config?: Record<string, string>; error?: string }>
+  gitInit: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
+  gitRemote: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
+  gitRemoteSet: (opts: { projectPath: string; name: string; url: string }) => Promise<{ success: boolean; output: string; error?: string }>
+  gitConfigSet: (opts: { projectPath: string; key: string; value: string }) => Promise<{ success: boolean; output: string; error?: string }>
+  gitDiff: (opts: { projectPath: string; file?: string }) => Promise<{ success: boolean; output: string; error?: string }>
+  gitShow: (opts: { projectPath: string; file: string }) => Promise<{ success: boolean; output: string; error?: string }>
+  gitDiffStaged: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
 
   // Terminal management
   terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number }) => Promise<{ success: boolean }>

@@ -184,7 +184,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
 
       if (block.type === 'text') {
         const text = block.text || ''
-        onStreamingText(prev => prev + text)
+        onStreamingText(streamingTextRef.current + text)
       }
     }
 
