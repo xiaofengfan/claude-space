@@ -2,6 +2,7 @@
 
 > **AI 驱动的项目开发工作台** — 将 Claude Code CLI 的强大能力封装为桌面应用，支持多智能体协作、实时任务追踪、文件编辑与终端操作。
 > -刚开始做-碎片时间AI生成-当前仅在个人环境上再用
+> -计划进行符合本地项目开发的云边协同开发管理和同步平台，采用本地+云的开发模式，集合openClaw，hermes，claudeCode等进行独立+共享协作的方式的24小时开发中心。
 
 <p align="center">
   <img src="assets/icon.png" alt="Claude Space" width="128" />
