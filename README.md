@@ -1,6 +1,7 @@
 # Claude Space v1.0.0
 
 > **AI 驱动的项目开发工作台** — 将 Claude Code CLI 的强大能力封装为桌面应用，支持多智能体协作、实时任务追踪、文件编辑与终端操作。
+> -刚开始做-碎片时间AI生成-当前仅在个人环境上再用
 
 <p align="center">
   <img src="assets/icon.png" alt="Claude Space" width="128" />
@@ -13,6 +14,9 @@
 
 <img width="3070" height="1792" alt="image" src="https://github.com/user-attachments/assets/d82e1fb4-ddb7-4519-9680-f1ca2a75266b" />
 
+<img width="1335" height="1267" alt="image" src="https://github.com/user-attachments/assets/cc723ed2-5391-4753-b550-425af62bfc60" />
+
+<img width="1828" height="639" alt="image" src="https://github.com/user-attachments/assets/5c056b74-fd52-43ab-9808-4ca82571515d" />
 
 
 ## 一、系统定位
