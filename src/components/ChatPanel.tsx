@@ -27,6 +27,14 @@ export const ChatPanel = forwardRef(function ChatPanel({
   autoApproval,
   onAutoApprovalChange,
   onMentionAgent,
+  // ── 群聊扩展 ──
+  groupChatMode,
+  onGroupChatModeChange,
+  team,
+  onAgentSendGroup,
+  // ── 会话管理 ──
+  sessionName,
+  onMessageSent,
 }: {
   messages: ChatMessage[]
   streamingText: string
@@ -50,6 +58,14 @@ export const ChatPanel = forwardRef(function ChatPanel({
   autoApproval?: boolean
   onAutoApprovalChange?: (v: boolean) => void
   onMentionAgent?: (agentName: string, content: string) => void
+  // ── 群聊扩展 ──
+  groupChatMode?: boolean
+  onGroupChatModeChange?: (v: boolean) => void
+  team?: Array<{ agentId: string; name: string; role: string; agentType: string; icon: string; color: string }>
+  onAgentSendGroup?: (content: string, targets: string[]) => void
+  // ── 会话管理 ──
+  sessionName?: string
+  onMessageSent?: (sessionId: string, content: string) => void
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const [pendingTools, setPendingTools] = useState<Map<string, ToolCall>>(new Map())
@@ -60,37 +76,57 @@ export const ChatPanel = forwardRef(function ChatPanel({
   const [connectionError, setConnectionError] = useState('')
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected')
 
-  // Keep refs in sync with props for event handlers (avoid stale closure)
+  // ── 多智能体流式状态 ──
+  const [agentStreams, setAgentStreams] = useState<Map<string, { text: string; thinking: string }>>(new Map())
+  const agentStreamsRef = useRef(agentStreams)
+  agentStreamsRef.current = agentStreams
+  // Refs for group chat — avoid stale closure in handleSend callback
+  const groupChatModeRef = useRef(groupChatMode)
+  groupChatModeRef.current = groupChatMode
+  const onAgentSendGroupRef = useRef(onAgentSendGroup)
+  onAgentSendGroupRef.current = onAgentSendGroup
+
+  // 会话名由 App.tsx 管理，这里只读
+
+  // Keep refs in sync for event handlers to avoid stale closure
   streamingTextRef.current = streamingText
+  const onMessagesChangeRef = useRef(onMessagesChange)
+  onMessagesChangeRef.current = onMessagesChange
+  const onStreamingTextRef = useRef(onStreamingText)
+  onStreamingTextRef.current = onStreamingText
+  const onClaudeRunningRef = useRef(onClaudeRunning)
+  onClaudeRunningRef.current = onClaudeRunning
+  const onClaudeConnectedRef = useRef(onClaudeConnected)
+  onClaudeConnectedRef.current = onClaudeConnected
+  const onStatusInfoRef = useRef(onStatusInfo)
+  onStatusInfoRef.current = onStatusInfo
+  const finalizingRef = useRef(false)
 
   // 滚动到底部
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingText])
 
-  // 监听 Claude 事件
+  // 监听 Claude 事件 — 通过 ref 避免闭包过期
   useEffect(() => {
     const unsubEvent = window.electronAPI.onClaudeEvent((event) => {
       switch (event.type) {
         case 'system':
           if (event.subtype === 'init') {
-            onClaudeConnected(true)
-            onStatusInfo({
+            onClaudeConnectedRef.current(true)
+            onStatusInfoRef.current({
               model: event.model || '',
               tokens: 0,
               cost: 0,
             })
           }
           break
-
         case 'assistant':
           handleAssistantEvent(event as ClaudeAssistantEvent)
           break
-
         case 'result':
           handleResultEvent(event as ClaudeResultEvent)
           break
-
         case 'user':
           // replay-user-messages 回显
           break
@@ -99,10 +135,11 @@ export const ChatPanel = forwardRef(function ChatPanel({
 
     const unsubClose = window.electronAPI.onClaudeClose((code) => {
       setIsRunning(false)
-      onClaudeRunning(false)
-      onClaudeConnected(false)
+      onClaudeRunningRef.current(false)
+      onClaudeConnectedRef.current(false)
       setConnectionStatus('disconnected')
       if (code) setConnectionError(`进程退出 (exit code ${code})`)
+      // 只在还有 streaming 消息时 finalize
       if (assistantMessageRef.current) {
         finalizeAssistantMessage()
       }
@@ -112,7 +149,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
       setIsRunning(status.running)
       if (status.connected) {
         setConnectionStatus('connected')
-        onClaudeConnected(true)
+        onClaudeConnectedRef.current(true)
         setConnectionError('')
       } else if (status.running) {
         setConnectionStatus('connecting')
@@ -130,11 +167,107 @@ export const ChatPanel = forwardRef(function ChatPanel({
       setConnectionStatus('error')
     })
 
+    // ── 多智能体事件监听 ──
+    const unsubAgentEvent = window.electronAPI.onAgentEvent?.((taggedEvent) => {
+      const { agentId, agentType, agentName, type, subtype, message: evtMsg } = taggedEvent
+      console.log('[ChatPanel] agentEvent:', agentId, agentName, type, subtype || '')
+
+      switch (type) {
+        case 'system':
+          if (subtype === 'init') {
+            console.log('[ChatPanel] agent init:', agentId, agentName)
+            setIsRunning(true)
+            onClaudeConnectedRef.current(true)
+          }
+          break
+        case 'assistant':
+          if (evtMsg?.content) {
+            for (const block of evtMsg.content) {
+              if (block.type === 'text' && block.text) {
+                setAgentStreams(prev => {
+                  const next = new Map(prev)
+                  const cur = next.get(agentId) || { text: '', thinking: '' }
+                  next.set(agentId, { ...cur, text: cur.text + block.text })
+                  return next
+                })
+              }
+              if (block.type === 'thinking' && block.thinking) {
+                setAgentStreams(prev => {
+                  const next = new Map(prev)
+                  const cur = next.get(agentId) || { text: '', thinking: '' }
+                  next.set(agentId, { ...cur, thinking: cur.thinking + block.thinking })
+                  return next
+                })
+              }
+            }
+          }
+          break
+        case 'result':
+          // Agent completed — finalize will be handled by agent:close
+          break
+      }
+    })
+
+    const unsubAgentClose = window.electronAPI.onAgentClose?.((data) => {
+      const { agentId } = data
+      console.log('[ChatPanel] agentClose:', agentId)
+      // Finalize the agent's message — move streaming text to content
+      const streamState = agentStreamsRef.current.get(agentId)
+      if (streamState?.text) {
+        onMessagesChangeRef.current(prev => prev.map(m => {
+          if (m.agentId === agentId && m.isStreaming) {
+            return {
+              ...m,
+              content: streamState.text,
+              thinking: streamState.thinking || m.thinking,
+              isStreaming: false,
+            }
+          }
+          return m
+        }))
+      } else {
+        // No text received — mark as done with error info if available
+        const agentMsg = messages.find(m => m.agentId === agentId && m.isStreaming)
+        const errorHint = agentStreamsRef.current.get(agentId)?.thinking || ''
+        onMessagesChangeRef.current(prev => prev.map(m => {
+          if (m.agentId === agentId && m.isStreaming) {
+            return { ...m, content: m.content || `(无响应${errorHint ? ': ' + errorHint.slice(0, 100) : ''})`, isStreaming: false }
+          }
+          return m
+        }))
+      }
+      // Clean up stream state
+      setAgentStreams(prev => {
+        const next = new Map(prev)
+        next.delete(agentId)
+        return next
+      })
+      // Check if all agents done
+      const remainingStreams = [...agentStreamsRef.current.keys()].filter(k => k !== agentId)
+      if (remainingStreams.length === 0) {
+        setIsRunning(false)
+        onClaudeRunningRef.current(false)
+      }
+    })
+
+    // ── Agent stderr → show as agent error messages ──
+    const unsubAgentStderr = window.electronAPI.onAgentStderr?.((data) => {
+      setAgentStreams(prev => {
+        const next = new Map(prev)
+        const cur = next.get(data.agentId) || { text: '', thinking: '' }
+        next.set(data.agentId, { ...cur, thinking: cur.thinking + '\n[stderr] ' + data.text })
+        return next
+      })
+    })
+
     return () => {
       unsubEvent()
       unsubClose()
       unsubStatus?.()
       unsubStderr()
+      unsubAgentEvent?.()
+      unsubAgentClose?.()
+      unsubAgentStderr?.()
     }
   }, [])
 
@@ -142,8 +275,23 @@ export const ChatPanel = forwardRef(function ChatPanel({
     const { message } = event
     if (!message?.content) return
 
-    onClaudeConnected(true)
+    onClaudeConnectedRef.current(true)
     thinkingRef.current = ''
+
+    // 如果终端发来事件但 chat 没有活跃 assistant 消息 → 自动创建（终端↔Chat 同步）
+    if (!assistantMessageRef.current) {
+      const autoMsg: ChatMessage = {
+        id: 'a_' + Date.now(),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+        agentIcon: '🖥️',
+        agentName: '终端 Claude',
+      }
+      assistantMessageRef.current = autoMsg
+      onMessagesChangeRef.current(prev => [...prev, autoMsg])
+    }
 
     for (const block of message.content) {
       if (block.type === 'thinking') {
@@ -163,7 +311,6 @@ export const ChatPanel = forwardRef(function ChatPanel({
       }
 
       if (block.type === 'tool_result') {
-        // tool_use 的 id 在 result 的 tool_use_id 里
         const toolUseId = (block as any).tool_use_id
         if (toolUseId) {
           setPendingTools(prev => {
@@ -184,13 +331,16 @@ export const ChatPanel = forwardRef(function ChatPanel({
 
       if (block.type === 'text') {
         const text = block.text || ''
-        onStreamingText(streamingTextRef.current + text)
+        // 关键修复：立即更新 ref，防止快速事件间覆盖
+        const newText = streamingTextRef.current + text
+        streamingTextRef.current = newText
+        onStreamingTextRef.current(newText)
       }
     }
 
     // 更新状态栏 token 信息
     if (message.usage) {
-      onStatusInfo({
+      onStatusInfoRef.current({
         model: message.model || '',
         tokens: message.usage.input_tokens + message.usage.output_tokens,
         cost: 0,
@@ -199,11 +349,11 @@ export const ChatPanel = forwardRef(function ChatPanel({
   }
 
   function handleResultEvent(event: ClaudeResultEvent) {
-    onClaudeRunning(false)
+    onClaudeRunningRef.current(false)
     finalizeAssistantMessage()
 
     if (event.usage) {
-      onStatusInfo({
+      onStatusInfoRef.current({
         model: '',
         tokens: event.usage.input_tokens + event.usage.output_tokens,
         cost: event.total_cost_usd || 0,
@@ -212,11 +362,15 @@ export const ChatPanel = forwardRef(function ChatPanel({
   }
 
   function finalizeAssistantMessage() {
+    // 防止 result 和 close 事件重复触发
+    if (finalizingRef.current) return
+    finalizingRef.current = true
+
     const finalContent = (assistantMessageRef.current?.content || '') + (streamingTextRef.current || '')
     const finalTools = Array.from(pendingTools.values())
 
     if (finalContent || finalTools.length > 0) {
-      onMessagesChange(prev => {
+      onMessagesChangeRef.current(prev => {
         const updated = [...prev]
         const lastMsg = updated[updated.length - 1]
         if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
@@ -233,10 +387,11 @@ export const ChatPanel = forwardRef(function ChatPanel({
       })
     }
 
-    onStreamingText('')
+    onStreamingTextRef.current('')
     setPendingTools(new Map())
     assistantMessageRef.current = null
     thinkingRef.current = ''
+    finalizingRef.current = false
   }
 
   // 发送消息 — Chat 模式：spawn claude -p；终端模式：写入 PTY
@@ -252,8 +407,27 @@ export const ChatPanel = forwardRef(function ChatPanel({
     const actualContent = isCmd ? content.slice(5) : content
     const mentionRegex = /@(\S+)/g
     const mentions = [...actualContent.matchAll(mentionRegex)].map(m => m[1])
+
+    // ── 群聊模式：@mention 路由到多智能体 ──
+    if (groupChatModeRef.current && mentions.length > 0 && onAgentSendGroupRef.current) {
+      // 同步写入终端 PTY（如果终端在运行）
+      const cleanForTerminal = actualContent.replace(/@\S+/g, '').trim()
+      if (cleanForTerminal && onTerminalSend) {
+        onTerminalSend(`[群聊] ${cleanForTerminal}\n`).catch(() => {})
+      }
+      onAgentSendGroupRef.current(content, mentions)
+      return
+    }
+
+    // 通知 App 创建/命名会话
+    if (sessionId) onMessageSent?.(sessionId, actualContent)
+
     // 通知办公室：@角色 → 实时更新员工状态
     mentions.forEach(name => onMentionAgent?.(name, content))
+
+    // 移除 @mention 防止混淆 Claude（非群聊模式）
+    const cleanContent = actualContent.replace(/@\S+/g, '').trim()
+    const contentForClaude = isCmd ? cleanContent : (mentions.length > 0 ? cleanContent : actualContent)
 
     // ── 终端模式：写入 PTY，不 spawn 新进程 ──
     if (terminalMode && onTerminalSend) {
@@ -265,14 +439,16 @@ export const ChatPanel = forwardRef(function ChatPanel({
           await new Promise(r => setTimeout(r, 1500))
         }
 
-        // 写入 PTY（等同于在终端里打字回车）
-        await onTerminalSend(actualContent + '\n')
+        // 写入 PTY（等同于在终端里打字回车）— 使用清理后的内容
+        await onTerminalSend(contentForClaude + '\n')
 
         // Chat 面板的 UI 状态由 terminal status / claude:event 事件驱动
         // 先创建用户消息 + 占位 assistant 消息
         onStreamingText('')
+        streamingTextRef.current = ''
         setPendingTools(new Map())
         thinkingRef.current = ''
+        finalizingRef.current = false
 
         const assistantMsg: ChatMessage = {
           id: 'a_' + Date.now(),
@@ -306,8 +482,13 @@ export const ChatPanel = forwardRef(function ChatPanel({
 
     // ── Chat 模式：spawn claude -p ──
     try {
+      // 同步写入终端 PTY（如果终端在运行）
+      if (onTerminalSend) {
+        onTerminalSend(`[Chat] ${contentForClaude}\n`).catch(() => {})
+      }
+
       const result = await window.electronAPI.claudeSend({
-        content: actualContent,
+        content: contentForClaude,
         projectPath: activeProject.path,
         sessionId: sessionId,
         modelId: activeModelId || undefined,
@@ -324,8 +505,10 @@ export const ChatPanel = forwardRef(function ChatPanel({
       onClaudeConnected(false)
 
       onStreamingText('')
+      streamingTextRef.current = ''  // 同步重置 ref，防止首事件读到旧值
       setPendingTools(new Map())
       thinkingRef.current = ''
+      finalizingRef.current = false
 
       const assistantMsg: ChatMessage = {
         id: 'a_' + Date.now(),
@@ -362,12 +545,12 @@ export const ChatPanel = forwardRef(function ChatPanel({
   const handleStop = useCallback(async () => {
     await window.electronAPI.stopClaude()
     setIsRunning(false)
-    onClaudeRunning(false)
-    onClaudeConnected(false)
+    onClaudeRunningRef.current(false)
+    onClaudeConnectedRef.current(false)
     setConnectionStatus('disconnected')
     setConnectionError('')
     finalizeAssistantMessage()
-  }, [pendingTools])
+  }, [])
 
   return (
     <div className="chat-panel">
@@ -375,6 +558,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
         <span className="chat-project-name">
           {activeProject ? `📂 ${activeProject.name}` : '选择一个项目开始对话'}
         </span>
+        {sessionName && <span className="chat-session-name" title={sessionName}>💬 {sessionName}</span>}
+        {groupChatMode && <span className="chat-mode-badge">👥 群聊模式</span>}
         {connectionStatus === 'connecting' && !connectionError && (
           <div className="chat-connection-connecting">
             <span className="dot-pulse" /> 连接中...
@@ -432,7 +617,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
                   </option>
                 ))}
               </select>
-              <button className="icon-btn" onClick={() => { onMessagesChange(() => []); onStreamingText(''); onSessionIdChange?.(undefined) }} title="新建会话">+</button>
+              <button className="icon-btn" onClick={() => { onMessagesChange(() => []); onStreamingText(''); onSessionIdChange?.('session_' + Date.now().toString(36)) }} title="新建会话">+</button>
             </div>
           )}
         </div>
@@ -465,6 +650,24 @@ export const ChatPanel = forwardRef(function ChatPanel({
           </div>
         )}
 
+        {/* 多智能体流式文本 */}
+        {Array.from(agentStreams.entries()).map(([agentId, state]) => {
+          const agentMsg = messages.find(m => m.agentId === agentId && m.isStreaming)
+          const agentColor = agentMsg?.agentColor || '#6c8cff'
+          const agentIcon = agentMsg?.agentIcon || '🤖'
+          const agentName = agentMsg?.agentName || agentId
+          const hasError = state.thinking?.includes('[stderr]')
+          return (
+            <div key={agentId} className={`streaming-agent-block${hasError ? ' agent-error' : ''}`} style={{ borderLeftColor: hasError ? '#e05555' : agentColor }}>
+              <span className="streaming-agent-label">{agentIcon} {agentName}</span>
+              <div className="streaming-agent-text">
+                {state.text || (hasError ? `⚠️ ${state.thinking.replace(/\[stderr\]/g, '').trim().slice(0, 200)}` : '思考中...')}
+                {!hasError && <span className="cursor-blink">▌</span>}
+              </div>
+            </div>
+          )
+        })}
+
         <div ref={bottomRef} />
       </div>
 
@@ -473,7 +676,9 @@ export const ChatPanel = forwardRef(function ChatPanel({
         onStop={handleStop}
         disabled={!activeProject}
         isRunning={isRunning}
-        team={undefined}
+        team={team}
+        groupChatMode={groupChatMode}
+        onGroupChatModeChange={onGroupChatModeChange}
       />
 
       {/* 快捷审批开关 */}

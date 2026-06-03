@@ -132,21 +132,15 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
   useEffect(() => {
     window.electronAPI?.terminalStatus?.().then((status: any) => {
       if (!status) return
-      setTermState(prev => {
-        // 只在 status 表明运行但本地还是假时才更新
-        if (status.running && !prev.shellRunning) {
-          return {
-            shellRunning: status.running,
-            claudeRunning: status.claudeRunning || false,
-            connected: status.connected || false,
-            sessionId: status.sessionId || prev.sessionId,
-            error: status.error || '',
-          }
-        }
-        return prev
+      setTermState({
+        shellRunning: status.running || status.shellRunning || false,
+        claudeRunning: status.claudeRunning || false,
+        connected: status.connected || false,
+        sessionId: status.sessionId || sessionId || '',
+        error: status.error || '',
       })
     }).catch(() => {})
-  }, [])
+  }, [sessionId])
 
   // 重启 Claude
   const handleRestart = useCallback(() => {
@@ -179,16 +173,7 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
             </>
           )}
 
-          {termState.sessionId && (
-            <>
-              <span className="terminal-status-sep">|</span>
-              <span className="terminal-session-badge" title={termState.sessionId}>
-                📝 会话: {termState.sessionId.slice(0, 16)}...
-              </span>
-            </>
-          )}
-
-          {sessionId && !termState.sessionId && (
+          {sessionId && (
             <>
               <span className="terminal-status-sep">|</span>
               <span className="terminal-session-badge" title={sessionId}>

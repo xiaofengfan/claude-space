@@ -7,20 +7,34 @@ import fs from 'fs'
 import os from 'os'
 import { spawn } from 'child_process'
 import { ClaudeProcess, ClaudeEvent } from './claudeProcess'
+import { AgentPool } from './agentPool'
 import { detectCli, testApiEndpoint, runHealthCheck, getEnvConfig } from './connectionService'
 import { TerminalProcess } from './terminalProcess'
+import { SshService } from './sshService'
+import type { SshServerConfig, DeployTarget } from './sshService'
+import { SshTerminalProcess } from './sshTerminalProcess'
 
 // ── 全局状态 ────────────────────────────────────────────
 
 let mainWindow: BrowserWindow | null = null  // 首个窗口，兼容旧代码引用
-let claudeProcess: ClaudeProcess | null = null
-let terminalProcess: TerminalProcess | null = null
+let claudeProcess: ClaudeProcess | null = null  // 保留单聊向后兼容（路由到 'default' 会话）
+const sessionProcesses = new Map<string, { process: ClaudeProcess; projectPath?: string; createdAt: number }>()
+const agentPool = new AgentPool()              // 多智能体群聊池
+let terminalProcess: TerminalProcess | null = null  // 当前活跃终端（向后兼容）
+const terminalProcesses = new Map<string, TerminalProcess>()  // 会话→终端进程池
+const sshService = new SshService()               // SSH 连接池与文件操作
+const sshTerminals = new Map<string, SshTerminalProcess>()  // serverId→远程终端
+let activeSshTerminal: SshTerminalProcess | null = null
 const windows: BrowserWindow[] = []  // 所有窗口追踪
+
+// Inject settings loader into AgentPool for per-agent model resolution
+agentPool.setSettingsLoader(() => loadSettings())
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || 'E:/claudespace'
 const CLAUDE_HOME = path.join(os.homedir(), '.claude')
 const TASKS_FILE = path.join(os.homedir(), '.claude', 'claude-space-tasks.json')
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'claude-space-settings.json')
+const SESSION_NAMES_FILE = path.join(os.homedir(), '.claude', 'claude-space-session-names.json')
 
 const isDev = !app.isPackaged
 
@@ -72,6 +86,75 @@ function createWindow(projectPath?: string): void {
     : url
 
   win.loadURL(fullUrl)
+}
+
+// ── 文件查看器窗口 ────────────────────────────────────────
+
+function createFileViewerWindow(filePath: string, fileName: string, projectPath?: string): void {
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 700,
+    minHeight: 400,
+    title: `${fileName} — Claude Space`,
+    frame: false,
+    titleBarStyle: 'hidden',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+    show: false,
+    backgroundColor: '#1a1a2e',
+  })
+
+  win.on('ready-to-show', () => win.show())
+
+  win.on('closed', () => {
+    const idx = windows.indexOf(win)
+    if (idx >= 0) windows.splice(idx, 1)
+    if (win === mainWindow) {
+      mainWindow = windows.length > 0 ? windows[0] : null
+    }
+    if (windows.length === 0) {
+      claudeProcess?.kill()
+      app.quit()
+    }
+  })
+
+  windows.push(win)
+  if (!mainWindow) mainWindow = win
+
+  const url = isDev
+    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
+    : `file://${path.join(__dirname, '../dist/index.html')}`
+
+  const params = new URLSearchParams()
+  params.set('fileViewer', '1')
+  params.set('filePath', filePath)
+  params.set('fileName', fileName)
+  if (projectPath) params.set('project', projectPath)
+
+  const fullUrl = `${url}?${params.toString()}`
+  win.loadURL(fullUrl)
+}
+
+// ── 二进制文件检测 ────────────────────────────────────────
+
+function isBinaryExtension(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase()
+  const binaryExts = new Set([
+    '.png','.jpg','.jpeg','.gif','.bmp','.ico','.webp','.svg',
+    '.pdf','.doc','.docx','.xls','.xlsx','.ppt','.pptx',
+    '.zip','.tar','.gz','.rar','.7z',
+    '.exe','.dll','.so','.dylib',
+    '.mp3','.wav','.mp4','.avi','.mov',
+    '.ttf','.otf','.woff','.woff2','.eot',
+    '.pyc','.class','.o','.obj','.lib',
+    '.db','.sqlite','.sqlite3',
+  ])
+  return binaryExts.has(ext)
 }
 
 // ── 菜单 ────────────────────────────────────────────────
@@ -234,8 +317,11 @@ function scanDirectory(dirPath: string, maxDepth: number, depth: number = 0): an
   const result: any[] = []
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'target' && e.name !== '.git' && e.name !== 'dist' && e.name !== '__pycache__')
-    const files = entries.filter(e => e.isFile() && !e.name.startsWith('.'))
+    // 目录：排除 .git / node_modules / target / dist / __pycache__，保留 .claude .github .vscode 等
+    const SKIP_DIRS = new Set(['.git', 'node_modules', 'target', 'dist', '__pycache__'])
+    const dirs = entries.filter(e => e.isDirectory() && !SKIP_DIRS.has(e.name))
+    // 文件：包含隐藏文件（.env .gitignore .eslintrc 等）
+    const files = entries.filter(e => e.isFile())
 
     for (const d of dirs) {
       const children = scanDirectory(path.join(dirPath, d.name), maxDepth, depth + 1)
@@ -327,6 +413,7 @@ interface ModelConfig {
 }
 interface AppSettings {
   version: number; activeModelId: string | null; models: ModelConfig[]
+  autoApproval?: boolean; defaultGroupChat?: boolean
 }
 interface ModelConfigSafe {
   id: string; name: string; provider: string; apiKeyHint: string
@@ -334,6 +421,7 @@ interface ModelConfigSafe {
 }
 interface AppSettingsSafe {
   version: number; activeModelId: string | null; models: ModelConfigSafe[]
+  autoApproval?: boolean; defaultGroupChat?: boolean
 }
 
 function loadSettings(): AppSettings | null {
@@ -368,11 +456,180 @@ function registerIPC(): void {
     }
   })
 
+  // ── 会话池辅助函数 ──
+  function getOrCreateSessionProcess(sessionId: string, opts: {
+    projectPath?: string; model?: string; apiKey?: string; baseUrl?: string
+    permissionMode?: 'auto' | 'manual'
+  }): ClaudeProcess {
+    const existing = sessionProcesses.get(sessionId)
+    if (existing) return existing.process
+
+    const proc = new ClaudeProcess({
+      cwd: opts.projectPath,
+      model: opts.model,
+      apiKey: opts.apiKey,
+      baseUrl: opts.baseUrl,
+      permissionMode: opts.permissionMode || 'auto',
+    })
+
+    proc.on('event', (event: ClaudeEvent) => {
+      mainWindow?.webContents.send('session:event', { sessionId, ...event })
+    })
+    proc.on('status', (s: any) => {
+      mainWindow?.webContents.send('session:status', { sessionId, ...s })
+    })
+    proc.on('stderr', (text: string) => {
+      mainWindow?.webContents.send('session:stderr', { sessionId, text })
+    })
+    proc.on('close', (code: number | null) => {
+      mainWindow?.webContents.send('session:close', { sessionId, code })
+      sessionProcesses.delete(sessionId)
+    })
+    proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
+      mainWindow?.webContents.send('session:permission-prompt', { sessionId, ...prompt })
+    })
+
+    sessionProcesses.set(sessionId, { process: proc, projectPath: opts.projectPath, createdAt: Date.now() })
+    return proc
+  }
+
+  // ── 会话消息发送 ──
   ipcMain.handle('claude:send', async (_event, opts: {
     content: string; projectPath?: string; sessionId?: string; modelId?: string;
     autoApproval?: boolean;
   }) => {
-    // 从设置中解析模型配置
+    let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
+    let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
+    let model: string | undefined = process.env.ANTHROPIC_MODEL
+    if (opts.modelId) {
+      const raw = loadSettings()
+      const cfg = raw?.models.find(m => m.id === opts.modelId)
+      if (cfg) { apiKey = cfg.apiKey || apiKey; baseUrl = cfg.baseUrl || baseUrl; model = cfg.model || model }
+    }
+
+    const sid = opts.sessionId || 'default'
+    const proc = getOrCreateSessionProcess(sid, {
+      projectPath: opts.projectPath, model, apiKey, baseUrl,
+      permissionMode: opts.autoApproval ? 'auto' : 'manual',
+    })
+
+    // Backward compat: also keep claudeProcess reference + event forwarding
+    claudeProcess = proc
+    proc.on('event', (event: ClaudeEvent) => {
+      mainWindow?.webContents.send('claude:event', event)
+    })
+    proc.on('status', (s: any) => {
+      mainWindow?.webContents.send('claude:status-update', s)
+    })
+    proc.on('stderr', (text: string) => {
+      mainWindow?.webContents.send('claude:stderr', text)
+    })
+    proc.on('close', (code: number | null) => {
+      mainWindow?.webContents.send('claude:close', code)
+      if (claudeProcess === proc) claudeProcess = null
+    })
+    proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
+      mainWindow?.webContents.send('claude:permission-prompt', prompt)
+    })
+
+    console.log('[main] claude:send sessionId:', sid, 'contentLen:', opts.content.length)
+    proc.sendPrompt(opts.content)
+    return { success: true, sessionId: sid }
+  })
+
+  ipcMain.handle('claude:write-stdin', async (_event, data: string) => {
+    claudeProcess?.writeStdin(data)
+    return { success: true }
+  })
+
+  ipcMain.handle('claude:stop', async () => {
+    claudeProcess?.kill()
+    claudeProcess = null
+    return { success: true }
+  })
+
+  // ── 多会话管理 IPC ──
+  ipcMain.handle('session:stop', async (_event, sessionId: string) => {
+    const entry = sessionProcesses.get(sessionId)
+    if (entry) {
+      entry.process.kill()
+      sessionProcesses.delete(sessionId)
+      if (claudeProcess === entry.process) claudeProcess = null
+    }
+    return { success: true }
+  })
+
+  ipcMain.handle('session:stop-all', async () => {
+    for (const [id, entry] of sessionProcesses) {
+      entry.process.kill()
+    }
+    sessionProcesses.clear()
+    claudeProcess = null
+    return { success: true }
+  })
+
+  ipcMain.handle('session:list-active', async () => {
+    return Array.from(sessionProcesses.entries()).map(([id, entry]) => ({
+      sessionId: id,
+      projectPath: entry.projectPath,
+      running: entry.process.isRunning,
+      createdAt: entry.createdAt,
+    }))
+  })
+
+  // 会话名持久化
+  ipcMain.handle('session-names:load', async () => {
+    try {
+      if (fs.existsSync(SESSION_NAMES_FILE)) {
+        return JSON.parse(fs.readFileSync(SESSION_NAMES_FILE, 'utf-8'))
+      }
+    } catch {}
+    return {}
+  })
+
+  ipcMain.handle('session-names:save', async (_event, names: Record<string, string>) => {
+    try {
+      const dir = path.dirname(SESSION_NAMES_FILE)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(SESSION_NAMES_FILE, JSON.stringify(names, null, 2), 'utf-8')
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 多智能体群聊 IPC ─────────────────────────────────
+
+  // Agent pool event forwarding to renderer
+  agentPool.on('agent-event', (taggedEvent) => {
+    mainWindow?.webContents.send('agent:event', taggedEvent)
+  })
+  agentPool.on('agent-close', (data) => {
+    mainWindow?.webContents.send('agent:close', data)
+  })
+  agentPool.on('agent-status-update', (data) => {
+    mainWindow?.webContents.send('agent:status-update', data)
+  })
+  agentPool.on('agent-error', (data) => {
+    mainWindow?.webContents.send('agent:status-update', { ...data, running: false, connected: false, error: data.error })
+  })
+  agentPool.on('agent-stderr', (data) => {
+    mainWindow?.webContents.send('agent:stderr', data)
+  })
+  agentPool.on('agent-permission-prompt', (data) => {
+    mainWindow?.webContents.send('agent:permission-prompt', data)
+  })
+
+  // Send a group message to multiple agents
+  ipcMain.handle('agent:send-group', async (_event, opts: {
+    groupId: string; content: string
+    targets: Array<{ agentId: string; agentType: string; agentName: string; agentIcon?: string; agentColor?: string; modelId?: string }>
+    personaContents: Array<{ agentId: string; prompt: string }>
+    projectPath?: string; modelId?: string; autoApproval?: boolean
+  }) => {
+    console.log('[main] agent:send-group groupId:', opts.groupId, 'targets:', opts.targets.length, 'contentLen:', opts.content?.length, 'content:', opts.content?.slice(0, 80))
+
+    // Resolve model config
     let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
     let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
     let model: string | undefined = process.env.ANTHROPIC_MODEL
@@ -387,59 +644,43 @@ function registerIPC(): void {
       }
     }
 
-    if (!claudeProcess) {
-      claudeProcess = new ClaudeProcess({
-        cwd: opts.projectPath,
-        sessionId: opts.sessionId,
-        model,
-        apiKey,
-        baseUrl,
-        permissionMode: opts.autoApproval ? 'auto' : 'manual',
-      })
+    agentPool.setGlobalOptions({
+      cwd: opts.projectPath,
+      model,
+      apiKey,
+      baseUrl,
+      permissionMode: opts.autoApproval ? 'auto' : 'manual',
+    })
 
-      claudeProcess.on('event', (event: ClaudeEvent) => {
-        mainWindow?.webContents.send('claude:event', event)
-      })
-      claudeProcess.on('status', (s: any) => {
-        mainWindow?.webContents.send('claude:status-update', s)
-      })
-      claudeProcess.on('stderr', (text: string) => {
-        mainWindow?.webContents.send('claude:stderr', text)
-      })
-      claudeProcess.on('close', (code: number | null) => {
-        mainWindow?.webContents.send('claude:close', code)
-        claudeProcess = null
-      })
-      // Forward permission prompts to renderer
-      claudeProcess.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
-        mainWindow?.webContents.send('claude:permission-prompt', prompt)
-      })
-    } else {
-      // Process already exists — update session and permission mode
-      const newPermissionMode: 'auto' | 'manual' = opts.autoApproval ? 'auto' : 'manual'
-      claudeProcess.setPermissionMode(newPermissionMode)
-      if (opts.sessionId !== undefined) {
-        claudeProcess.setSessionId(opts.sessionId)
-      } else {
-        claudeProcess.setSessionId(undefined)
+    // Build persona content map
+    const personaContents = new Map<string, string>()
+    if (opts.personaContents) {
+      for (const p of opts.personaContents) {
+        personaContents.set(p.agentId, p.prompt)
       }
     }
 
-    console.log('[main] claude:send contentLen:', opts.content.length, 'modelId:', opts.modelId, 'sessionId:', opts.sessionId, 'autoApproval:', opts.autoApproval)
-    claudeProcess.sendPrompt(opts.content)
+    agentPool.sendGroup({
+      targets: opts.targets,
+      content: opts.content,
+      personaContents,
+    })
+
+    return { success: true, groupId: opts.groupId }
+  })
+
+  ipcMain.handle('agent:stop', async (_event, agentId: string) => {
+    agentPool.stopAgent(agentId)
     return { success: true }
   })
 
-  // Write raw data to Claude's stdin (for permission y/n responses)
-  ipcMain.handle('claude:write-stdin', async (_event, data: string) => {
-    claudeProcess?.writeStdin(data)
+  ipcMain.handle('agent:stop-all', async () => {
+    agentPool.stopAll()
     return { success: true }
   })
 
-  ipcMain.handle('claude:stop', async () => {
-    claudeProcess?.kill()
-    claudeProcess = null
-    return { success: true }
+  ipcMain.handle('agent:status', async () => {
+    return agentPool.getAllStatus()
   })
 
   // 项目扫描
@@ -476,7 +717,7 @@ function registerIPC(): void {
   })
 
   ipcMain.handle('project:scan-directory', async (_event, dirPath: string) => {
-    return scanDirectory(dirPath, 5)
+    return scanDirectory(dirPath, 20)  // 20层深，覆盖绝大多数项目结构
   })
 
   ipcMain.handle('project:open-terminal', async (_event, projectPath: string) => {
@@ -487,10 +728,43 @@ function registerIPC(): void {
   // 文件操作
   ipcMain.handle('file:read', async (_event, filePath: string) => {
     try {
-      return { success: true, content: fs.readFileSync(filePath, 'utf-8') }
+      const buf = fs.readFileSync(filePath)
+      const sample = buf.length > 0 ? buf.slice(0, Math.min(buf.length, 8192)) : Buffer.alloc(0)
+      const isBinary = sample.includes(0x00) || isBinaryExtension(filePath)
+      let content = ''
+      if (!isBinary) {
+        try { content = buf.toString('utf-8') } catch { content = '' }
+      }
+      return { success: true, content, size: buf.length, isBinary }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
+  })
+
+  ipcMain.handle('file:write', async (_event, opts: { filePath: string; content: string }) => {
+    try {
+      fs.writeFileSync(opts.filePath, opts.content, 'utf-8')
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:create', async (_event, opts: { dirPath: string; fileName: string; content?: string }) => {
+    try {
+      const filePath = path.join(opts.dirPath, opts.fileName)
+      fs.writeFileSync(filePath, opts.content || '', 'utf-8')
+      return { success: true, filePath }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:open-in-new-window', async (_event, opts: {
+    filePath: string; fileName: string; projectPath?: string
+  }) => {
+    createFileViewerWindow(opts.filePath, opts.fileName, opts.projectPath)
+    return { success: true }
   })
 
   ipcMain.handle('file:open-dialog', async () => {
@@ -653,6 +927,8 @@ function registerIPC(): void {
         activeModelId: 'env-default',
         models: [envModel],
         autoApproval: false,
+        sshServers: [],
+        deployTargets: [],
       }
       // 同时写入文件
       saveSettings({
@@ -665,6 +941,8 @@ function registerIPC(): void {
           apiKeySource: 'env',
         }],
         autoApproval: false,
+        sshServers: [],
+        deployTargets: [],
       })
       return defaultSettings
     }
@@ -679,6 +957,19 @@ function registerIPC(): void {
         apiKeySource: m.apiKeySource || 'user',
       })),
       autoApproval: raw.autoApproval ?? false,
+      sshServers: (raw.sshServers || []).map(s => ({
+        id: s.id, name: s.name,
+        host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+        port: s.port || 22,
+        username: s.username, authMethod: s.authMethod,
+        passwordHint: s.password ? '****' : '未设置',
+        privateKeyPath: s.privateKeyPath || '',
+        privateKeyHint: s.privateKeyContent ? '已配置 (内联密钥)' : (s.privateKeyPath ? `已配置 (${path.basename(s.privateKeyPath)})` : '未设置'),
+        fingerprint: s.fingerprint,
+        createdAt: s.createdAt || new Date().toISOString(),
+        updatedAt: s.updatedAt || new Date().toISOString(),
+      })),
+      deployTargets: raw.deployTargets || [],
     } as AppSettingsSafe
   })
 
@@ -700,11 +991,31 @@ function registerIPC(): void {
       }
     })
 
+    // Merge SSH servers: keep existing secrets unless new ones provided
+    const existingServers = existing?.sshServers || []
+    const mergedSshServers: SshServerConfig[] = ((settings as any).sshServers || []).map((s: any) => {
+      const existing = existingServers.find((es: any) => es.id === s.id)
+      return {
+        id: s.id, name: s.name,
+        host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+        port: s.port || 22,
+        username: s.username, authMethod: s.authMethod,
+        password: s.newPassword || existing?.password || '',
+        privateKeyPath: s.privateKeyPath || existing?.privateKeyPath || '',
+        privateKeyContent: s.newPrivateKeyContent || existing?.privateKeyContent || '',
+        fingerprint: s.fingerprint || existing?.fingerprint || undefined,
+        createdAt: s.createdAt || existing?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+    })
+
     saveSettings({
       version: settings.version || 1,
       activeModelId: settings.activeModelId,
       models,
       autoApproval: settings.autoApproval ?? false,
+      sshServers: mergedSshServers,
+      deployTargets: (settings as any).deployTargets || [],
     })
     return { success: true }
   })
@@ -826,10 +1137,23 @@ function registerIPC(): void {
   ipcMain.handle('terminal:start', async (_event, opts: {
     cwd?: string; sessionId?: string; cols?: number; rows?: number;
   }) => {
-    // 停掉旧进程
-    claudeProcess?.kill()
-    claudeProcess = null
-    terminalProcess?.kill()
+    const sid = opts.sessionId || 'default'
+
+    // 检查是否已有该会话的终端进程 → 复用
+    const existing = terminalProcesses.get(sid)
+    if (existing) {
+      terminalProcess = existing
+      // 转发已有进程的最新状态
+      mainWindow?.webContents.send('terminal:status', {
+        running: existing.isRunning,
+        shellRunning: existing.isRunning,
+        claudeRunning: existing.isClaudeRunning,
+        connected: existing.isClaudeRunning,
+        sessionId: sid,
+        error: '',
+      })
+      return { success: true }
+    }
 
     // 获取 claude 绝对路径
     const cliInfo = await detectCli()
@@ -850,7 +1174,7 @@ function registerIPC(): void {
       }
     }
 
-    terminalProcess = new TerminalProcess({
+    const proc = new TerminalProcess({
       cwd: opts.cwd,
       sessionId: opts.sessionId,
       claudePath,
@@ -859,19 +1183,27 @@ function registerIPC(): void {
       rows: opts.rows || 40,
     })
 
-    // 事件转发
-    terminalProcess.on('terminal-data', (data: string) => {
-      mainWindow?.webContents.send('terminal:data', data)
+    // 事件转发（仅活跃终端的数据发到渲染器）
+    proc.on('terminal-data', (data: string) => {
+      if (terminalProcess === proc) {
+        mainWindow?.webContents.send('terminal:data', data)
+      }
     })
-    terminalProcess.on('event', (event: any) => {
-      mainWindow?.webContents.send('claude:event', event)
+    proc.on('event', (event: any) => {
+      if (terminalProcess === proc) {
+        mainWindow?.webContents.send('claude:event', event)
+      }
     })
-    terminalProcess.on('status', (s: any) => {
-      mainWindow?.webContents.send('claude:status-update', s)
-      mainWindow?.webContents.send('terminal:status', s)
+    proc.on('status', (s: any) => {
+      if (terminalProcess === proc) {
+        mainWindow?.webContents.send('claude:status-update', s)
+        mainWindow?.webContents.send('terminal:status', s)
+      }
     })
 
-    terminalProcess.start()
+    terminalProcess = proc
+    terminalProcesses.set(sid, proc)
+    proc.start()
     return { success: true }
   })
 
@@ -889,8 +1221,14 @@ function registerIPC(): void {
   })
 
   ipcMain.handle('terminal:kill', async () => {
-    terminalProcess?.kill()
-    terminalProcess = null
+    if (terminalProcess) {
+      // 从池中移除
+      for (const [id, tp] of terminalProcesses) {
+        if (tp === terminalProcess) { terminalProcesses.delete(id); break }
+      }
+      terminalProcess.kill()
+      terminalProcess = null
+    }
     return { success: true }
   })
 
@@ -901,6 +1239,168 @@ function registerIPC(): void {
       sessionId: terminalProcess?.sessionId || null,
       error: terminalProcess?.lastError || '',
     }
+  })
+
+  // ── SSH 远程管理 ──────────────────────────────────────
+
+  ipcMain.handle('ssh:connect', async (_event, serverId: string) => {
+    const raw = loadSettings()
+    const cfg = raw?.sshServers?.find(s => s.id === serverId)
+    if (!cfg) return { success: false, error: 'SSH 服务器配置未找到' }
+    // 清理主机地址：去掉 http:// https:// 和尾部斜杠
+    const cleanCfg = { ...cfg, host: cfg.host.replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim() }
+    return sshService.connect(cleanCfg)
+  })
+
+  ipcMain.handle('ssh:disconnect', async (_event, serverId: string) => {
+    sshService.disconnect(serverId)
+    // 同时关闭该服务器的远程终端
+    const term = sshTerminals.get(serverId)
+    if (term) { term.kill(); sshTerminals.delete(serverId) }
+    if (activeSshTerminal && activeSshTerminal === term) activeSshTerminal = null
+    return { success: true }
+  })
+
+  ipcMain.handle('ssh:status', async () => {
+    if (activeSshTerminal) {
+      return {
+        serverId: activeSshTerminal['options']?.serverId || null,
+        status: activeSshTerminal.isConnected ? 'connected' : 'disconnected',
+        error: activeSshTerminal.lastError,
+        connectedAt: null,
+      }
+    }
+    return { serverId: null, status: 'disconnected', error: '', connectedAt: null }
+  })
+
+  ipcMain.handle('ssh:test-connection', async (_event, config: any) => {
+    const testConfig: SshServerConfig = {
+      id: 'test-' + Date.now().toString(36),
+      name: config.name || 'Test',
+      host: (config.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+      port: config.port || 22,
+      username: config.username,
+      authMethod: config.authMethod || 'password',
+      password: config.newPassword || config.password || '',
+      privateKeyPath: config.privateKeyPath || '',
+      privateKeyContent: config.newPrivateKeyContent || '',
+      fingerprint: config.fingerprint,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    return sshService.testConnection(testConfig)
+  })
+
+  ipcMain.handle('ssh:list-remote-files', async (_event, opts: { serverId: string; remotePath: string; maxDepth?: number }) => {
+    try {
+      const files = await sshService.listDirectory(opts.serverId, opts.remotePath, opts.maxDepth || 3)
+      return files
+    } catch (err: any) {
+      return []
+    }
+  })
+
+  ipcMain.handle('ssh:read-remote-file', async (_event, opts: { serverId: string; remotePath: string }) => {
+    return sshService.readFile(opts.serverId, opts.remotePath)
+  })
+
+  ipcMain.handle('ssh:write-remote-file', async (_event, opts: { serverId: string; remotePath: string; content: string }) => {
+    return sshService.writeFile(opts.serverId, opts.remotePath, opts.content)
+  })
+
+  ipcMain.handle('ssh:exec-command', async (_event, opts: { serverId: string; command: string; timeoutMs?: number }) => {
+    return sshService.execCommand(opts.serverId, opts.command, opts.timeoutMs || 30000)
+  })
+
+  // ── 远程终端 ──
+
+  ipcMain.handle('ssh:start-terminal', async (_event, opts: { serverId: string; cols?: number; rows?: number }) => {
+    // 先关闭旧终端
+    const existing = sshTerminals.get(opts.serverId)
+    if (existing) existing.kill()
+
+    console.log('[main] ssh:start-terminal serverId:', opts.serverId)
+    const term = new SshTerminalProcess({
+      serverId: opts.serverId,
+      sshService,
+      cols: opts.cols || 120,
+      rows: opts.rows || 40,
+    })
+
+    // 事件转发
+    term.on('terminal-data', (data: string) => {
+      if (term === activeSshTerminal) {
+        mainWindow?.webContents.send('ssh:terminal-data', data)
+      }
+    })
+    term.on('status', (s: any) => {
+      console.log('[main] ssh-terminal status:', JSON.stringify(s))
+      if (term === activeSshTerminal) {
+        mainWindow?.webContents.send('ssh:terminal-status', s)
+      }
+    })
+
+    sshTerminals.set(opts.serverId, term)
+    activeSshTerminal = term
+    term.start()
+    return { success: true }
+  })
+
+  ipcMain.on('ssh:terminal-input', (_event, data: string) => {
+    activeSshTerminal?.write(data)
+  })
+
+  ipcMain.on('ssh:terminal-resize', (_event, opts: { cols: number; rows: number }) => {
+    activeSshTerminal?.resize(opts.cols, opts.rows)
+  })
+
+  ipcMain.handle('ssh:terminal-kill', async () => {
+    if (activeSshTerminal) {
+      const serverId = (activeSshTerminal as any).options?.serverId
+      activeSshTerminal.kill()
+      if (serverId) sshTerminals.delete(serverId)
+      activeSshTerminal = null
+    }
+    return { success: true }
+  })
+
+  // ── 部署 ──
+
+  ipcMain.handle('ssh:deploy', async (_event, opts: { projectPath: string; deployTargetId: string }) => {
+    const raw = loadSettings()
+    const target = raw?.deployTargets?.find(t => t.id === opts.deployTargetId)
+    if (!target) return { success: false, error: '部署目标配置未找到' }
+
+    // 检查 SSH 连接
+    const connStatus = sshService.getStatus(target.sshServerId)
+    if (!connStatus.connected) return { success: false, error: `未连接到 SSH 服务器，请先在 SSH 面板连接` }
+
+    // 执行部署前命令
+    for (const cmd of target.preDeployCommands) {
+      mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'pre-command', command: cmd })
+      try { await sshService.execCommand(target.sshServerId, cmd) } catch {}
+    }
+
+    // 上传文件
+    mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'upload', currentFile: '', progress: 0 })
+    const excludes = target.excludePatterns?.length ? target.excludePatterns : ['node_modules', '.git', '.env', 'dist']
+    const result = await sshService.uploadDirectory(
+      target.sshServerId, opts.projectPath, target.remotePath,
+      excludes, (msg: string) => {
+        mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'upload', currentFile: msg, progress: 0 })
+      }
+    )
+
+    if (!result.success) return { success: false, error: result.error, uploaded: result.uploaded }
+
+    // 执行部署后命令
+    for (const cmd of target.postDeployCommands) {
+      mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'post-command', command: cmd })
+      try { await sshService.execCommand(target.sshServerId, cmd) } catch {}
+    }
+
+    mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'completed', uploaded: result.uploaded })
+    return { success: true, uploaded: result.uploaded }
   })
 
   // 窗口控制 — 使用 event.sender 定位正确的窗口
@@ -937,12 +1437,28 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   claudeProcess?.kill()
+  for (const [, entry] of sessionProcesses) entry.process.kill()
+  sessionProcesses.clear()
+  for (const [, tp] of terminalProcesses) tp.kill()
+  terminalProcesses.clear()
+  agentPool.stopAll()
+  for (const [, term] of sshTerminals) term.kill()
+  sshTerminals.clear()
+  sshService.disconnectAll()
   app.quit()
 })
 
 app.on('before-quit', () => {
   claudeProcess?.kill()
-  // 强制关闭所有窗口（保底清理）
+  for (const [, entry] of sessionProcesses) entry.process.kill()
+  sessionProcesses.clear()
+  for (const [, tp] of terminalProcesses) tp.kill()
+  terminalProcesses.clear()
+  agentPool.stopAll()
+  for (const [, term] of sshTerminals) term.kill()
+  sshTerminals.clear()
+  activeSshTerminal = null
+  sshService.disconnectAll()
   for (const w of [...windows]) {
     try { if (!w.isDestroyed()) w.destroy() } catch {}
   }

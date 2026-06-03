@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { AppSettingsSafe, ModelProvider, ModelConfigSafe } from '../types/settings'
+import { SshSettingsSection } from './SshSettingsSection'
 
 const PROVIDER_DEFAULTS: Record<ModelProvider, string> = {
   Claude: 'https://api.anthropic.com',
@@ -348,9 +349,39 @@ export function SettingsDialog({
                 <span className="toggle-slider"></span>
               </label>
             </div>
+
+            {/* ── 默认聊天模式 ── */}
+            <div className="setting-row">
+              <div className="setting-info">
+                <div className="setting-label">默认聊天模式</div>
+                <div className="setting-desc">启动应用时默认使用单聊还是群聊模式</div>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox"
+                  checked={settings?.defaultGroupChat ?? false}
+                  onChange={(e) => {
+                    if (!settings) return
+                    onSettingsChange({ ...settings, defaultGroupChat: e.target.checked })
+                  }}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+              <span style={{ marginLeft: 8, fontSize: 12, color: '#888' }}>
+                {settings?.defaultGroupChat ? '👥 群聊' : '👤 单聊'}
+              </span>
+            </div>
           </div>
 
           {/* ── 工作区 ── */}
+          <SshSettingsSection
+            servers={settings?.sshServers || []}
+            onServersChange={(sshServers) => {
+              if (settings) {
+                onSettingsChange({ ...settings, sshServers: sshServers as any })
+              }
+            }}
+          />
+
           <div className="setting-group">
             <h3>📁 工作区路径</h3>
             <label style={{ fontSize: 13, color: '#aaa' }}>默认: E:\claudespace</label>

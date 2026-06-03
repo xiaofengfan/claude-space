@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { ProjectInfo, TaskItem, ChatMessage, SessionInfo } from './types'
+import { ProjectInfo, TaskItem, ChatMessage, SessionInfo, ToolCall } from './types'
 import type { AppSettingsSafe } from './types/settings'
 import { MenuBar, MenuGroup } from './components/MenuBar'
 import { ProjectBrowser } from './components/ProjectBrowser'
@@ -7,23 +7,44 @@ import { ProjectManagerDialog } from './components/ProjectManagerDialog'
 import { ProjectNav } from './components/ProjectNav'
 import { ChatPanel } from './components/ChatPanel'
 import { TaskStats } from './components/TaskStats'
+import { TaskPlanList } from './components/TaskPlanList'
 import { TaskMonitor } from './components/TaskMonitor'
 import { SessionList } from './components/SessionList'
 import { SettingsDialog } from './components/SettingsDialog'
 import { WelcomePage } from './components/WelcomePage'
 import { ProjectSwitchDialog } from './components/ProjectSwitchDialog'
 import { PixelOffice } from './components/PixelOffice'
+import { SshConnectionPanel } from './components/SshConnectionPanel'
+import { RemoteFileBrowser } from './components/RemoteFileBrowser'
+import { DeploymentPanel } from './components/DeploymentPanel'
+import { RemoteTerminalPanel } from './components/RemoteTerminalPanel'
 import { StatusBar } from './components/StatusBar'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { TerminalPanel } from './components/TerminalPanel'
 import { GitPanel } from './components/GitPanel'
 import { GitSlidePanel } from './components/GitSlidePanel'
 import { ApprovalDialog } from './components/ApprovalDialog'
+import { FileEditor } from './components/FileEditor'
+import { FileViewerWindow } from './components/FileViewerWindow'
+import { AssistantPanel } from './components/AssistantPanel'
 import { useSplitter } from './hooks/useSplitter'
 import { useTaskSync, ApprovalRequest } from './hooks/useTaskSync'
 
 export default function App() {
-  const urlProject = new URLSearchParams(window.location.search).get('project')
+  const searchParams = new URLSearchParams(window.location.search)
+  const urlProject = searchParams.get('project')
+  const isFileViewer = searchParams.get('fileViewer') === '1'
+  const viewerFilePath = searchParams.get('filePath') || ''
+  const viewerFileName = searchParams.get('fileName') || ''
+
+  // File viewer window: simplified layout
+  if (isFileViewer && viewerFilePath) {
+    return <FileViewerWindow
+      filePath={viewerFilePath}
+      fileName={viewerFileName}
+      projectPath={urlProject || undefined}
+    />
+  }
 
 const DEFAULT_TEAM = [
   { id: 'pm', name: '王经理', role: '项目经理', skills: '进度管理', agentType: 'Coordinator', status: 'working', color: '#4a7cf7' },
@@ -41,7 +62,7 @@ const DEFAULT_TEAM = [
     (localStorage.getItem('claude-space-theme') as 'dark' | 'light') || 'dark'
   )
   const [leftView, setLeftView] = useState<'files' | 'sessions' | 'docs' | 'git'>('files')
-  const [rightView, setRightView] = useState<'tasks' | 'office' | 'connection'>('tasks')
+  const [rightView, setRightView] = useState<'tasks' | 'office' | 'connection' | 'plan' | 'assistant' | 'ssh' | 'remote-files' | 'deploy'>('tasks')
   const [showSettings, setShowSettings] = useState(false)
   const [showProjectManager, setShowProjectManager] = useState(false)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
@@ -58,12 +79,128 @@ const DEFAULT_TEAM = [
   const [team, setTeam] = useState<any[]>([])
   const [statusInfo, setStatusInfo] = useState({ model: '', tokens: 0, cost: 0 })
   const [currentSessionId, setCurrentSessionId] = useState<string | undefined>()
+  // ── 活跃会话管理 + 名称持久化 ──
+  const [activeSessions, setActiveSessions] = useState<Array<{ id: string; name: string; running?: boolean; connected?: boolean }>>([])
+  const [sessionNames, setSessionNames] = useState<Record<string, string>>({})
+
+  // 加载持久化的会话名
+  useEffect(() => {
+    window.electronAPI.loadSessionNames?.().then(names => {
+      if (names && Object.keys(names).length > 0) setSessionNames(names)
+    }).catch(() => {})
+  }, [])
+
+  function saveSessionName(sessionId: string, name: string) {
+    setSessionNames(prev => {
+      const next = { ...prev, [sessionId]: name }
+      window.electronAPI.saveSessionNames?.(next).catch(() => {})
+      return next
+    })
+  }
+
+  function getOrCreateSession(sid: string): string {
+    setActiveSessions(prev => {
+      if (prev.find(s => s.id === sid)) return prev
+      const existingName = sessionNames[sid] || ''
+      return [...prev, { id: sid, name: existingName || getDefaultSessionName(prev.length) }]
+    })
+    return sid
+  }
+
+  function ensureCurrentSession(): string {
+    if (currentSessionId) {
+      getOrCreateSession(currentSessionId)
+      return currentSessionId
+    }
+    // No session yet — create one and switch to it
+    const id = 'session_' + Date.now().toString(36)
+    setCurrentSessionId(id)
+    setActiveSessions(prev => [...prev, { id, name: getDefaultSessionName(prev.length) }])
+    return id
+  }
+
+  function getDefaultSessionName(count: number): string {
+    return `会话 ${count + 1}`
+  }
+
+  function autoNameSession(sessionId: string, message: string) {
+    const clean = message.replace(/@\S+/g, '').trim()
+    if (!clean || clean.length < 3) return
+    const name = clean.length > 24 ? clean.slice(0, 24) + '...' : clean
+    // Always update with the first meaningful message
+    setActiveSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name } : s))
+    saveSessionName(sessionId, name)
+  }
+
+  function createNewSession() {
+    const id = 'session_' + Date.now().toString(36)
+    setActiveSessions(prev => [...prev, { id, name: getDefaultSessionName(prev.length) }])
+    setMessages([])
+    setStreamingText('')
+    setCurrentSessionId(id)
+  }
+
+  function switchToSession(sessionId: string) {
+    setCurrentSessionId(sessionId)
+    // 加入活跃列表
+    getOrCreateSession(sessionId)
+    // Load session messages from history
+    window.electronAPI.getSessionTranscript?.(sessionId).then(t => {
+      if (t?.events?.length) {
+        const msgs = t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant')
+          .map((e: any) => parseSessionMessage(e))
+          .filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content)
+        if (msgs.length > 0) setMessages(msgs)
+        else { setMessages([]); setStreamingText('') }
+      } else { setMessages([]); setStreamingText('') }
+    }).catch(() => { setMessages([]); setStreamingText('') })
+    // 切换终端
+    if (activeProject) {
+      window.electronAPI.terminalStart({
+        cwd: activeProject.path,
+        sessionId: sessionId,
+      }).then(() => setTerminalReady(true)).catch(() => {})
+    }
+  }
+
+  function deleteSession(sessionId: string) {
+    window.electronAPI.sessionStop?.(sessionId)
+    setActiveSessions(prev => {
+      const next = prev.filter(s => s.id !== sessionId)
+      if (sessionId === currentSessionId) {
+        if (next.length > 0) {
+          setCurrentSessionId(next[0].id)
+          switchToSession(next[0].id)
+        } else {
+          setCurrentSessionId(undefined)
+          setMessages([])
+          setStreamingText('')
+        }
+      }
+      return next
+    })
+  }
+
+  // 获取会话显示名（优先持久化名）
+  function getSessionDisplayName(sessionId: string): string {
+    const active = activeSessions.find(s => s.id === sessionId)
+    if (active?.name && !active.name.startsWith('会话 ')) return active.name
+    if (sessionNames[sessionId]) return sessionNames[sessionId]
+    return active?.name || sessionId.slice(0, 12) + '...'
+  }
   const [appSettings, setAppSettings] = useState<AppSettingsSafe | null>(null)
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null)
   const [monitorEvents, setMonitorEvents] = useState<any[]>([])
-  const [chatMode, setChatMode] = useState<'chat' | 'terminal'>('chat')
+  // ── 文件标签系统 ──
+  interface FileTab { id: string; path: string; name: string; isDirty?: boolean }
+  const [fileTabs, setFileTabs] = useState<FileTab[]>([])
+  const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  const openFile = activeTabId ? fileTabs.find(t => t.id === activeTabId) || null : null
+  const [groupChatMode, setGroupChatMode] = useState(false)
+  const [chatMode, setChatMode] = useState<'chat' | 'terminal' | 'editor' | 'remote-terminal'>('chat')
   const [terminalReady, setTerminalReady] = useState(false)
   const [terminalClaudeRunning, setTerminalClaudeRunning] = useState(false)
+  const [sshStatus, setSshStatus] = useState<{ serverId: string | null; status: string; error: string }>({ serverId: null, status: 'disconnected', error: '' })
 
   const leftSplitter = useSplitter({ direction: 'horizontal', initialSize: 260, minSize: 180, maxSize: 420 })
   const rightSplitter = useSplitter({ direction: 'horizontal', initialSize: 340, minSize: 280, maxSize: 560, reverse: true })
@@ -103,6 +240,7 @@ const DEFAULT_TEAM = [
     try {
       const s = await window.electronAPI.loadSettings()
       setAppSettings(s)
+      if (s?.defaultGroupChat) setGroupChatMode(true)
     } catch {}
   }
   const handleSaveSettings = useCallback(async (newSettings: AppSettingsSafe) => {
@@ -118,14 +256,19 @@ const DEFAULT_TEAM = [
     setMessages([])
     setStreamingText('')
     setLeftView('files')  // 默认显示完整文件树
+    // 切换项目 → 重置所有团队状态为 idle
+    setTeam(prev => {
+      const base = prev.length ? prev : DEFAULT_TEAM
+      return base.map(e => ({ ...e, status: 'idle' as const }))
+    })
     try { setSessions(await window.electronAPI.listSessions(project.path)) } catch {}
     try {
       const recent = await window.electronAPI.getRecentSession?.(project.path)
       if (recent?.messages?.length) {
         const msgs = recent.messages
           .filter((m: any) => m.type === 'user' || m.type === 'assistant')
-          .map((m: any) => ({ id: m.uuid || Math.random().toString(36), role: (m.type === 'user' ? 'user' as const : 'assistant' as const), content: extractContent(m), timestamp: Date.now() - 1000 }))
-          .filter((m: ChatMessage) => m.content)
+          .map((m: any) => parseSessionMessage(m))
+          .filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content)
         if (msgs.length > 0) setMessages(msgs)
         if (recent?.sessionId) setCurrentSessionId(recent.sessionId)
       }
@@ -142,10 +285,64 @@ const DEFAULT_TEAM = [
     } catch { /* 非关键 */ }
   }, [])
 
-  function extractContent(m: any): string {
-    if (!m.message?.content) return ''
-    if (Array.isArray(m.message.content)) return m.message.content.map((c: any) => c.type === 'text' ? c.text : c.type === 'tool_use' ? `[🔧 ${c.name}]` : '').filter(Boolean).join('\n')
-    return typeof m.message.content === 'string' ? m.message.content : ''
+  // 解析会话历史消息 — 保留 tool_use/tool_result/thinking 结构
+  function getFileTabIcon(name: string): string {
+    const ext = name.split('.').pop()?.toLowerCase()
+    const map: Record<string, string> = {
+      ts:'🔷',tsx:'⚛️',js:'🟨',jsx:'⚛️',css:'🎨',scss:'🎨',
+      html:'🌐',md:'📝',json:'📋',yaml:'⚙️',yml:'⚙️',
+      py:'🐍',java:'☕',xml:'📰',sql:'🗄️',sh:'💻',txt:'📄',
+    }
+    return map[ext || ''] || '📄'
+  }
+
+  function parseSessionMessage(m: any): ChatMessage | null {
+    if (!m.message?.content) return null
+    const blocks: any[] = Array.isArray(m.message.content)
+      ? m.message.content
+      : [{ type: 'text', text: String(m.message.content) }]
+
+    let textContent = ''
+    let thinking = ''
+    const toolCalls: ToolCall[] = []
+    const pendingTools = new Map<string, ToolCall>()
+
+    for (const block of blocks) {
+      if (block.type === 'text') {
+        textContent += (textContent ? '\n' : '') + (block.text || '')
+      } else if (block.type === 'thinking') {
+        thinking += (thinking ? '\n' : '') + (block.thinking || '')
+      } else if (block.type === 'tool_use') {
+        const tool: ToolCall = {
+          id: block.id || Math.random().toString(36),
+          name: block.name || 'unknown',
+          input: block.input || {},
+          isComplete: false,
+        }
+        pendingTools.set(tool.id, tool)
+        toolCalls.push(tool)
+      } else if (block.type === 'tool_result') {
+        const toolUseId = (block as any).tool_use_id
+        if (toolUseId) {
+          const existing = pendingTools.get(toolUseId)
+          if (existing) {
+            existing.result = typeof block.content === 'string'
+              ? block.content
+              : JSON.stringify(block.content)
+            existing.isComplete = true
+          }
+        }
+      }
+    }
+
+    return {
+      id: m.uuid || Math.random().toString(36),
+      role: m.type === 'user' ? 'user' : 'assistant',
+      content: textContent,
+      thinking: thinking || undefined,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      timestamp: Date.now() - 1000,
+    }
   }
 
   const handleSwitchProject = useCallback(async (project: ProjectInfo) => {
@@ -221,6 +418,92 @@ const DEFAULT_TEAM = [
       timestamp: Date.now(), agentIcon: emp.icon || '👤', agentName: emp.name,
     }])
   }, [team, activeProject])
+
+  // ── 群聊：多智能体消息发送 ─────────────────────────
+  const handleAgentSendGroup = useCallback(async (content: string, targetNames: string[]) => {
+    if (!activeProject) return
+    const currentTeam = team.length ? team : DEFAULT_TEAM
+    const rawContent = content.replace(/@\S+/g, '').trim()
+
+    // Match targets from team
+    // @all → expand to all team members
+    let resolvedNames = targetNames
+    if (targetNames.includes('all') || targetNames.includes('全员')) {
+      resolvedNames = currentTeam.map((e: any) => e.name)
+    }
+
+    const teamTargets = resolvedNames.map(mentionName => {
+      const emp = currentTeam.find((e: any) =>
+        e.name === mentionName || e.role === mentionName ||
+        e.name.includes(mentionName) || mentionName.includes(e.name))
+      if (!emp) return null
+      return {
+        agentId: emp.id,
+        agentType: emp.agentType || 'CodeExplorer',
+        agentName: emp.name,
+        agentIcon: emp.icon || '🤖',
+        agentColor: emp.color || '#888',
+        modelId: emp.modelId,  // 逐智能体模型绑定
+      }
+    }).filter(Boolean) as Array<{
+      agentId: string; agentType: string; agentName: string
+      agentIcon: string; agentColor: string; modelId?: string
+    }>
+
+    if (teamTargets.length === 0) return
+    const groupId = 'group_' + Date.now().toString(36)
+
+    // Build persona prompts for each agent
+    const personaContents = teamTargets.map(t => {
+      let prompt = ''
+      // Use personas from the personas module (imported inline for simplicity)
+      const personaMap: Record<string, string> = {
+        Coordinator: `[ROLE: 项目协调者 — ${t.agentName}]\n你是项目协调者，负责统筹协调和任务分解。回复简洁有条理，用列表形式。`,
+        Architect: `[ROLE: 系统架构师 — ${t.agentName}]\n你是系统架构师，负责技术方案设计和架构评审。先给整体思路，再给具体方案和利弊分析。`,
+        Implementer: `[ROLE: 高级开发工程师 — ${t.agentName}]\n你是高级开发工程师，负责代码实现。写代码前先说明方案，严格遵循项目现有规范。`,
+        SecurityReviewer: `[ROLE: 安全审查员 — ${t.agentName}]\n你是安全审查员，按严重程度分类报告漏洞，引用具体漏洞类型，给出修复代码。`,
+        CodeExplorer: `[ROLE: 代码探索者 — ${t.agentName}]\n你是代码探索者，分析代码并给出文件路径和行号，解释逻辑和数据流。`,
+      }
+      prompt = personaMap[t.agentType] || personaMap['CodeExplorer']
+      return { agentId: t.agentId, prompt }
+    })
+
+    // Create user message
+    const userMsg: ChatMessage = {
+      id: 'u_' + Date.now().toString(36),
+      role: 'user', content,
+      timestamp: Date.now(),
+      agentIcon: '👑', agentName: '控制人',
+      groupId,
+    }
+
+    // Create placeholder messages for each target agent
+    const placeholders: ChatMessage[] = teamTargets.map(a => ({
+      id: `a_${a.agentId}_${Date.now().toString(36)}`,
+      role: 'assistant' as const, content: '',
+      timestamp: Date.now(), isStreaming: true,
+      agentIcon: a.agentIcon, agentName: a.agentName,
+      agentType: a.agentType, agentId: a.agentId,
+      agentColor: a.agentColor, groupId,
+    }))
+
+    setMessages(prev => [...prev, userMsg, ...placeholders])
+
+    // Send to main process
+    try {
+      await window.electronAPI.agentSendGroup({
+        groupId,
+        content: rawContent,
+        targets: teamTargets,
+        personaContents,
+        projectPath: activeProject.path,
+        modelId: appSettings?.activeModelId || undefined,
+        autoApproval: true, // group chat always auto-approves for now
+      })
+    } catch (e) {
+      console.error('agentSendGroup error:', e)
+    }
+  }, [activeProject, team, appSettings])
 
   // Real-time task sync from Claude events
   useTaskSync({
@@ -330,6 +613,51 @@ const DEFAULT_TEAM = [
     setChatMode('chat')
   }, [])
 
+  // 文件打开/关闭（多标签）
+  const handleOpenFile = useCallback((filePath: string, fileName: string) => {
+    setFileTabs(prev => {
+      const existing = prev.find(t => t.path === filePath)
+      if (existing) {
+        setActiveTabId(existing.id)
+        return prev
+      }
+      const tabId = 'tab_' + Date.now().toString(36)
+      setActiveTabId(tabId)
+      return [...prev, { id: tabId, path: filePath, name: fileName }]
+    })
+    setChatMode('editor')
+  }, [])
+
+  const handleCloseTab = useCallback((tabId: string) => {
+    setFileTabs(prev => {
+      const idx = prev.findIndex(t => t.id === tabId)
+      const next = prev.filter(t => t.id !== tabId)
+      if (next.length === 0) {
+        setActiveTabId(null)
+        setChatMode('chat')
+      } else if (activeTabId === tabId) {
+        const newIdx = Math.min(idx, next.length - 1)
+        setActiveTabId(next[newIdx]?.id || null)
+      }
+      return next
+    })
+  }, [activeTabId])
+
+  const handleCloseFile = useCallback(() => {
+    if (activeTabId) handleCloseTab(activeTabId)
+  }, [activeTabId, handleCloseTab])
+
+  const handleOpenFileInNewWindow = useCallback(() => {
+    const currentFile = activeTabId ? fileTabs.find(t => t.id === activeTabId) : null
+    if (currentFile) {
+      window.electronAPI.openFileInNewWindow({
+        filePath: currentFile.path,
+        fileName: currentFile.name,
+        projectPath: activeProject?.path,
+      })
+    }
+  }, [fileTabs, activeTabId, activeProject])
+
   // 重新启动终端中的 Claude
   const handleRestartTerminalClaude = useCallback(async () => {
     await window.electronAPI.terminalRestart()
@@ -362,6 +690,121 @@ const DEFAULT_TEAM = [
     return () => cleanup?.()
   }, [])
 
+  // 办公室员工状态与智能体活动同步
+  useEffect(() => {
+    const toolToAgentType: Record<string, string> = {
+      Bash: 'Implementer', Write: 'Implementer', Edit: 'Implementer',
+      Read: 'CodeExplorer', Glob: 'CodeExplorer', Grep: 'CodeExplorer',
+      WebFetch: 'CodeExplorer', WebSearch: 'CodeExplorer',
+      Agent: 'Coordinator', Workflow: 'Coordinator',
+      TaskCreate: 'Coordinator', TaskUpdate: 'Coordinator',
+      AskUserQuestion: 'Coordinator',
+    }
+    // Track tool_use_id → agentType to properly decrement on tool_result
+    const activeToolIds = new Map<string, string>()
+
+    function computeAgentActiveCounts(): Map<string, number> {
+      const counts = new Map<string, number>()
+      for (const agentType of activeToolIds.values()) {
+        counts.set(agentType, (counts.get(agentType) || 0) + 1)
+      }
+      return counts
+    }
+
+    function syncTeamStatus() {
+      const activeCounts = computeAgentActiveCounts()
+      setTeam(prev => {
+        const base = prev.length ? prev : DEFAULT_TEAM
+        return base.map(e => ({
+          ...e,
+          status: activeCounts.has(e.agentType) ? 'busy' as const : 'idle' as const,
+        }))
+      })
+    }
+
+    const unsubClaude = window.electronAPI.onClaudeEvent((event: any) => {
+      // 进程启动 → 全部闲置（新 session 重置所有状态）
+      if (event.type === 'system' && event.subtype === 'init') {
+        activeToolIds.clear()
+        setTeam(prev => {
+          const base = prev.length ? prev : DEFAULT_TEAM
+          return base.map(e => ({ ...e, status: 'idle' as const }))
+        })
+        return
+      }
+      // 进程关闭 → 全部闲置
+      if (event.type === 'close') {
+        activeToolIds.clear()
+        setTeam(prev => {
+          const base = prev.length ? prev : DEFAULT_TEAM
+          return base.map(e => ({ ...e, status: 'idle' as const }))
+        })
+        return
+      }
+      // assistant 事件 → tool_use 增加活跃计数，tool_result 减少
+      if (event.type === 'assistant' && event.message?.content) {
+        let changed = false
+        for (const block of event.message.content) {
+          if (block.type === 'tool_use' && block.id) {
+            const agentType = toolToAgentType[block.name] || 'Implementer'
+            activeToolIds.set(block.id, agentType)
+            changed = true
+          }
+          if (block.type === 'tool_result') {
+            const toolUseId = (block as any).tool_use_id
+            if (toolUseId && activeToolIds.has(toolUseId)) {
+              activeToolIds.delete(toolUseId)
+              changed = true
+            }
+          }
+        }
+        if (changed) syncTeamStatus()
+      }
+      // user 事件 (replay) — 也可能包含 tool_result
+      if (event.type === 'user' && event.message?.content) {
+        let changed = false
+        for (const block of event.message.content) {
+          if (block.type === 'tool_result') {
+            const toolUseId = (block as any).tool_use_id
+            if (toolUseId && activeToolIds.has(toolUseId)) {
+              activeToolIds.delete(toolUseId)
+              changed = true
+            }
+          }
+        }
+        if (changed) syncTeamStatus()
+      }
+      // result → 所有工具完成
+      if (event.type === 'result') {
+        activeToolIds.clear()
+        setTeam(prev => {
+          const base = prev.length ? prev : DEFAULT_TEAM
+          return base.map(e => ({ ...e, status: 'idle' as const }))
+        })
+      }
+    })
+
+    // ── 群聊 AgentPool 状态同步到 team ──
+    const unsubAgentStatus = window.electronAPI.onAgentStatusUpdate?.((data: any) => {
+      setTeam(prev => {
+        const base = prev.length ? prev : DEFAULT_TEAM
+        return base.map(e => {
+          if (e.id === data.agentId) {
+            // error → idle, running → busy, otherwise → idle
+            const newStatus = data.error ? 'idle' as const : (data.running ? 'busy' as const : 'idle' as const)
+            return { ...e, status: newStatus }
+          }
+          return e
+        })
+      })
+    })
+
+    return () => {
+      unsubClaude?.()
+      unsubAgentStatus?.()
+    }
+  }, [])
+
   // Model config
   const activeModelConfig = appSettings?.models?.find(m => m.id === appSettings.activeModelId) || null
   const modelList = appSettings?.models || []
@@ -377,7 +820,7 @@ const DEFAULT_TEAM = [
   const menus: MenuGroup[] = [
     {
       label: '文件', items: [
-        { label: '新建会话', shortcut: 'Ctrl+N', action: () => { setMessages([]); setStreamingText(''); setCurrentSessionId(undefined) } },
+        { label: '新建会话', shortcut: 'Ctrl+N', action: () => createNewSession() },
         { label: '选择项目...', shortcut: 'Ctrl+O', action: openProjectManager },
         { label: '新建项目...', shortcut: 'Ctrl+Shift+N', action: handleNewProject },
         { divider: true, label: '' },
@@ -403,9 +846,8 @@ const DEFAULT_TEAM = [
         { label: '项目文档', shortcut: 'Ctrl+3', action: () => setLeftView('docs') },
         ...(activeProject ? [
           { divider: true, label: '' },
-          { label: '任务面板', shortcut: 'Ctrl+4', action: () => setRightView('tasks') },
-          { label: '办公室视图', shortcut: 'Ctrl+5', action: () => setRightView('office') },
-          { label: '连接管理', shortcut: 'Ctrl+6', action: () => setRightView('connection') },
+          { label: '任务看板', shortcut: 'Ctrl+4', action: () => setRightView('tasks') },
+          { label: '办公室视图', shortcut: 'Ctrl+6', action: () => setRightView('office') },
         ] : []),
       ],
     },
@@ -423,7 +865,27 @@ const DEFAULT_TEAM = [
         { label: `Tokens: ${statusInfo.tokens.toLocaleString()}`, disabled: true },
       ],
     },
-    { label: '关于', items: [{ label: 'Claude Space v0.3.0', disabled: true }] },
+    {
+      label: '调试', items: [
+        { label: '开发者工具', shortcut: 'F12', action: () => window.electronAPI.on?.('toggle-devtools', () => {}) },
+        ...(activeProject ? [
+          { divider: true, label: '' },
+          { label: '任务面板', shortcut: 'Ctrl+4', action: () => setRightView('tasks') },
+          { label: '任务计划', shortcut: 'Ctrl+5', action: () => setRightView('plan') },
+          { label: '连接管理', shortcut: 'Ctrl+7', action: () => setRightView('connection') },
+        ] : []),
+      ],
+    },
+    {
+      label: 'SSH', items: [
+        { label: 'SSH 远程连接', shortcut: 'Ctrl+8', action: () => setRightView('ssh') },
+        { divider: true, label: '' },
+        { label: '🌐 远程终端', action: () => setChatMode('remote-terminal') },
+        { label: '📁 远程文件浏览', action: () => setRightView('remote-files') },
+        { label: '🚀 项目部署', action: () => setRightView('deploy') },
+      ],
+    },
+    { label: '关于', items: [{ label: 'Claude Space v1.1.0', disabled: true }] },
   ]
 
   const noProject = !activeProject
@@ -455,20 +917,22 @@ const DEFAULT_TEAM = [
                 <button className={leftView === 'git' ? 'active' : ''} onClick={() => setLeftView('git')}>⎇ Git</button>
               </div>
               {leftView === 'files' && (
-                <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="files" />
+                <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="files" onOpenFile={handleOpenFile} projectPath={activeProject?.path} />
               )}
               {leftView === 'sessions' && (
-                <SessionList sessions={sessions} activeProject={activeProject}
-                  onSelectSession={async (sid) => {
-                    setCurrentSessionId(sid)
-                    try { const t = await window.electronAPI.getSessionTranscript(sid)
-                      if (t?.events?.length) setMessages(t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant').map((e: any) => ({ id: e.uuid || Math.random().toString(36), role: (e.type === 'user' ? 'user' as const : 'assistant' as const), content: extractContent(e), timestamp: Date.now() - 1000 })).filter((m: ChatMessage) => m.content))
-                    } catch {}
-                  }}
-                  onNewSession={() => { setMessages([]); setStreamingText(''); setCurrentSessionId(undefined) }} />
+                <SessionList
+                  sessions={sessions}
+                  activeProject={activeProject}
+                  activeSessionId={currentSessionId}
+                  activeSessions={activeSessions}
+                  sessionNames={sessionNames}
+                  onSelectSession={(sid) => switchToSession(sid)}
+                  onNewSession={createNewSession}
+                  onDeleteSession={deleteSession}
+                />
               )}
               {leftView === 'docs' && (
-                <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="docs" />
+                <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="docs" onOpenFile={handleOpenFile} projectPath={activeProject?.path} />
               )}
               {leftView === 'git' && (
                 <GitPanel projectPath={activeProject?.path} />
@@ -489,9 +953,33 @@ const DEFAULT_TEAM = [
                     className={`mode-switch-btn ${chatMode === 'terminal' ? 'active' : ''}`}
                     onClick={handleSwitchToTerminal}
                   >🖥️ Terminal</button>
+                  <button
+                    className={`mode-switch-btn ${chatMode === 'remote-terminal' ? 'active' : ''}`}
+                    onClick={() => setChatMode('remote-terminal')}
+                  >🌐 远程终端</button>
                 </div>
+                {/* ── 文件标签栏 ── */}
+                {fileTabs.length > 0 && (
+                  <div className="file-tab-bar">
+                    {fileTabs.map(tab => (
+                      <div
+                        key={tab.id}
+                        className={`file-tab ${tab.id === activeTabId && chatMode === 'editor' ? 'active' : ''}`}
+                        onClick={() => { setChatMode('editor'); setActiveTabId(tab.id) }}
+                        title={tab.path}
+                      >
+                        <span className="file-tab-icon">{getFileTabIcon(tab.name)}</span>
+                        <span className="file-tab-name">{tab.name}</span>
+                        {tab.isDirty && <span className="file-tab-dirty">●</span>}
+                        <span className="file-tab-close" onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id) }}>×</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <span className="mode-switch-hint">
-                  {chatMode === 'chat' ? '结构化富 UI 模式' : '原生 CLI 终端模式 — 与 Chat 同步'}
+                  {chatMode === 'chat' ? '结构化富 UI 模式'
+                    : chatMode === 'terminal' ? '原生 CLI 终端模式 — 与 Chat 同步'
+                    : '文件编辑模式'}
                 </span>
               </div>
 
@@ -510,7 +998,7 @@ const DEFAULT_TEAM = [
                   onSelectSession={async (sid) => {
                     setCurrentSessionId(sid)
                     try { const t = await window.electronAPI.getSessionTranscript(sid)
-                      if (t?.events?.length) setMessages(t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant').map((e: any) => ({ id: e.uuid || Math.random().toString(36), role: (e.type === 'user' ? 'user' as const : 'assistant' as const), content: extractContent(e), timestamp: Date.now() - 1000 })).filter((m: ChatMessage) => m.content))
+                      if (t?.events?.length) setMessages(t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant').map((e: any) => parseSessionMessage(e)).filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content))
                     } catch {}
                   }}
                   autoApproval={autoApproval}
@@ -521,6 +1009,26 @@ const DEFAULT_TEAM = [
                     await window.electronAPI.saveSettings(updated)
                   }}
                   onMentionAgent={handleMentionAgent}
+                  groupChatMode={groupChatMode}
+                  onGroupChatModeChange={async (v: boolean) => {
+                    setGroupChatMode(v)
+                    if (appSettings) {
+                      const updated = { ...appSettings, defaultGroupChat: v }
+                      setAppSettings(updated)
+                      await window.electronAPI.saveSettings(updated)
+                    }
+                  }}
+                  team={(team.length ? team : DEFAULT_TEAM).map((e: any) => ({
+                    agentId: e.id, name: e.name, role: e.role,
+                    agentType: e.agentType, icon: e.icon || '👤', color: e.color || '#888',
+                  }))}
+                  onAgentSendGroup={handleAgentSendGroup}
+                  sessionName={currentSessionId ? getSessionDisplayName(currentSessionId) : undefined}
+                  onMessageSent={(sid, content) => {
+                    setCurrentSessionId(prev => prev || sid)
+                    getOrCreateSession(sid)
+                    autoNameSession(sid, content)
+                  }}
                 />
               )}
 
@@ -534,15 +1042,38 @@ const DEFAULT_TEAM = [
                   onTerminalData={handleTerminalInput}
                 />
               )}
+
+              {/* ── Remote Terminal 模式 ────────────────── */}
+              {chatMode === 'remote-terminal' && (
+                <RemoteTerminalPanel
+                  sshStatus={sshStatus}
+                  visible={chatMode === 'remote-terminal'}
+                  theme={theme}
+                />
+              )}
+
+              {/* ── Editor 模式 ──────────────────────── */}
+              {chatMode === 'editor' && openFile && (
+                <FileEditor
+                  filePath={openFile.path}
+                  fileName={openFile.name}
+                  theme={theme}
+                  onClose={handleCloseFile}
+                  onOpenInNewWindow={handleOpenFileInNewWindow}
+                />
+              )}
             </main>
 
             <div className="splitter splitter-h" onMouseDown={rightSplitter.onMouseDown} />
 
             <aside className="sidebar right-sidebar" style={{ width: rightSplitter.size }}>
               <div className="sidebar-tabs">
-                <button className={rightView === 'tasks' ? 'active' : ''} onClick={() => setRightView('tasks')}>📊 任务</button>
+                <button className={rightView === 'tasks' ? 'active' : ''} onClick={() => setRightView('tasks')}>📊 看板</button>
+                <button className={rightView === 'plan' ? 'active' : ''} onClick={() => setRightView('plan')}>📋 计划</button>
                 <button className={rightView === 'office' ? 'active' : ''} onClick={() => setRightView('office')}>🏢 办公室</button>
                 <button className={rightView === 'connection' ? 'active' : ''} onClick={() => setRightView('connection')}>🔗 连接</button>
+                <button className={rightView === 'assistant' ? 'active' : ''} onClick={() => setRightView('assistant')}>🤖 助手</button>
+                <button className={rightView === 'ssh' ? 'active' : ''} onClick={() => setRightView('ssh')}>🔌 SSH</button>
               </div>
               {rightView === 'tasks' && (
                 <div className="right-panel-scroll">
@@ -553,7 +1084,16 @@ const DEFAULT_TEAM = [
                   <InlineTaskBoard tasks={tasks} onTasksChange={handleTasksChange} activeProject={activeProject} />
                 </div>
               )}
-              {rightView === 'office' && <PixelOffice activeProject={activeProject} tasks={tasks} team={team.length ? team : DEFAULT_TEAM} onTeamChange={handleTeamChange} />}
+              {rightView === 'plan' && (
+                <div className="right-panel-scroll">
+                  <TaskPlanList
+                    tasks={tasks}
+                    activeProject={activeProject}
+                    onTasksChange={handleTasksChange}
+                  />
+                </div>
+              )}
+              {rightView === 'office' && <PixelOffice activeProject={activeProject} tasks={tasks} team={team.length ? team : DEFAULT_TEAM} onTeamChange={handleTeamChange} availableModels={appSettings?.models?.map(m => ({ id: m.id, name: m.name, provider: m.provider })) || []} />}
               {rightView === 'connection' && (
                 <div className="right-panel-scroll">
                   <ConnectionPanel
@@ -562,6 +1102,51 @@ const DEFAULT_TEAM = [
                     claudeConnected={claudeConnected}
                     activeSessionId={currentSessionId}
                     activeModelId={appSettings?.activeModelId || null}
+                  />
+                </div>
+              )}
+              {rightView === 'assistant' && (
+                <AssistantPanel
+                  theme={theme}
+                  models={appSettings?.models}
+                  activeModelId={appSettings?.activeModelId}
+                  activeProjectPath={activeProject?.path}
+                  autoApproval={autoApproval}
+                />
+              )}
+              {rightView === 'ssh' && (
+                <div className="right-panel-scroll">
+                  <SshConnectionPanel
+                    settings={appSettings}
+                    sshStatus={sshStatus}
+                    onSshStatusChange={setSshStatus}
+                    onOpenRemoteTerminal={() => setChatMode('remote-terminal')}
+                    onBrowseRemoteFiles={() => setRightView('remote-files')}
+                  />
+                  <div className="section-divider" />
+                  <DeploymentPanel
+                    settings={appSettings}
+                    sshStatus={sshStatus}
+                    activeProject={activeProject}
+                    onSettingsChange={handleSaveSettings}
+                  />
+                </div>
+              )}
+              {rightView === 'remote-files' && (
+                <div className="right-panel-scroll">
+                  <RemoteFileBrowser
+                    sshStatus={sshStatus}
+                    settings={appSettings}
+                  />
+                </div>
+              )}
+              {rightView === 'deploy' && (
+                <div className="right-panel-scroll">
+                  <DeploymentPanel
+                    settings={appSettings}
+                    sshStatus={sshStatus}
+                    activeProject={activeProject}
+                    onSettingsChange={handleSaveSettings}
                   />
                 </div>
               )}

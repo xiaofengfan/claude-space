@@ -13,6 +13,31 @@ export interface ElectronAPI {
   onClaudeStatusUpdate: (callback: (status: { running: boolean; connected: boolean; error: string; sessionId?: string }) => void) => () => void
   onClaudePermissionPrompt: (callback: (prompt: { text: string; timestamp: number }) => void) => () => void
 
+  // ── Multi-session management ──────────────────────────
+  sessionStop: (sessionId: string) => Promise<{ success: boolean }>
+  sessionStopAll: () => Promise<{ success: boolean }>
+  sessionList: () => Promise<Array<{ sessionId: string; projectPath?: string; running: boolean; createdAt: number }>>
+  loadSessionNames: () => Promise<Record<string, string>>
+  saveSessionNames: (names: Record<string, string>) => Promise<{ success: boolean; error?: string }>
+  onSessionEvent: (callback: (event: any) => void) => () => void
+  onSessionClose: (callback: (data: { sessionId: string; code: number | null }) => void) => () => void
+  onSessionStatus: (callback: (data: any) => void) => () => void
+
+  // ── Multi-agent group chat ────────────────────────────
+  agentSendGroup: (opts: {
+    groupId: string; content: string
+    targets: Array<{ agentId: string; agentType: string; agentName: string; agentIcon?: string; agentColor?: string; modelId?: string }>
+    personaContents: Array<{ agentId: string; prompt: string }>
+    projectPath?: string; modelId?: string; autoApproval?: boolean
+  }) => Promise<{ success: boolean; groupId?: string }>
+  agentStop: (agentId: string) => Promise<{ success: boolean }>
+  agentStopAll: () => Promise<{ success: boolean }>
+  agentStatus: () => Promise<Array<{ agentId: string; agentType: string; agentName: string; status: string; sessionId?: string }>>
+  onAgentEvent: (callback: (event: any) => void) => () => void
+  onAgentClose: (callback: (data: { agentId: string; code: number | null }) => void) => () => void
+  onAgentStatusUpdate: (callback: (data: any) => void) => () => void
+  onAgentStderr: (callback: (data: { agentId: string; agentName: string; text: string }) => void) => () => void
+
   // Project management
   scanProjects: (rootPath?: string) => Promise<any[]>
   newProject: (name?: string) => Promise<{ canceled: boolean; path?: string; name?: string; error?: string }>
@@ -23,7 +48,10 @@ export interface ElectronAPI {
   openInTerminal: (projectPath: string) => Promise<void>
 
   // File operations
-  readFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>
+  readFile: (filePath: string) => Promise<{ success: boolean; content?: string; size?: number; isBinary?: boolean; error?: string }>
+  writeFile: (opts: { filePath: string; content: string }) => Promise<{ success: boolean; error?: string }>
+  createFile: (opts: { dirPath: string; fileName: string; content?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>
+  openFileInNewWindow: (opts: { filePath: string; fileName: string; projectPath?: string }) => Promise<{ success: boolean }>
   openFileDialog: () => Promise<{ canceled: boolean; filePath?: string }>
 
   // Session management
@@ -86,6 +114,24 @@ export interface ElectronAPI {
   terminalStatus: () => Promise<{ running: boolean; claudeRunning: boolean; sessionId: string | null; error: string }>
   onTerminalData: (callback: (data: string) => void) => () => void
   onTerminalStatus: (callback: (status: any) => void) => () => void
+
+  // ── SSH Remote ──────────────────────────────────────────
+  sshConnect: (serverId: string) => Promise<{ success: boolean; error?: string }>
+  sshDisconnect: (serverId: string) => Promise<{ success: boolean }>
+  sshStatus: () => Promise<{ serverId: string | null; status: string; error: string; connectedAt: string | null }>
+  sshTestConnection: (config: any) => Promise<any>
+  sshListRemoteFiles: (opts: { serverId: string; remotePath: string; maxDepth?: number }) => Promise<any[]>
+  sshReadRemoteFile: (opts: { serverId: string; remotePath: string }) => Promise<{ success: boolean; content?: string; size?: number; isBinary?: boolean; error?: string }>
+  sshWriteRemoteFile: (opts: { serverId: string; remotePath: string; content: string }) => Promise<{ success: boolean; error?: string }>
+  sshStartTerminal: (opts: { serverId: string; cols?: number; rows?: number }) => Promise<{ success: boolean; error?: string }>
+  sshTerminalInput: (data: string) => void
+  sshTerminalResize: (opts: { cols: number; rows: number }) => void
+  sshTerminalKill: () => Promise<{ success: boolean }>
+  onSshTerminalData: (callback: (data: string) => void) => () => void
+  onSshTerminalStatus: (callback: (status: any) => void) => () => void
+  onSshDeployStatus: (callback: (status: any) => void) => () => void
+  sshDeploy: (opts: { projectPath: string; deployTargetId: string }) => Promise<{ success: boolean; deployId?: string; error?: string }>
+  sshExecCommand: (opts: { serverId: string; command: string; timeoutMs?: number }) => Promise<{ success: boolean; stdout: string; stderr: string; exitCode: number | null; error?: string }>
 
   // Generic
   on: (channel: string, callback: (...args: any[]) => void) => void

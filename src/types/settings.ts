@@ -30,6 +30,9 @@ export interface AppSettings {
   activeModelId: string | null
   models: ModelConfig[]
   autoApproval: boolean      // 自动化审批：true=自动通过不弹窗
+  defaultGroupChat?: boolean // 默认聊天模式：true=群聊 false=单聊
+  sshServers: import('./ssh').SshServerConfig[]       // SSH 服务器配置（明文密钥—永不出主进程）
+  deployTargets: import('./ssh').DeployTarget[]        // 部署目标配置
 }
 
 /** 脱敏后的应用设置（发送到渲染进程） */
@@ -38,4 +41,7 @@ export interface AppSettingsSafe {
   activeModelId: string | null
   models: ModelConfigSafe[]
   autoApproval: boolean
+  defaultGroupChat?: boolean
+  sshServers: import('./ssh').SshServerConfigSafe[]    // 脱敏后的 SSH 配置
+  deployTargets: import('./ssh').DeployTarget[]         // 部署目标（无敏感信息）
 }

@@ -53,6 +53,64 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('claude:status-update', handler)
   },
 
+  // ── 多智能体群聊 ──────────────────────────────────────
+
+  agentSendGroup: (opts: {
+    groupId: string; content: string
+    targets: Array<{ agentId: string; agentType: string; agentName: string; agentIcon?: string; agentColor?: string }>
+    personaContents: Array<{ agentId: string; prompt: string }>
+    projectPath?: string; modelId?: string; autoApproval?: boolean
+  }) => ipcRenderer.invoke('agent:send-group', opts),
+
+  agentStop: (agentId: string) => ipcRenderer.invoke('agent:stop', agentId),
+  agentStopAll: () => ipcRenderer.invoke('agent:stop-all'),
+  agentStatus: () => ipcRenderer.invoke('agent:status'),
+
+  onAgentEvent: (callback: (event: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('agent:event', handler)
+    return () => ipcRenderer.removeListener('agent:event', handler)
+  },
+  onAgentClose: (callback: (data: { agentId: string; code: number | null }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('agent:close', handler)
+    return () => ipcRenderer.removeListener('agent:close', handler)
+  },
+  onAgentStatusUpdate: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('agent:status-update', handler)
+    return () => ipcRenderer.removeListener('agent:status-update', handler)
+  },
+  onAgentStderr: (callback: (data: { agentId: string; agentName: string; text: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('agent:stderr', handler)
+    return () => ipcRenderer.removeListener('agent:stderr', handler)
+  },
+
+  // ── 多会话管理 ──────────────────────────────────────
+
+  sessionStop: (sessionId: string) => ipcRenderer.invoke('session:stop', sessionId),
+  sessionStopAll: () => ipcRenderer.invoke('session:stop-all'),
+  sessionListActive: () => ipcRenderer.invoke('session:list-active'),
+  loadSessionNames: () => ipcRenderer.invoke('session-names:load'),
+  saveSessionNames: (names: Record<string, string>) => ipcRenderer.invoke('session-names:save', names),
+
+  onSessionEvent: (callback: (event: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('session:event', handler)
+    return () => ipcRenderer.removeListener('session:event', handler)
+  },
+  onSessionClose: (callback: (data: { sessionId: string; code: number | null }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('session:close', handler)
+    return () => ipcRenderer.removeListener('session:close', handler)
+  },
+  onSessionStatus: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('session:status', handler)
+    return () => ipcRenderer.removeListener('session:status', handler)
+  },
+
   // ── 项目管理 ────────────────────────────────────────
 
   scanProjects: (rootPath?: string) => ipcRenderer.invoke('project:scan', rootPath),
@@ -70,6 +128,13 @@ const electronAPI = {
   // ── 文件操作 ────────────────────────────────────────
 
   readFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
+
+  writeFile: (opts: { filePath: string; content: string }) => ipcRenderer.invoke('file:write', opts),
+
+  createFile: (opts: { dirPath: string; fileName: string; content?: string }) => ipcRenderer.invoke('file:create', opts),
+
+  openFileInNewWindow: (opts: { filePath: string; fileName: string; projectPath?: string }) =>
+    ipcRenderer.invoke('file:open-in-new-window', opts),
 
   openFileDialog: () => ipcRenderer.invoke('file:open-dialog'),
 
@@ -155,6 +220,44 @@ const electronAPI = {
     ipcRenderer.on('terminal:status', handler)
     return () => ipcRenderer.removeListener('terminal:status', handler)
   },
+
+  // ── SSH 远程 ──────────────────────────────────────────
+
+  sshConnect: (serverId: string) => ipcRenderer.invoke('ssh:connect', serverId),
+  sshDisconnect: (serverId: string) => ipcRenderer.invoke('ssh:disconnect', serverId),
+  sshStatus: () => ipcRenderer.invoke('ssh:status'),
+  sshTestConnection: (config: any) => ipcRenderer.invoke('ssh:test-connection', config),
+  sshListRemoteFiles: (opts: { serverId: string; remotePath: string; maxDepth?: number }) =>
+    ipcRenderer.invoke('ssh:list-remote-files', opts),
+  sshReadRemoteFile: (opts: { serverId: string; remotePath: string }) =>
+    ipcRenderer.invoke('ssh:read-remote-file', opts),
+  sshWriteRemoteFile: (opts: { serverId: string; remotePath: string; content: string }) =>
+    ipcRenderer.invoke('ssh:write-remote-file', opts),
+  sshStartTerminal: (opts: { serverId: string; cols?: number; rows?: number }) =>
+    ipcRenderer.invoke('ssh:start-terminal', opts),
+  sshTerminalInput: (data: string) => ipcRenderer.send('ssh:terminal-input', data),
+  sshTerminalResize: (opts: { cols: number; rows: number }) =>
+    ipcRenderer.send('ssh:terminal-resize', opts),
+  sshTerminalKill: () => ipcRenderer.invoke('ssh:terminal-kill'),
+  onSshTerminalData: (callback: (data: string) => void) => {
+    const handler = (_event: any, data: string) => callback(data)
+    ipcRenderer.on('ssh:terminal-data', handler)
+    return () => ipcRenderer.removeListener('ssh:terminal-data', handler)
+  },
+  onSshTerminalStatus: (callback: (status: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('ssh:terminal-status', handler)
+    return () => ipcRenderer.removeListener('ssh:terminal-status', handler)
+  },
+  onSshDeployStatus: (callback: (status: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('ssh:deploy-status', handler)
+    return () => ipcRenderer.removeListener('ssh:deploy-status', handler)
+  },
+  sshDeploy: (opts: { projectPath: string; deployTargetId: string }) =>
+    ipcRenderer.invoke('ssh:deploy', opts),
+  sshExecCommand: (opts: { serverId: string; command: string; timeoutMs?: number }) =>
+    ipcRenderer.invoke('ssh:exec-command', opts),
 
   // ── 窗口控制 ────────────────────────────────────────
 

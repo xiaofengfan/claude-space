@@ -12,10 +12,13 @@ type GitStatusMap = Record<string, string>
 
 export function ProjectBrowser({
   projects, activeProject, onSelect, onRefresh, mode,
+  onOpenFile, projectPath,
 }: {
   projects: ProjectInfo[]; activeProject: ProjectInfo | null
   onSelect: (p: ProjectInfo) => void; onRefresh: () => void
   mode: 'projects' | 'files' | 'docs'
+  onOpenFile?: (filePath: string, fileName: string) => void
+  projectPath?: string
 }) {
   const [fileTree, setFileTree] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
@@ -72,22 +75,14 @@ export function ProjectBrowser({
     if (!window.electronAPI?.openFileDialog) return
     const result = await window.electronAPI.openFileDialog()
     if (result && !result.canceled && result.filePath) {
-      try {
-        const res = await window.electronAPI.readFile(result.filePath)
-        if (res?.success && res.content) {
-          alert('文件内容:\n' + res.content.slice(0, 2000))
-        }
-      } catch (e) { console.error(e) }
+      const fileName = result.filePath.split(/[/\\]/).pop() || result.filePath
+      onOpenFile?.(result.filePath, fileName)
     }
   }
 
-  async function handleOpenDocFile(filePath: string) {
-    try {
-      const res = await window.electronAPI.readFile(filePath)
-      if (res?.success && res.content) {
-        alert('文件内容:\n' + res.content.slice(0, 2000))
-      }
-    } catch (e) { console.error(e) }
+  function handleOpenDocFile(filePath: string) {
+    const fileName = filePath.split(/[/\\]/).pop() || filePath
+    onOpenFile?.(filePath, fileName)
   }
 
   function handleOpenFolder() {
@@ -95,6 +90,55 @@ export function ProjectBrowser({
       window.electronAPI.openProjectFolder(activeProject.path)
     }
   }
+
+  const [showNewFileDialog, setShowNewFileDialog] = useState(false)
+  const [newFileName, setNewFileName] = useState('untitled.txt')
+
+  async function handleNewFile() {
+    setNewFileName('untitled.txt')
+    setShowNewFileDialog(true)
+  }
+
+  async function confirmNewFile() {
+    if (!activeProject || !newFileName.trim()) return
+    setShowNewFileDialog(false)
+    try {
+      const res = await window.electronAPI.createFile?.({
+        dirPath: activeProject.path,
+        fileName: newFileName.trim(),
+      })
+      if (res?.success && res.filePath) {
+        onOpenFile?.(res.filePath, newFileName.trim())
+        // Reload file tree
+        loadFileTree(activeProject.path)
+      }
+    } catch (e) { console.error('create file error:', e) }
+  }
+
+  // ── New file dialog ──
+  const newFileDialog = showNewFileDialog && (
+    <div className="dialog-overlay" onClick={() => setShowNewFileDialog(false)}>
+      <div className="dialog-box" style={{ width: 360 }} onClick={e => e.stopPropagation()}>
+        <div className="dialog-header"><h3>➕ 新建文件</h3><button onClick={() => setShowNewFileDialog(false)} className="dialog-close">✕</button></div>
+        <div className="dialog-body">
+          <label>文件名</label>
+          <input
+            className="cozy-input"
+            value={newFileName}
+            onChange={e => setNewFileName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') confirmNewFile(); if (e.key === 'Escape') setShowNewFileDialog(false) }}
+            autoFocus
+            placeholder="例如: readme.md, config.json"
+          />
+          <p style={{ fontSize: 11, color: '#888', marginTop: 4 }}>默认后缀 .txt，可改为 .md / .json / .ts 等</p>
+        </div>
+        <div className="dialog-footer">
+          <button onClick={() => setShowNewFileDialog(false)} className="btn-cancel">取消</button>
+          <button onClick={confirmNewFile} className="btn-primary" disabled={!newFileName.trim()}>创建</button>
+        </div>
+      </div>
+    </div>
+  )
 
   // ── Project view: only show selected project ───
   if (mode === 'projects') {
@@ -131,6 +175,7 @@ export function ProjectBrowser({
         ) : (
           <div className="empty-hint">未选择项目</div>
         )}
+        {newFileDialog}
       </div>
     )
   }
@@ -144,6 +189,7 @@ export function ProjectBrowser({
             <div className="project-info-name">📂 {activeProject.name}</div>
             <div className="project-info-path">{activeProject.path}</div>
             <div className="project-info-actions">
+              <button className="project-info-btn" onClick={handleNewFile} title="新建文件">➕</button>
               <button className="project-info-btn" onClick={() => loadFileTree(activeProject.path)} title="刷新">🔄</button>
             </div>
           </div>
@@ -153,6 +199,7 @@ export function ProjectBrowser({
             : fileTree.length > 0 ? <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} gitStatus={gitStatus} projectPath={activeProject?.path} />
             : <div className="empty-hint">{activeProject ? '加载文件树...' : '选择项目自动加载'}</div>}
         </div>
+        {newFileDialog}
       </div>
     )
   }
@@ -162,6 +209,7 @@ export function ProjectBrowser({
     <div className="project-browser docs-browser">
       <div className="docs-toolbar">
         <button className="docs-toolbar-btn" onClick={handleOpenFile} title="打开文件">📂 打开</button>
+        <button className="docs-toolbar-btn" onClick={handleNewFile} title="新建文件">➕ 新建</button>
         <button className="docs-toolbar-btn" onClick={handleOpenFolder} title="打开文件夹">📁 文件夹</button>
         <button className="docs-toolbar-btn" onClick={() => activeProject && loadFileTree(activeProject.path)} title="刷新">🔄 刷新</button>
       </div>
@@ -169,12 +217,13 @@ export function ProjectBrowser({
         {loading ? (
           <div className="empty-hint">加载中...</div>
         ) : docsTree.length > 0 ? (
-          <FileTreeNodes nodes={docsTree} depth={0} />
+          <FileTreeNodes nodes={docsTree} depth={0} onOpenFile={handleOpenDocFile} projectPath={activeProject?.path} />
         ) : (
           <div className="empty-hint">
             {activeProject ? '暂无文档文件\n(.md .docx .xlsx .pdf .txt)' : '选择项目后自动加载'}
           </div>
         )}
+        {newFileDialog}
       </div>
     </div>
   )
@@ -195,7 +244,7 @@ function FileTreeNode({ node, depth, onOpenFile, gitStatus, projectPath }: {
   node: FileNode; depth: number; onOpenFile?: (path: string) => void
   gitStatus?: GitStatusMap; projectPath?: string
 }) {
-  const [expanded, setExpanded] = useState(depth < 2)
+  const [expanded, setExpanded] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const icon = node.type === 'directory' ? (expanded ? '📂' : '📁') : getFileIcon(node.name)
 
@@ -230,6 +279,16 @@ function FileTreeNode({ node, depth, onOpenFile, gitStatus, projectPath }: {
       {ctxMenu && (
         <div className="git-ctx-overlay" onClick={() => setCtxMenu(null)}>
           <div className="git-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+            <button onClick={() => { setCtxMenu(null); onOpenFile?.(node.path) }}>📄 打开文件</button>
+            <button onClick={() => {
+              setCtxMenu(null)
+              window.electronAPI.openFileInNewWindow({
+                filePath: node.path,
+                fileName: node.name,
+                projectPath: projectPath,
+              })
+            }}>🗖 在新窗口打开</button>
+            <hr className="git-ctx-divider" />
             <button onClick={async () => {
               setCtxMenu(null)
               const r = await window.electronAPI.gitDiff?.({ projectPath: projectPath!, file: node.name })
@@ -248,15 +307,29 @@ function FileTreeNode({ node, depth, onOpenFile, gitStatus, projectPath }: {
 }
 
 function getFileIcon(name: string): string {
+  // 无扩展名的常见工程文件
+  const nameMap: Record<string, string> = {
+    'dockerfile': '🐳', 'makefile': '🔧', 'license': '📜',
+    '.env': '🔒', '.env.local': '🔒', '.env.example': '🔒',
+    '.gitignore': '🙈', '.gitattributes': '🙈',
+    '.eslintrc': '⚙️', '.eslintrc.json': '⚙️', '.eslintrc.js': '⚙️',
+    '.prettierrc': '🎨', '.prettierrc.json': '🎨', '.prettierrc.js': '🎨',
+    '.editorconfig': '⚙️',
+  }
+  if (nameMap[name.toLowerCase()]) return nameMap[name.toLowerCase()]
+
   const ext = name.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
+  const extMap: Record<string, string> = {
     md: '📝', markdown: '📝', docx: '📘', doc: '📘', xlsx: '📊', xls: '📊',
     pdf: '📕', txt: '📄', json: '📋', yaml: '⚙️', yml: '⚙️',
     ts: '🔷', tsx: '⚛️', js: '🟨', jsx: '⚛️',
-    css: '🎨', html: '🌐', py: '🐍', java: '☕', xml: '📰',
-    png: '🖼️', jpg: '🖼️', svg: '🖼️',
+    css: '🎨', scss: '🎨', less: '🎨',
+    html: '🌐', htm: '🌐',
+    py: '🐍', java: '☕', xml: '📰', sql: '🗄️', sh: '💻',
+    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', ico: '🖼️',
+    toml: '⚙️', lock: '🔐', cfg: '⚙️', ini: '⚙️',
   }
-  return map[ext || ''] || '📄'
+  return extMap[ext || ''] || '📄'
 }
 
 // Filter tree to only document files

@@ -4,6 +4,7 @@ interface Employee {
   id: string; name: string; role: string; icon: string
   skills: string; agentType: string; status: 'working' | 'idle' | 'busy' | 'away'
   color: string
+  modelId?: string  // 绑定的模型ID；undefined=跟随全局活动模型
 }
 
 function DeskCard({ emp, onEdit, taskTitle }: { emp: Employee; onEdit: () => void; taskTitle?: string }) {
@@ -138,8 +139,9 @@ function DeskCard({ emp, onEdit, taskTitle }: { emp: Employee; onEdit: () => voi
   )
 }
 
-export function PixelOffice({ activeProject, tasks, team, onTeamChange }: {
+export function PixelOffice({ activeProject, tasks, team, onTeamChange, availableModels }: {
   activeProject: { name: string; path: string } | null; tasks?: any[]; team: Employee[]; onTeamChange: (team: Employee[]) => void
+  availableModels?: Array<{ id: string; name: string; provider: string }>
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<Employee | null>(null)
@@ -291,6 +293,21 @@ export function PixelOffice({ activeProject, tasks, team, onTeamChange }: {
                 <option value="SecurityReviewer">SecurityReviewer</option><option value="PerformanceReviewer">PerformanceReviewer</option>
                 <option value="Implementer">Implementer</option><option value="Coordinator">Coordinator</option>
               </select>
+              {availableModels && availableModels.length > 0 && (
+                <>
+                  <label>使用模型</label>
+                  <select
+                    value={editForm.modelId || ''}
+                    onChange={e => setEditForm({ ...editForm, modelId: e.target.value || undefined })}
+                    className="cozy-input"
+                  >
+                    <option value="">跟随全局</option>
+                    {availableModels.map(m => (
+                      <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>
+                    ))}
+                  </select>
+                </>
+              )}
               <label>技能</label><textarea value={editForm.skills} onChange={e => setEditForm({ ...editForm, skills: e.target.value })} className="cozy-input" rows={2} />
               <label>状态</label>
               <select value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value as Employee['status'] })} className="cozy-input">

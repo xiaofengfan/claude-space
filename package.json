@@ -1,6 +1,6 @@
 {
   "name": "claude-space",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Claude Space — AI 驱动的项目开发工作台，支持多模型、实时任务追踪、审批管理",
   "private": true,
   "main": "dist-electron/main.js",
@@ -17,12 +17,18 @@
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-syntax-highlighter": "^15.6.1",
+    "remark-gfm": "^4.0.0",
+    "ssh2": "^1.17.0",
     "xterm": "^5.3.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/ssh2": "^1.15.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3",

@@ -76,6 +76,11 @@ export interface ChatMessage {
   isStreaming?: boolean
   agentIcon?: string
   agentName?: string
+  // ── 多智能体群聊扩展 ──
+  agentType?: string      // Coordinator | Architect | Implementer | SecurityReviewer | CodeExplorer
+  agentId?: string        // 智能体实例ID (e.g., 'arch', 'dev1')
+  agentColor?: string     // CSS 颜色用于消息边框
+  groupId?: string        // 群聊会话ID
   usage?: {
     input_tokens: number
     output_tokens: number

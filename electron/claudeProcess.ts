@@ -63,8 +63,8 @@ export class ClaudeProcess extends EventEmitter {
     const args: string[] = []
 
     if (autoApprove) {
-      // Auto-approval: one-shot mode + skip all permissions
-      args.push('-p', content)
+      // Auto-approval: use interactive stdin mode too, but close stdin after sending
+      args.push('--input-format', 'stream-json')
       args.push('--output-format', 'stream-json')
       args.push('--verbose')
       args.push('--include-partial-messages')
@@ -104,8 +104,8 @@ export class ClaudeProcess extends EventEmitter {
       })
       console.log('[claudeProcess] spawned, pid:', this.proc.pid)
 
-      // For interactive mode, send user message via stdin JSON
-      if (!autoApprove) {
+      // Send user message via stdin JSON (both auto and manual modes)
+      {
         const userMsg = {
           type: 'user',
           message: { role: 'user', content: [{ type: 'text', text: content }] },
@@ -113,6 +113,11 @@ export class ClaudeProcess extends EventEmitter {
         const json = JSON.stringify(userMsg) + '\n'
         console.log('[claudeProcess] writing user message to stdin, len:', json.length)
         this.proc.stdin?.write(json)
+      }
+
+      // For auto-approval: close stdin to signal EOF (no more input → Claude processes and exits)
+      if (autoApprove) {
+        this.proc.stdin?.end()
       }
 
       this.proc.stdout?.on('data', (chunk: Buffer) => {
