@@ -223,34 +223,34 @@ const DEFAULT_TEAM = [
   }, [])
 
   const loadProjectsForDialog = async () => {
-    try { setProjects(await window.electronAPI.scanProjects()) } catch {}
+    try { setProjects(await window.electronAPI.scanProjects()) } catch (_e) { /* silent */ }
   }
   const loadTasks = async () => {
-    try { setTasks(await window.electronAPI.loadTasks()) } catch {}
+    try { setTasks(await window.electronAPI.loadTasks()) } catch (_e) { /* silent */ }
   }
   const loadTeam = async () => {
     try {
       const saved = await window.electronAPI.loadTeam?.()
       if (saved?.length) setTeam(saved)
-    } catch {}
+    } catch (_e) { /* silent */ }
   }
   const handleTeamChange = async (newTeam: any[]) => {
     setTeam(newTeam)
-    try { await window.electronAPI.saveTeam?.(newTeam) } catch {}
+    try { await window.electronAPI.saveTeam?.(newTeam) } catch (_e) { /* silent */ }
   }
   const loadSettings = async () => {
     try {
       const s = await window.electronAPI.loadSettings()
       setAppSettings(s)
       if (s?.defaultGroupChat) setGroupChatMode(true)
-    } catch {}
+    } catch (_e) { /* silent */ }
   }
   const handleSaveSettings = useCallback(async (newSettings: AppSettingsSafe) => {
     setAppSettings(newSettings)
-    try { await window.electronAPI.saveSettings(newSettings) } catch {}
+    try { await window.electronAPI.saveSettings(newSettings) } catch (_e) { /* silent */ }
   }, [])
   const loadSessions = async (projectPath?: string) => {
-    try { setSessions(await window.electronAPI.listSessions(projectPath)) } catch {}
+    try { setSessions(await window.electronAPI.listSessions(projectPath)) } catch (_e) { /* silent */ }
   }
 
   const handleSelectProject = useCallback(async (project: ProjectInfo) => {
@@ -263,7 +263,7 @@ const DEFAULT_TEAM = [
       const base = prev.length ? prev : DEFAULT_TEAM
       return base.map(e => ({ ...e, status: 'idle' as const }))
     })
-    try { setSessions(await window.electronAPI.listSessions(project.path)) } catch {}
+    try { setSessions(await window.electronAPI.listSessions(project.path)) } catch (_e) { /* silent */ }
     try {
       const recent = await window.electronAPI.getRecentSession?.(project.path)
       if (recent?.messages?.length) {
@@ -274,7 +274,7 @@ const DEFAULT_TEAM = [
         if (msgs.length > 0) setMessages(msgs)
         if (recent?.sessionId) setCurrentSessionId(recent.sessionId)
       }
-    } catch {}
+    } catch (_e) { /* silent */ }
 
     // 自动启动终端 + Claude（后台，不切换视图）
     try {
@@ -885,7 +885,7 @@ const DEFAULT_TEAM = [
     if (!appSettings) return
     const updated = { ...appSettings, activeModelId: modelId || null }
     setAppSettings(updated)
-    try { await window.electronAPI.saveSettings(updated) } catch {}
+    try { await window.electronAPI.saveSettings(updated) } catch (_e) { /* silent */ }
   }, [appSettings])
 
   // Menu
@@ -1072,7 +1072,7 @@ const DEFAULT_TEAM = [
                     setCurrentSessionId(sid)
                     try { const t = await window.electronAPI.getSessionTranscript(sid)
                       if (t?.events?.length) setMessages(t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant').map((e: any) => parseSessionMessage(e)).filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content))
-                    } catch {}
+                    } catch (_e) { /* silent */ }
                   }}
                   autoApproval={autoApproval}
                   onAutoApprovalChange={async (v) => {

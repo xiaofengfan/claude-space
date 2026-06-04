@@ -20,7 +20,7 @@ export function WelcomePage({
         name: p.name, path: p.path, techStack: p.techStack || ''
       }))
       setRecentProjects(top)
-    } catch {} finally { setLoading(false) }
+    } catch (_e) { /* silent */ } finally { setLoading(false) }
   }
 
   return (

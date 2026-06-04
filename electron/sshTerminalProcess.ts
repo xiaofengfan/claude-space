@@ -108,7 +108,7 @@ export class SshTerminalProcess extends EventEmitter implements ITerminalProvide
   /** 关闭远程终端 */
   kill(): void {
     if (this.stream) {
-      try { this.stream.close() } catch {}
+      try { this.stream.close() } catch (_e) { /* silent */ }
       this.stream = null
     }
     this._running = false

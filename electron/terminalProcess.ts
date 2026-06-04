@@ -88,7 +88,7 @@ export class TerminalProcess extends EventEmitter {
       } else {
         fs.mkdirSync(sessionDir, { recursive: true })
       }
-    } catch {}
+    } catch (_e) { /* silent */ }
 
     if (!pty) {
       this._errorMsg = 'node-pty 不可用'
@@ -178,7 +178,7 @@ export class TerminalProcess extends EventEmitter {
     let beforeFiles: Set<string> = new Set()
     try {
       if (fs.existsSync(sessionDir)) beforeFiles = new Set(fs.readdirSync(sessionDir))
-    } catch {}
+    } catch (_e) { /* silent */ }
     this.discoverSessionFile(sessionDir, beforeFiles)
   }
 
@@ -189,7 +189,7 @@ export class TerminalProcess extends EventEmitter {
 
   resize(cols: number, rows: number): void {
     if (this.ptyProcess) {
-      try { this.ptyProcess.resize(cols, rows) } catch {}
+      try { this.ptyProcess.resize(cols, rows) } catch (_e) { /* silent */ }
     }
   }
 
@@ -198,9 +198,9 @@ export class TerminalProcess extends EventEmitter {
     if (this.ptyProcess) {
       try {
         if (this._claudeRunning) this.ptyProcess.write('\x03') // Ctrl+C
-      } catch {}
+      } catch (_e) { /* silent */ }
       setTimeout(() => {
-        try { this.ptyProcess?.kill() } catch {}
+        try { this.ptyProcess?.kill() } catch (_e) { /* silent */ }
         this.ptyProcess = null
       }, 500)
     }
@@ -249,7 +249,7 @@ export class TerminalProcess extends EventEmitter {
                     error: '',
                   })
                 }
-              } catch {}
+              } catch (_e) { /* silent */ }
             }, 5000)
           }
           return
@@ -271,7 +271,7 @@ export class TerminalProcess extends EventEmitter {
           })
           return
         }
-      } catch {}
+      } catch (_e) { /* silent */ }
     }, 100)
   }
 
@@ -279,7 +279,7 @@ export class TerminalProcess extends EventEmitter {
     if (!this.jsonlPath) return
     try {
       this.jsonlTailSize = fs.existsSync(this.jsonlPath) ? fs.statSync(this.jsonlPath).size : 0
-    } catch {}
+    } catch (_e) { /* silent */ }
     if (this.jsonlTailSize > 0) this.tailFrom(0)
 
     this.jsonlInterval = setInterval(() => {
@@ -290,7 +290,7 @@ export class TerminalProcess extends EventEmitter {
           this.tailFrom(this.jsonlTailSize)
           // tailFrom 内部会更新 jsonlTailSize 为实际读取位置
         }
-      } catch {}
+      } catch (_e) { /* silent */ }
     }, 300)
   }
 

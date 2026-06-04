@@ -46,7 +46,7 @@ export function ProjectBrowser({
         })
         setGitStatus(map)
       }
-    } catch {}
+    } catch (_e) { /* silent */ }
   }
 
   async function loadFileTree(dirPath: string) {

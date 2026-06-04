@@ -183,8 +183,8 @@ export class ClaudeProcess extends EventEmitter {
 
   kill(): void {
     if (this.proc) {
-      try { this.proc.kill('SIGTERM') } catch {}
-      setTimeout(() => { try { this.proc?.kill('SIGKILL') } catch {} }, 2000)
+      try { this.proc.kill('SIGTERM') } catch (_e) { /* silent */ }
+      setTimeout(() => { try { this.proc?.kill('SIGKILL') } catch (_e) { /* silent */ } }, 2000)
       this.proc = null
     }
     this._isRunning = false

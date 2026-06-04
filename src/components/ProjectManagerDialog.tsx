@@ -21,7 +21,7 @@ export function ProjectManagerDialog({
       setAllProjects(projects.map((p: any) => ({
         path: p.path, name: p.name, techStack: p.techStack || '', sessions: p.sessions || 0
       })))
-    } catch {} finally { setLoading(false) }
+    } catch (_e) { /* silent */ } finally { setLoading(false) }
   }
 
   function handleSelect(project: ClaudeProject) {

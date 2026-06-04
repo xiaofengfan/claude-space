@@ -368,7 +368,7 @@ export class AgentPool extends EventEmitter {
     this.agentTimeouts.clear()
 
     for (const [agentId] of this.agents) {
-      try { this.agents.get(agentId)?.process.kill() } catch {}
+      try { this.agents.get(agentId)?.process.kill() } catch (_e) { /* silent */ }
     }
     this.agents.clear()
     this.queue = []

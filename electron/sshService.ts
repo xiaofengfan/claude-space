@@ -97,7 +97,7 @@ export class SshService extends EventEmitter {
           client.on('close', () => { this.pool.delete(config.id); this.emit('disconnected', config.id) })
           client.on('error', (err: Error) => { this.emit('error', { serverId: config.id, error: err.message }) })
         } else {
-          try { client.end() } catch {}
+          try { client.end() } catch (_e) { /* silent */ }
         }
         resolve({ success, error })
       }
@@ -119,7 +119,7 @@ export class SshService extends EventEmitter {
   disconnect(serverId: string): void {
     const conn = this.pool.get(serverId)
     if (conn) {
-      try { conn.client.end() } catch {}
+      try { conn.client.end() } catch (_e) { /* silent */ }
       this.pool.delete(serverId)
     }
   }
@@ -127,7 +127,7 @@ export class SshService extends EventEmitter {
   /** 断开所有连接 */
   disconnectAll(): void {
     for (const [id, conn] of this.pool) {
-      try { conn.client.end() } catch {}
+      try { conn.client.end() } catch (_e) { /* silent */ }
     }
     this.pool.clear()
   }

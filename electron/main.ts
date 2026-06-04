@@ -323,7 +323,7 @@ function scanProjects(rootPath?: string): ProjectInfo[] {
             else if (keys.includes('react')) techStack = 'React'
             else if (keys.includes('next')) techStack = 'Next.js'
             else techStack = 'Node.js'
-          } catch {}
+          } catch (_e) { /* silent */ }
         }
         if (!techStack && fs.existsSync(path.join(projectPath, 'pom.xml'))) {
           techStack = 'Java/Maven'
@@ -343,7 +343,7 @@ function scanProjects(rootPath?: string): ProjectInfo[] {
       if (fs.existsSync(sessionDir)) {
         try {
           sessions = fs.readdirSync(sessionDir).filter(f => f.endsWith('.jsonl')).length
-        } catch {}
+        } catch (_e) { /* silent */ }
       }
 
       // 最近修改时间
@@ -388,7 +388,7 @@ function scanDirectory(dirPath: string, maxDepth: number, depth: number = 0): an
     for (const f of files) {
       result.push({ name: f.name, path: path.join(dirPath, f.name), type: 'file' })
     }
-  } catch {}
+  } catch (_e) { /* silent */ }
   return result
 }
 
@@ -453,7 +453,7 @@ function loadTasks(): any[] {
     if (fs.existsSync(TASKS_FILE)) {
       return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf-8'))
     }
-  } catch {}
+  } catch (_e) { /* silent */ }
   return []
 }
 
@@ -642,7 +642,7 @@ function registerIPC(): void {
       if (fs.existsSync(SESSION_NAMES_FILE)) {
         return JSON.parse(fs.readFileSync(SESSION_NAMES_FILE, 'utf-8'))
       }
-    } catch {}
+    } catch (_e) { /* silent */ }
     return {}
   })
 
@@ -894,7 +894,7 @@ function registerIPC(): void {
           messages: msgs.slice(-10), // 最近10条
         }
       }
-    } catch {}
+    } catch (_e) { /* silent */ }
     return null
   })
 
@@ -965,7 +965,6 @@ function registerIPC(): void {
                 }
               }
             }
-          } catch {}
         }
       }
     } catch (err) { console.error('提取历史任务失败:', err) }
@@ -975,7 +974,7 @@ function registerIPC(): void {
   // Team management
   ipcMain.handle('team:load', async () => {
     const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
-    try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) } catch {}
+    try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) } catch (_e) { /* silent */ }
     return null
   })
   ipcMain.handle('team:save', async (_event, team: any[]) => {
@@ -1192,7 +1191,7 @@ function registerIPC(): void {
     // Check if git repo already exists
     try {
       if (fs.existsSync(path.join(projectPath, '.git'))) return { success: true, output: 'Already a git repository' }
-    } catch {}
+    } catch (_e) { /* silent */ }
     return runGit(projectPath, ['init'])
   })
   ipcMain.handle('git:status', async (_e, projectPath: string) => runGit(projectPath, ['status', '--porcelain', '--branch']))
@@ -1472,7 +1471,7 @@ function registerIPC(): void {
     // 执行部署前命令
     for (const cmd of target.preDeployCommands) {
       mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'pre-command', command: cmd })
-      try { await sshService.execCommand(target.sshServerId, cmd) } catch {}
+      try { await sshService.execCommand(target.sshServerId, cmd) } catch (_e) { /* silent */ }
     }
 
     // 上传文件
@@ -1490,7 +1489,7 @@ function registerIPC(): void {
     // 执行部署后命令
     for (const cmd of target.postDeployCommands) {
       mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'post-command', command: cmd })
-      try { await sshService.execCommand(target.sshServerId, cmd) } catch {}
+      try { await sshService.execCommand(target.sshServerId, cmd) } catch (_e) { /* silent */ }
     }
 
     mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'completed', uploaded: result.uploaded })
@@ -1554,7 +1553,7 @@ app.on('before-quit', () => {
   activeSshTerminal = null
   sshService.disconnectAll()
   for (const w of [...windows]) {
-    try { if (!w.isDestroyed()) w.destroy() } catch {}
+    try { if (!w.isDestroyed()) w.destroy() } catch (_e) { /* silent */ }
   }
   windows.length = 0
 })

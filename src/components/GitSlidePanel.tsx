@@ -33,7 +33,7 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
       if (l?.success) setLog(l.output)
       if (r?.success) setRemote(r.output)
       if (c?.success && c.config) { setConfig(c.config); setUserName(c.config['user.name'] || ''); setUserEmail(c.config['user.email'] || '') }
-    } catch {}
+    } catch (_e) { /* silent */ }
     setLoading(false)
   }, [projectPath])
 
