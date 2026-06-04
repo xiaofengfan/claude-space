@@ -13,6 +13,7 @@ import { SessionList } from './components/SessionList'
 import { SettingsDialog } from './components/SettingsDialog'
 import { WelcomePage } from './components/WelcomePage'
 import { ProjectSwitchDialog } from './components/ProjectSwitchDialog'
+import { NewProjectDialog } from './components/NewProjectDialog'
 import { PixelOffice } from './components/PixelOffice'
 import { SshConnectionPanel } from './components/SshConnectionPanel'
 import { RemoteFileBrowser } from './components/RemoteFileBrowser'
@@ -67,6 +68,7 @@ const DEFAULT_TEAM = [
   const [showProjectManager, setShowProjectManager] = useState(false)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
   const [showGitPanel, setShowGitPanel] = useState(false)
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
 
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [activeProject, setActiveProject] = useState<ProjectInfo | null>(null)
@@ -350,13 +352,24 @@ const DEFAULT_TEAM = [
   }, [handleSelectProject])
 
   const handleNewProject = useCallback(async () => {
-    try {
-      const res = await window.electronAPI.newProject?.()
-      if (res && !res.canceled && res.path) {
-        const p: ProjectInfo = { name: res.name || res.path.split(/[/\\]/).pop() || '', path: res.path, description: '', techStack: '', sessions: 0, modifiedAt: new Date().toISOString() }
-        handleSelectProject(p)
+    setShowNewProjectDialog(true)
+  }, [])
+
+  const handleCreateProject = useCallback(async (name: string) => {
+    const res = await window.electronAPI.newProject?.(name)
+    if (!res) throw new Error('无法连接到主进程')
+    if (res.error) throw new Error(res.error)
+    if (!res.canceled && res.path) {
+      const p: ProjectInfo = {
+        name: res.name || res.path.split(/[/\\]/).pop() || '',
+        path: res.path,
+        description: '',
+        techStack: '',
+        sessions: 0,
+        modifiedAt: new Date().toISOString()
       }
-    } catch {}
+      handleSelectProject(p)
+    }
   }, [handleSelectProject])
 
   const handleTasksChange = useCallback(async (updater: TaskItem[] | ((prev: TaskItem[]) => TaskItem[])) => {
@@ -512,6 +525,10 @@ const DEFAULT_TEAM = [
     activeProjectPath: activeProject?.path,
     onApproval: setPendingApproval,
     autoApproval,
+    onActivityStart: () => {
+      // Claude 开始执行工具时，自动切换到看板让用户看到实时进度
+      setRightView('tasks')
+    },
     onMonitorEvent: (evt) => setMonitorEvents(prev => [evt, ...prev].slice(0, 100)),
     onTaskComplete: (title: string) => {
       const resultMsg: ChatMessage = {
@@ -674,6 +691,23 @@ const DEFAULT_TEAM = [
     window.electronAPI.terminalInput(content)
   }, [])
 
+  // Chat 模式需要 Claude 运行时，重启终端 Claude
+  const handleLaunchClaudeForChat = useCallback(async () => {
+    // 确保终端已启动
+    const status = await window.electronAPI.terminalStatus?.()
+    if (!status?.running) {
+      // 终端未运行 → 启动终端（会自动启动 Claude）
+      await window.electronAPI.terminalStart({
+        cwd: activeProject?.path,
+        sessionId: currentSessionId,
+      })
+    } else if (!status.claudeRunning) {
+      // 终端在运行但 Claude 已退出 → 重启 Claude
+      await window.electronAPI.terminalRestart?.()
+    }
+    setTerminalClaudeRunning(true)
+  }, [activeProject?.path, currentSessionId])
+
   // 监听终端状态事件
   useEffect(() => {
     const cleanup = window.electronAPI.onTerminalStatus?.((status: any) => {
@@ -785,23 +819,61 @@ const DEFAULT_TEAM = [
     })
 
     // ── 群聊 AgentPool 状态同步到 team ──
-    const unsubAgentStatus = window.electronAPI.onAgentStatusUpdate?.((data: any) => {
+    // 按 agentType 追踪活跃子智能体数量（支持同类型多个智能体并发）
+    const activeAgentTypes = new Map<string, number>()
+
+    function syncAgentTeamStatus() {
       setTeam(prev => {
         const base = prev.length ? prev : DEFAULT_TEAM
-        return base.map(e => {
-          if (e.id === data.agentId) {
-            // error → idle, running → busy, otherwise → idle
-            const newStatus = data.error ? 'idle' as const : (data.running ? 'busy' as const : 'idle' as const)
-            return { ...e, status: newStatus }
-          }
-          return e
-        })
+        return base.map(e => ({
+          ...e,
+          status: (activeAgentTypes.get(e.agentType) || 0) > 0 ? 'busy' as const : 'idle' as const,
+        }))
       })
+    }
+
+    // Agent 状态更新（启动/连接/错误）
+    const unsubAgentStatus = window.electronAPI.onAgentStatusUpdate?.((data: any) => {
+      if (data.running && data.agentType) {
+        // 智能体启动 → 增加计数
+        const count = activeAgentTypes.get(data.agentType) || 0
+        activeAgentTypes.set(data.agentType, count + 1)
+        syncAgentTeamStatus()
+      } else if (!data.running && data.agentType) {
+        // 智能体停止 → 减少计数（但不低于 0，因为 agent:close 才是权威的清理事件）
+        // 这里保持现有计数不变，交由 agent:close 处理清理
+      }
+    })
+
+    // Agent 关闭 → 减少计数 + 同步状态
+    const unsubAgentClose = window.electronAPI.onAgentClose?.((data: any) => {
+      if (data.agentType) {
+        const count = Math.max(0, (activeAgentTypes.get(data.agentType) || 0) - 1)
+        if (count <= 0) {
+          activeAgentTypes.delete(data.agentType)
+        } else {
+          activeAgentTypes.set(data.agentType, count)
+        }
+        syncAgentTeamStatus()
+      }
+    })
+
+    // Agent 事件（system/init → 智能体初始化确认）
+    const unsubAgentEvent = window.electronAPI.onAgentEvent?.((taggedEvent: any) => {
+      if (taggedEvent.type === 'system' && taggedEvent.subtype === 'init' && taggedEvent.agentType) {
+        // 智能体初始化确认 → 确保计数至少为 1
+        if (!activeAgentTypes.has(taggedEvent.agentType)) {
+          activeAgentTypes.set(taggedEvent.agentType, 1)
+          syncAgentTeamStatus()
+        }
+      }
     })
 
     return () => {
       unsubClaude?.()
       unsubAgentStatus?.()
+      unsubAgentClose?.()
+      unsubAgentEvent?.()
     }
   }, [])
 
@@ -995,6 +1067,7 @@ const DEFAULT_TEAM = [
                   terminalMode={false}
                   onTerminalSend={handleTerminalSendForChat}
                   terminalClaudeRunning={terminalClaudeRunning}
+                  onLaunchClaudeForChat={handleLaunchClaudeForChat}
                   onSelectSession={async (sid) => {
                     setCurrentSessionId(sid)
                     try { const t = await window.electronAPI.getSessionTranscript(sid)
@@ -1068,7 +1141,25 @@ const DEFAULT_TEAM = [
 
             <aside className="sidebar right-sidebar" style={{ width: rightSplitter.size }}>
               <div className="sidebar-tabs">
-                <button className={rightView === 'tasks' ? 'active' : ''} onClick={() => setRightView('tasks')}>📊 看板</button>
+                <button className={rightView === 'tasks' ? 'active' : ''} onClick={() => setRightView('tasks')}>
+                  📊 看板
+                  {(() => {
+                    const pendingCount = tasks.filter(t => {
+                      if (t.status === 'done') return false
+                      if (t.projectPath && t.projectPath !== activeProject?.path) return false
+                      return true
+                    }).length
+                    const runningCount = monitorEvents.filter(e => e.status === 'running').length
+                    const total = pendingCount + runningCount
+                    if (total === 0) return null
+                    return <span style={{
+                      marginLeft: 4, background: '#6c8cff', color: '#fff',
+                      fontSize: 9, padding: '1px 5px', borderRadius: 8,
+                      fontWeight: 600, lineHeight: '14px', display: 'inline-block',
+                      minWidth: 16, textAlign: 'center',
+                    }}>{total}</span>
+                  })()}
+                </button>
                 <button className={rightView === 'plan' ? 'active' : ''} onClick={() => setRightView('plan')}>📋 计划</button>
                 <button className={rightView === 'office' ? 'active' : ''} onClick={() => setRightView('office')}>🏢 办公室</button>
                 <button className={rightView === 'connection' ? 'active' : ''} onClick={() => setRightView('connection')}>🔗 连接</button>
@@ -1167,6 +1258,7 @@ const DEFAULT_TEAM = [
           }
         }} />}
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} settings={appSettings} onSettingsChange={handleSaveSettings} />}
+      {showNewProjectDialog && <NewProjectDialog onClose={() => setShowNewProjectDialog(false)} onCreate={handleCreateProject} />}
       <ApprovalDialog
         approval={pendingApproval}
         onApprove={handleApprove}
@@ -1244,7 +1336,15 @@ function InlineTaskBoard({ tasks, onTasksChange, activeProject }: { tasks: TaskI
         </div>
       ))}
 
-      {pending.length === 0 && <p className="empty-hint">无待处理任务</p>}
+      {pending.length === 0 && (
+        <div className="empty-hint" style={{ textAlign: 'center', padding: '16px 12px', lineHeight: 1.8 }}>
+          <div style={{ fontSize: 13, color: '#888' }}>💡 暂无待处理任务</div>
+          <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+            Claude 执行工具时会自动创建任务<br/>
+            或点击右上角 + 手动创建
+          </div>
+        </div>
+      )}
     </div>
   )
 }

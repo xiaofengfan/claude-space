@@ -32,6 +32,64 @@ agentPool.setSettingsLoader(() => loadSettings())
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || 'E:/claudespace'
 const CLAUDE_HOME = path.join(os.homedir(), '.claude')
+
+// ── JSONL 安全读取 ──────────────────────────────────────────
+/** 读取 JSONL 文件，跳过不完整/损坏的行（Claude CLI 可能正在写入最后一行） */
+function readJsonlSafe(filePath: string): any[] {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const lines = raw.split('\n')
+    const results: any[] = []
+    let parseErrors = 0
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+      try {
+        results.push(JSON.parse(line))
+        parseErrors = 0
+      } catch {
+        parseErrors++
+        // 只有最后一行可能是部分写入（Claude CLI 正在写），
+        // 中间行的解析失败意味着数据损坏 → 记录日志
+        if (i < lines.length - 1 && parseErrors <= 1) {
+          console.warn('[jsonl] 解析失败 (行 ' + i + '):', line.slice(0, 80))
+        }
+      }
+    }
+    return results
+  } catch { return [] }
+}
+
+// ── 文件写入队列 ────────────────────────────────────────────
+// 串行化同一文件的写入操作，防止读-改-写 TOCTOU 竞态
+const writeQueues = new Map<string, Promise<void>>()
+
+function enqueueFileWrite(filePath: string, writeFn: () => void): void {
+  const prev = writeQueues.get(filePath) || Promise.resolve()
+  const next = prev.then(() => {
+    try {
+      writeFn()
+    } catch (err) {
+      console.error(`[file-queue] 写入 ${path.basename(filePath)} 失败:`, err)
+    }
+  }).catch(() => { /* 队列链不断 */ })
+  writeQueues.set(filePath, next)
+}
+
+/** 原子读-改-写：在整个周期内持有文件锁 */
+async function withFileLock<T>(filePath: string, fn: () => T): Promise<T> {
+  const prev = writeQueues.get(filePath) || Promise.resolve()
+  let result: T
+  const next = prev.then(() => {
+    result = fn()
+  }).catch((err) => {
+    console.error(`[file-lock] ${path.basename(filePath)} 操作失败:`, err)
+    throw err
+  })
+  writeQueues.set(filePath, next)
+  await next
+  return result!
+}
 const TASKS_FILE = path.join(os.homedir(), '.claude', 'claude-space-tasks.json')
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'claude-space-settings.json')
 const SESSION_NAMES_FILE = path.join(os.homedir(), '.claude', 'claude-space-session-names.json')
@@ -400,9 +458,14 @@ function loadTasks(): any[] {
 }
 
 function saveTasks(tasks: any[]): void {
-  const dir = path.dirname(TASKS_FILE)
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2), 'utf-8')
+  enqueueFileWrite(TASKS_FILE, () => {
+    const dir = path.dirname(TASKS_FILE)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    // 先写临时文件，再原子重命名，防止写一半崩溃损坏
+    const tmp = TASKS_FILE + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(tasks, null, 2), 'utf-8')
+    fs.renameSync(tmp, TASKS_FILE)
+  })
 }
 
 // ── 设置管理 ────────────────────────────────────────────
@@ -434,9 +497,13 @@ function loadSettings(): AppSettings | null {
 }
 
 function saveSettings(settings: AppSettings): void {
-  const dir = path.dirname(SETTINGS_FILE)
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8')
+  enqueueFileWrite(SETTINGS_FILE, () => {
+    const dir = path.dirname(SETTINGS_FILE)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const tmp = SETTINGS_FILE + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf-8')
+    fs.renameSync(tmp, SETTINGS_FILE)
+  })
 }
 
 function maskApiKey(key: string): string {
@@ -474,19 +541,26 @@ function registerIPC(): void {
 
     proc.on('event', (event: ClaudeEvent) => {
       mainWindow?.webContents.send('session:event', { sessionId, ...event })
+      // 同时通过 claude:event 通道转发（兼容 ChatPanel / useTaskSync 消费者）
+      mainWindow?.webContents.send('claude:event', event)
     })
     proc.on('status', (s: any) => {
       mainWindow?.webContents.send('session:status', { sessionId, ...s })
+      mainWindow?.webContents.send('claude:status-update', s)
     })
     proc.on('stderr', (text: string) => {
       mainWindow?.webContents.send('session:stderr', { sessionId, text })
+      mainWindow?.webContents.send('claude:stderr', text)
     })
     proc.on('close', (code: number | null) => {
       mainWindow?.webContents.send('session:close', { sessionId, code })
+      mainWindow?.webContents.send('claude:close', code)
+      if (claudeProcess === proc) claudeProcess = null
       sessionProcesses.delete(sessionId)
     })
     proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
       mainWindow?.webContents.send('session:permission-prompt', { sessionId, ...prompt })
+      mainWindow?.webContents.send('claude:permission-prompt', prompt)
     })
 
     sessionProcesses.set(sessionId, { process: proc, projectPath: opts.projectPath, createdAt: Date.now() })
@@ -513,24 +587,9 @@ function registerIPC(): void {
       permissionMode: opts.autoApproval ? 'auto' : 'manual',
     })
 
-    // Backward compat: also keep claudeProcess reference + event forwarding
+    // Backward compat: track current Claude process reference
+    // (event forwarding is handled once in getOrCreateSessionProcess — do NOT re-register here)
     claudeProcess = proc
-    proc.on('event', (event: ClaudeEvent) => {
-      mainWindow?.webContents.send('claude:event', event)
-    })
-    proc.on('status', (s: any) => {
-      mainWindow?.webContents.send('claude:status-update', s)
-    })
-    proc.on('stderr', (text: string) => {
-      mainWindow?.webContents.send('claude:stderr', text)
-    })
-    proc.on('close', (code: number | null) => {
-      mainWindow?.webContents.send('claude:close', code)
-      if (claudeProcess === proc) claudeProcess = null
-    })
-    proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
-      mainWindow?.webContents.send('claude:permission-prompt', prompt)
-    })
 
     console.log('[main] claude:send sessionId:', sid, 'contentLen:', opts.content.length)
     proc.sendPrompt(opts.content)
@@ -589,9 +648,13 @@ function registerIPC(): void {
 
   ipcMain.handle('session-names:save', async (_event, names: Record<string, string>) => {
     try {
-      const dir = path.dirname(SESSION_NAMES_FILE)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(SESSION_NAMES_FILE, JSON.stringify(names, null, 2), 'utf-8')
+      enqueueFileWrite(SESSION_NAMES_FILE, () => {
+        const dir = path.dirname(SESSION_NAMES_FILE)
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        const tmp = SESSION_NAMES_FILE + '.tmp'
+        fs.writeFileSync(tmp, JSON.stringify(names, null, 2), 'utf-8')
+        fs.renameSync(tmp, SESSION_NAMES_FILE)
+      })
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
@@ -689,21 +752,45 @@ function registerIPC(): void {
   })
 
   ipcMain.handle('project:new', async (_event, name?: string) => {
-    const result = await dialog.showSaveDialog({
-      title: '新建项目目录',
-      defaultPath: name ? path.join(WORKSPACE_ROOT, name) : WORKSPACE_ROOT,
-      properties: ['createDirectory'],
-    })
-    if (result.canceled || !result.filePath) return { canceled: true }
+    // 参数校验：项目名不能为空
+    const projectName = (name || '').trim()
+    if (!projectName) {
+      return { canceled: false, error: '项目名称不能为空' }
+    }
+    // 校验项目名不包含非法字符
+    if (/[<>:"/\\|?*]/.test(projectName)) {
+      return { canceled: false, error: '项目名称包含非法字符：< > : " / \\ | ? *' }
+    }
+    const projectPath = path.join(WORKSPACE_ROOT, projectName)
+    // 检查目录是否已存在
+    if (fs.existsSync(projectPath)) {
+      return { canceled: false, error: `项目目录已存在：${projectPath}` }
+    }
     try {
-      fs.mkdirSync(result.filePath, { recursive: true })
+      fs.mkdirSync(projectPath, { recursive: true })
       // 生成基础 CLAUDE.md
-      const projectName = path.basename(result.filePath)
-      const claudeMd = `# ${projectName}\n\n## 项目概述\n\n新建项目\n\n## 技术栈\n\n待定\n\n## 开发命令\n\n\`\`\`bash\n# TODO: 添加开发命令\n\`\`\`\n`
-      fs.writeFileSync(path.join(result.filePath, 'CLAUDE.md'), claudeMd, 'utf-8')
-      return { canceled: false, path: result.filePath, name: projectName }
+      const claudeMd = [
+        `# ${projectName}`,
+        '',
+        '## 项目概述',
+        '',
+        '新建项目',
+        '',
+        '## 技术栈',
+        '',
+        '待定',
+        '',
+        '## 开发命令',
+        '',
+        '```bash',
+        '# TODO: 添加开发命令',
+        '```',
+        '',
+      ].join('\n')
+      fs.writeFileSync(path.join(projectPath, 'CLAUDE.md'), claudeMd, 'utf-8')
+      return { canceled: false, path: projectPath, name: projectName }
     } catch (err: any) {
-      return { canceled: false, error: err.message }
+      return { canceled: false, error: `创建项目失败：${err.message}` }
     }
   })
 
@@ -794,16 +881,12 @@ function registerIPC(): void {
       const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
       const jsonlFile = path.join(CLAUDE_HOME, 'projects', encodedPath, `${recent.sessionId}.jsonl`)
       if (fs.existsSync(jsonlFile)) {
-        const lines = fs.readFileSync(jsonlFile, 'utf-8').split('\n').filter(Boolean)
-        // 提取用户消息和助手最终响应
+        const events = readJsonlSafe(jsonlFile)
         const msgs: any[] = []
-        for (const line of lines) {
-          try {
-            const ev = JSON.parse(line)
-            if (ev.type === 'user' || (ev.type === 'assistant' && ev.message?.content)) {
-              msgs.push(ev)
-            }
-          } catch {}
+        for (const ev of events) {
+          if (ev.type === 'user' || (ev.type === 'assistant' && ev.message?.content)) {
+            msgs.push(ev)
+          }
         }
         return {
           sessionId: recent.sessionId,
@@ -823,10 +906,7 @@ function registerIPC(): void {
     for (const encoded of fs.readdirSync(projectsDir)) {
       const jsonlFile = path.join(projectsDir, encoded, `${sessionId}.jsonl`)
       if (fs.existsSync(jsonlFile)) {
-        const lines = fs.readFileSync(jsonlFile, 'utf-8').split('\n').filter(Boolean)
-        const events = lines.map(l => {
-          try { return JSON.parse(l) } catch { return null }
-        }).filter(Boolean)
+        const events = readJsonlSafe(jsonlFile)
         return { events }
       }
     }
@@ -851,12 +931,9 @@ function registerIPC(): void {
 
       const seenIds = new Set<string>()
       for (const file of jsonlFiles.slice(0, 5)) { // Last 5 sessions
-        const lines = fs.readFileSync(path.join(sessionDir, file), 'utf-8')
-          .split('\n').filter(Boolean)
-        for (const line of lines) {
-          try {
-            const ev = JSON.parse(line)
-            if (ev.type !== 'assistant' || !ev.message?.content) continue
+        const events = readJsonlSafe(path.join(sessionDir, file))
+        for (const ev of events) {
+          if (ev.type !== 'assistant' || !ev.message?.content) continue
             for (const block of ev.message.content) {
               if (block.type !== 'tool_use') continue
               const toolId = block.id
@@ -902,9 +979,14 @@ function registerIPC(): void {
     return null
   })
   ipcMain.handle('team:save', async (_event, team: any[]) => {
-    const dir = path.join(os.homedir(), '.claude')
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'claude-space-team.json'), JSON.stringify(team, null, 2), 'utf-8')
+    const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
+    enqueueFileWrite(file, () => {
+      const dir = path.dirname(file)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const tmp = file + '.tmp'
+      fs.writeFileSync(tmp, JSON.stringify(team, null, 2), 'utf-8')
+      fs.renameSync(tmp, file)
+    })
     return { success: true }
   })
 
@@ -974,50 +1056,50 @@ function registerIPC(): void {
   })
 
   ipcMain.handle('settings:save', async (_event, settings: AppSettingsSafe) => {
-    // renderer sends masked version — need to merge with existing full keys
-    const existing = loadSettings()
-    const existingModels = existing?.models || []
+    // 整个读-改-写周期持有文件锁，防止并发保存覆盖
+    return withFileLock(SETTINGS_FILE, () => {
+      const existing = loadSettings()
+      const existingModels = existing?.models || []
 
-    const models: ModelConfig[] = settings.models.map(m => {
-      const existingModel = existingModels.find(em => em.id === m.id)
-      // 保留已有 apiKey（除非用户明确提供了新 key）
-      const apiKey = (m as any).apiKey
-        ? (m as any).apiKey  // 用户输入了新 key
-        : (existingModel?.apiKey || '')  // 保留旧 key
-      return {
-        id: m.id, name: m.name, provider: m.provider as ModelConfig['provider'],
-        apiKey, baseUrl: m.baseUrl, model: m.model,
-        apiKeySource: (apiKey && apiKey !== existingModel?.apiKey) ? 'user' as const : m.apiKeySource,
-      }
-    })
+      const models: ModelConfig[] = settings.models.map(m => {
+        const existingModel = existingModels.find(em => em.id === m.id)
+        const apiKey = (m as any).apiKey
+          ? (m as any).apiKey
+          : (existingModel?.apiKey || '')
+        return {
+          id: m.id, name: m.name, provider: m.provider as ModelConfig['provider'],
+          apiKey, baseUrl: m.baseUrl, model: m.model,
+          apiKeySource: (apiKey && apiKey !== existingModel?.apiKey) ? 'user' as const : m.apiKeySource,
+        }
+      })
 
-    // Merge SSH servers: keep existing secrets unless new ones provided
-    const existingServers = existing?.sshServers || []
-    const mergedSshServers: SshServerConfig[] = ((settings as any).sshServers || []).map((s: any) => {
-      const existing = existingServers.find((es: any) => es.id === s.id)
-      return {
-        id: s.id, name: s.name,
-        host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
-        port: s.port || 22,
-        username: s.username, authMethod: s.authMethod,
-        password: s.newPassword || existing?.password || '',
-        privateKeyPath: s.privateKeyPath || existing?.privateKeyPath || '',
-        privateKeyContent: s.newPrivateKeyContent || existing?.privateKeyContent || '',
-        fingerprint: s.fingerprint || existing?.fingerprint || undefined,
-        createdAt: s.createdAt || existing?.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }
-    })
+      const existingServers = existing?.sshServers || []
+      const mergedSshServers: SshServerConfig[] = ((settings as any).sshServers || []).map((s: any) => {
+        const existing = existingServers.find((es: any) => es.id === s.id)
+        return {
+          id: s.id, name: s.name,
+          host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+          port: s.port || 22,
+          username: s.username, authMethod: s.authMethod,
+          password: s.newPassword || existing?.password || '',
+          privateKeyPath: s.privateKeyPath || existing?.privateKeyPath || '',
+          privateKeyContent: s.newPrivateKeyContent || existing?.privateKeyContent || '',
+          fingerprint: s.fingerprint || existing?.fingerprint || undefined,
+          createdAt: s.createdAt || existing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      })
 
-    saveSettings({
-      version: settings.version || 1,
-      activeModelId: settings.activeModelId,
-      models,
-      autoApproval: settings.autoApproval ?? false,
-      sshServers: mergedSshServers,
-      deployTargets: (settings as any).deployTargets || [],
+      saveSettings({
+        version: settings.version || 1,
+        activeModelId: settings.activeModelId,
+        models,
+        autoApproval: settings.autoApproval ?? false,
+        sshServers: mergedSshServers,
+        deployTargets: (settings as any).deployTargets || [],
+      })
+      return { success: true }
     })
-    return { success: true }
   })
 
   ipcMain.handle('settings:get-model', async (_event, modelId: string) => {
@@ -1033,9 +1115,21 @@ function registerIPC(): void {
   })
 
   // 任务管理
+  // ── 任务防抖：高频 tool_use 事件不立即写盘 ──
+  let taskSaveTimer: ReturnType<typeof setTimeout> | null = null
+  let latestTasks: any[] | null = null
+
   ipcMain.handle('task:load', async () => loadTasks())
   ipcMain.handle('task:save', async (_event, tasks: any[]) => {
-    saveTasks(tasks)
+    latestTasks = tasks
+    if (taskSaveTimer) return { success: true } // 已有待处理的保存，跳过
+    taskSaveTimer = setTimeout(() => {
+      taskSaveTimer = null
+      if (latestTasks) {
+        saveTasks(latestTasks)
+        latestTasks = null
+      }
+    }, 200) // 200ms 窗口内合并多次保存
     return { success: true }
   })
 

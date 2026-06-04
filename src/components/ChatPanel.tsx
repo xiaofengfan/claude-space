@@ -364,6 +364,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
   function finalizeAssistantMessage() {
     // 防止 result 和 close 事件重复触发
     if (finalizingRef.current) return
+    // 如果 assistantMessageRef 已被清空，说明已由前一次调用完成
+    if (!assistantMessageRef.current) return
     finalizingRef.current = true
 
     const finalContent = (assistantMessageRef.current?.content || '') + (streamingTextRef.current || '')
@@ -429,21 +431,30 @@ export const ChatPanel = forwardRef(function ChatPanel({
     const cleanContent = actualContent.replace(/@\S+/g, '').trim()
     const contentForClaude = isCmd ? cleanContent : (mentions.length > 0 ? cleanContent : actualContent)
 
-    // ── 终端模式：写入 PTY，不 spawn 新进程 ──
-    if (terminalMode && onTerminalSend) {
+    // ── 统一路由：终端 PTY 可用时优先通过 PTY 发送（chat/terminal 共享同一 Claude 实例）──
+    // terminalMode: 当前在终端视图；onTerminalSend: PTY 已就绪（terminal:start 已调用）
+    // 只要 PTY 就绪就优先走 PTY，避免 spawn 第二个 Claude 实例导致冲突
+    const usePtyRoute = !!(onTerminalSend)
+    if (usePtyRoute) {
       try {
         // 如果 Claude 还没启动，先自动启动
         if (!terminalClaudeRunning && onLaunchClaudeForChat) {
+          setConnectionStatus('connecting')
+          setConnectionError('正在启动 Claude...')
           await onLaunchClaudeForChat()
-          // 给 Claude 一点启动时间
-          await new Promise(r => setTimeout(r, 1500))
+          // 等待 Claude 启动 + 发现 JSONL 会话文件
+          await new Promise(r => setTimeout(r, 2000))
         }
 
-        // 写入 PTY（等同于在终端里打字回车）— 使用清理后的内容
+        // 写入 PTY（等同于在终端里打字回车）
         await onTerminalSend(contentForClaude + '\n')
 
         // Chat 面板的 UI 状态由 terminal status / claude:event 事件驱动
-        // 先创建用户消息 + 占位 assistant 消息
+        setIsRunning(true)
+        setConnectionStatus('connecting')
+        setConnectionError('')
+        onClaudeRunning(true)
+        onClaudeConnected(false)
         onStreamingText('')
         streamingTextRef.current = ''
         setPendingTools(new Map())
@@ -476,16 +487,12 @@ export const ChatPanel = forwardRef(function ChatPanel({
         return
       } catch (err: any) {
         setConnectionError('终端发送失败: ' + (err.message || '未知错误'))
-        return
+        // 不 return — 回退到 chat 模式 spawn
       }
     }
 
-    // ── Chat 模式：spawn claude -p ──
+    // ── 回退：spawn 独立 Claude 进程（终端未运行时）──
     try {
-      // 同步写入终端 PTY（如果终端在运行）
-      if (onTerminalSend) {
-        onTerminalSend(`[Chat] ${contentForClaude}\n`).catch(() => {})
-      }
 
       const result = await window.electronAPI.claudeSend({
         content: contentForClaude,

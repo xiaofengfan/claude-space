@@ -171,8 +171,10 @@ export function TaskMonitor({
       <div className="monitor-body">
         {monitorEvents.length === 0 ? (
           <div className="monitor-empty">
-            <p style={{ fontSize: 12, color: '#666', textAlign: 'center', padding: 12 }}>
-              📡 等待 Claude 活动...
+            <p style={{ fontSize: 12, color: '#888', textAlign: 'center', padding: '20px 12px', lineHeight: 1.8 }}>
+              💡 当 Claude 开始执行工具时<br/>
+              这里会实时显示活动事件<br/>
+              <span style={{ color: '#666', fontSize: 11 }}>发送消息启动 Claude 即可</span>
             </p>
           </div>
         ) : (

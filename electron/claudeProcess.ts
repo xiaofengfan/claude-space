@@ -193,13 +193,23 @@ export class ClaudeProcess extends EventEmitter {
   /** Alias for kill() — for backward compatibility */
   stop(): void { this.kill() }
 
+  private _parseErrorCount = 0
+  private readonly MAX_BUFFER = 200 * 1024  // 200KB — 超过此值则重置缓冲区，防止内存无限增长
+
   private processBuffer(): void {
     const lines = this.buffer.split('\n')
     this.buffer = lines.pop() || ''
+    // 缓冲区保护：如果部分行超过 MAX_BUFFER，说明数据已损坏，重置
+    if (this.buffer.length > this.MAX_BUFFER) {
+      console.warn('[claudeProcess] buffer oversized (' + this.buffer.length + ' bytes), resetting. parse errors:', this._parseErrorCount)
+      this.buffer = ''
+      this._parseErrorCount = 0
+    }
     for (const line of lines) {
       if (!line.trim()) continue
       try {
         const event: ClaudeEvent = JSON.parse(line)
+        this._parseErrorCount = 0  // 成功解析 → 重置错误计数
         if (event.type === 'system' && event.subtype === 'init') {
           console.log('[claudeProcess] system/init, model:', event.model, 'session:', event.session_id?.slice(0, 12))
           this._sessionId = event.session_id
@@ -210,7 +220,20 @@ export class ClaudeProcess extends EventEmitter {
           console.log('[claudeProcess] event:', event.type, event.subtype || '')
         }
         this.emit('event', event)
-      } catch {}
+      } catch (err: any) {
+        this._parseErrorCount++
+        // 只在前几次错误时记录日志，避免刷屏
+        if (this._parseErrorCount <= 3 || this._parseErrorCount % 100 === 0) {
+          console.warn('[claudeProcess] JSON parse error #' + this._parseErrorCount + ':',
+            line.slice(0, 120), err?.message || '')
+        }
+        // 连续大量解析失败 → 可能是二进制垃圾数据，重置缓冲区
+        if (this._parseErrorCount > 500) {
+          console.warn('[claudeProcess] too many parse errors, resetting buffer')
+          this.buffer = ''
+          this._parseErrorCount = 0
+        }
+      }
     }
   }
 }

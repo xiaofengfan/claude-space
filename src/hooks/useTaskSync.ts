@@ -9,6 +9,7 @@ interface UseTaskSyncOpts {
   autoApproval?: boolean
   onMonitorEvent?: (evt: { id: string; type: string; title: string; detail: string; status: 'running' | 'completed' | 'pending'; timestamp: number }) => void
   onTaskComplete?: (taskTitle: string) => void
+  onActivityStart?: () => void  // Claude 开始执行工具时触发，用于自动切换面板
 }
 
 export interface ApprovalRequest {
@@ -24,7 +25,7 @@ export interface ApprovalRequest {
 /** Sensitive tools that typically require user permission */
 const SENSITIVE_TOOLS = ['Bash', 'Write', 'Edit', 'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Agent']
 
-export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApproval, autoApproval, onMonitorEvent, onTaskComplete }: UseTaskSyncOpts) {
+export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApproval, autoApproval, onMonitorEvent, onTaskComplete, onActivityStart }: UseTaskSyncOpts) {
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
 
@@ -69,6 +70,7 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
 
         // ── Track ALL tool uses for monitoring ──
         if (['Bash', 'Write', 'Edit', 'Read', 'Glob', 'Grep', 'Workflow', 'Agent', 'WebFetch', 'WebSearch'].includes(name)) {
+          onActivityStart?.()  // 通知外部：Claude 开始干活了
           const toolTask: TaskItem = {
             id: 'tool_' + Date.now().toString(36),
             title: `${getToolEmoji(name)} ${name}: ${getToolSummary(name, input)}`,

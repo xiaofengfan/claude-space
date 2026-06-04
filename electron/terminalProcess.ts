@@ -35,6 +35,7 @@ export class TerminalProcess extends EventEmitter {
   private jsonlInterval: ReturnType<typeof setInterval> | null = null
   private jsonlPath: string | null = null
   private jsonlTailSize = 0
+  private _tailBuffer = ''  // 跨轮询间隔的部分行缓冲区
   private options: TerminalProcessOptions
   private _sessionId: string | undefined
   private _running = false
@@ -218,7 +219,41 @@ export class TerminalProcess extends EventEmitter {
     const check = setInterval(() => {
       attempts++
       try {
-        if (!fs.existsSync(sessionDir)) return
+        if (!fs.existsSync(sessionDir)) {
+          if (attempts >= 60) {
+            // 60次之后切换为慢速重试（5秒间隔），不轻易放弃
+            clearInterval(check)
+            this.emit('status', {
+              running: true, connected: false,
+              claudeRunning: false,
+              sessionId: undefined,
+              error: '等待 Claude 创建会话文件...',
+            })
+            // 慢速重试
+            const slowCheck = setInterval(() => {
+              try {
+                if (!fs.existsSync(sessionDir)) return
+                const after = fs.readdirSync(sessionDir)
+                const newFile = after.find(f => !beforeFiles.has(f) && f.endsWith('.jsonl'))
+                if (newFile) {
+                  clearInterval(slowCheck)
+                  this.jsonlPath = path.join(sessionDir, newFile)
+                  this._sessionId = newFile.replace('.jsonl', '')
+                  this.jsonlTailSize = 0
+                  this.startJsonlWatch()
+                  this._claudeRunning = true
+                  this.emit('status', {
+                    running: true, connected: true,
+                    claudeRunning: true,
+                    sessionId: this._sessionId,
+                    error: '',
+                  })
+                }
+              } catch {}
+            }, 5000)
+          }
+          return
+        }
         const after = fs.readdirSync(sessionDir)
         const newFile = after.find(f => !beforeFiles.has(f) && f.endsWith('.jsonl'))
         if (newFile) {
@@ -237,11 +272,6 @@ export class TerminalProcess extends EventEmitter {
           return
         }
       } catch {}
-      if (attempts >= 60) {
-        clearInterval(check)
-        // 超时但 PTY 仍在运行 — Claude 可能启动了但未创建新 session 文件
-        // 保持 running 状态，等用户交互
-      }
     }, 100)
   }
 
@@ -258,7 +288,7 @@ export class TerminalProcess extends EventEmitter {
         const stat = fs.statSync(this.jsonlPath)
         if (stat.size > this.jsonlTailSize) {
           this.tailFrom(this.jsonlTailSize)
-          this.jsonlTailSize = stat.size
+          // tailFrom 内部会更新 jsonlTailSize 为实际读取位置
         }
       } catch {}
     }, 300)
@@ -269,13 +299,34 @@ export class TerminalProcess extends EventEmitter {
     try {
       const stat = fs.statSync(this.jsonlPath)
       if (stat.size <= fromPos) return
+
       const fd = fs.openSync(this.jsonlPath, 'r')
-      const buf = Buffer.alloc(Math.min(stat.size - fromPos, 1024 * 1024))
-      fs.readSync(fd, buf, 0, buf.length, fromPos)
+      const MAX_CHUNK = 1024 * 1024  // 1MB per read
+      let readPos = fromPos
+      let rawData = this._tailBuffer  // 前置之前未完成的部分行
+      this._tailBuffer = ''
+
+      // 循环读取，处理文件增长 >1MB 的情况
+      while (readPos < stat.size) {
+        const chunkSize = Math.min(stat.size - readPos, MAX_CHUNK)
+        const buf = Buffer.alloc(chunkSize)
+        fs.readSync(fd, buf, 0, chunkSize, readPos)
+        rawData += buf.toString('utf-8')
+        readPos += chunkSize
+      }
       fs.closeSync(fd)
 
-      const lines = buf.toString('utf-8').split('\n').filter(Boolean)
+      // 按行分割，保留最后一个不完整行到 _tailBuffer
+      const lines = rawData.split('\n')
+      // 如果原始数据不以 \n 结尾，最后一行是不完整的
+      if (!rawData.endsWith('\n')) {
+        this._tailBuffer = lines.pop() || ''
+      } else {
+        this._tailBuffer = ''
+      }
+
       for (const line of lines) {
+        if (!line.trim()) continue
         try {
           const event: ClaudeEvent = JSON.parse(line)
           if (event.type === 'system' && event.subtype === 'init') {
@@ -291,9 +342,16 @@ export class TerminalProcess extends EventEmitter {
             }
           }
           this.emit('event', event)
-        } catch {}
+        } catch {
+          // 静默跳过不可解析的行（损坏数据、非 JSON 输出等）
+        }
       }
-    } catch {}
+
+      // 使用实际读取位置（而非文件大小），确保不漏数据
+      this.jsonlTailSize = readPos
+    } catch {
+      // 文件读取失败静默跳过（文件可能正在写入中）
+    }
   }
 
   private stopJsonlWatch(): void {
