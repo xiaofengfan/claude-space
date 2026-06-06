@@ -118,7 +118,6 @@ export class TerminalProcess extends EventEmitter {
           sessionId: this._sessionId,
           error: exitCode ? `Claude 退出 (code ${exitCode})` : '',
         })
-        // Claude 退出但 PTY 可能还有 shell 残留，标记 running=true
         this.emit('terminal-data', `\r\n\x1b[33mClaude 已退出 (code ${exitCode || 0}) — 输入 claude 重新启动\x1b[0m\r\n`)
       })
 

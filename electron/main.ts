@@ -22,6 +22,37 @@ const sessionProcesses = new Map<string, { process: ClaudeProcess; projectPath?:
 const agentPool = new AgentPool()              // 多智能体群聊池
 let terminalProcess: TerminalProcess | null = null  // 当前活跃终端（向后兼容）
 const terminalProcesses = new Map<string, TerminalProcess>()  // 会话→终端进程池
+const windowTerminals = new Map<number, string>()  // 窗口ID→会话ID（多窗口隔离）
+const terminalWindowBindings = new Map<string, Set<number>>()  // sessionId→窗口集合（广播终端事件到所有绑定窗口）
+
+// ── 终端多窗口广播辅助 ────────────────────────────────
+
+function registerTerminalWindow(sessionId: string, windowId: number): void {
+  if (!terminalWindowBindings.has(sessionId)) {
+    terminalWindowBindings.set(sessionId, new Set())
+  }
+  terminalWindowBindings.get(sessionId)!.add(windowId)
+}
+
+function unregisterTerminalWindow(windowId: number): void {
+  for (const [sid, winIds] of terminalWindowBindings) {
+    winIds.delete(windowId)
+    if (winIds.size === 0) terminalWindowBindings.delete(sid)
+  }
+}
+
+function broadcastTerminalEvent(sessionId: string, channel: string, ...args: any[]): void {
+  const winIds = terminalWindowBindings.get(sessionId)
+  if (!winIds) return
+  for (const winId of winIds) {
+    try {
+      const win = BrowserWindow.fromId(winId)
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(channel, ...args)
+      }
+    } catch (_e) { /* 窗口可能已关闭 */ }
+  }
+}
 const sshService = new SshService()               // SSH 连接池与文件操作
 const sshTerminals = new Map<string, SshTerminalProcess>()  // serverId→远程终端
 let activeSshTerminal: SshTerminalProcess | null = null
@@ -118,6 +149,8 @@ function createWindow(projectPath?: string): void {
 
   win.on('ready-to-show', () => win.show())
 
+  const mainWinId = win.id
+
   // 窗口关闭 — 仅从追踪列表移除，不干扰其他窗口
   win.on('closed', () => {
     const idx = windows.indexOf(win)
@@ -125,6 +158,9 @@ function createWindow(projectPath?: string): void {
     if (win === mainWindow) {
       mainWindow = windows.length > 0 ? windows[0] : null
     }
+    // 清理终端绑定
+    windowTerminals.delete(mainWinId)
+    unregisterTerminalWindow(mainWinId)
     // 所有窗口关闭 → 退出应用
     if (windows.length === 0) {
       claudeProcess?.kill()
@@ -169,12 +205,17 @@ function createFileViewerWindow(filePath: string, fileName: string, projectPath?
 
   win.on('ready-to-show', () => win.show())
 
+  const viewerWinId = win.id
+
   win.on('closed', () => {
     const idx = windows.indexOf(win)
     if (idx >= 0) windows.splice(idx, 1)
     if (win === mainWindow) {
       mainWindow = windows.length > 0 ? windows[0] : null
     }
+    // 清理终端绑定
+    windowTerminals.delete(viewerWinId)
+    unregisterTerminalWindow(viewerWinId)
     if (windows.length === 0) {
       claudeProcess?.kill()
       app.quit()
@@ -1225,19 +1266,42 @@ function registerIPC(): void {
   ipcMain.handle('git:diff-staged', async (_e, projectPath: string) =>
     runGit(projectPath, ['diff', '--staged', '--stat']))
 
-  // ── 终端管理 ────────────────────────────────────────────
+  // ── 终端管理（多窗口隔离）───────────────────────────
 
-  ipcMain.handle('terminal:start', async (_event, opts: {
+  // 根据事件来源窗口查找对应终端（h: windowTerminals → terminalProcesses → terminalProcess）
+  function findTerminal(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): TerminalProcess | undefined {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) {
+      const sid = windowTerminals.get(win.id)
+      if (sid) {
+        const tp = terminalProcesses.get(sid)
+        if (tp) return tp
+      }
+    }
+    return terminalProcess ?? undefined
+  }
+
+  ipcMain.handle('terminal:start', async (event, opts: {
     cwd?: string; sessionId?: string; cols?: number; rows?: number;
   }) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const winId = win?.id ?? 0
     const sid = opts.sessionId || 'default'
+
+    // 记录窗口→会话映射（向后兼容）
+    if (winId) {
+      windowTerminals.set(winId, sid)
+      // 注册窗口为终端事件广播目标
+      registerTerminalWindow(sid, winId)
+    }
 
     // 检查是否已有该会话的终端进程 → 复用
     const existing = terminalProcesses.get(sid)
     if (existing) {
       terminalProcess = existing
-      // 转发已有进程的最新状态
-      mainWindow?.webContents.send('terminal:status', {
+      // 发送当前状态到此窗口（后续事件通过 broadcastTerminalEvent 广播到所有绑定窗口）
+      const target = win ?? mainWindow
+      target?.webContents.send('terminal:status', {
         running: existing.isRunning,
         shellRunning: existing.isRunning,
         claudeRunning: existing.isClaudeRunning,
@@ -1276,22 +1340,16 @@ function registerIPC(): void {
       rows: opts.rows || 40,
     })
 
-    // 事件转发（仅活跃终端的数据发到渲染器）
+    // 事件广播到所有绑定此终端的窗口（支持多窗口共享终端）
     proc.on('terminal-data', (data: string) => {
-      if (terminalProcess === proc) {
-        mainWindow?.webContents.send('terminal:data', data)
-      }
+      broadcastTerminalEvent(sid, 'terminal:data', data)
     })
     proc.on('event', (event: any) => {
-      if (terminalProcess === proc) {
-        mainWindow?.webContents.send('claude:event', event)
-      }
+      broadcastTerminalEvent(sid, 'claude:event', event)
     })
     proc.on('status', (s: any) => {
-      if (terminalProcess === proc) {
-        mainWindow?.webContents.send('claude:status-update', s)
-        mainWindow?.webContents.send('terminal:status', s)
-      }
+      broadcastTerminalEvent(sid, 'claude:status-update', s)
+      broadcastTerminalEvent(sid, 'terminal:status', s)
     })
 
     terminalProcess = proc
@@ -1300,37 +1358,38 @@ function registerIPC(): void {
     return { success: true }
   })
 
-  ipcMain.handle('terminal:restart', async () => {
-    terminalProcess?.restart()
+  ipcMain.handle('terminal:restart', async (event) => {
+    findTerminal(event)?.restart()
     return { success: true }
   })
 
-  ipcMain.on('terminal:input', (_event, data: string) => {
-    terminalProcess?.write(data)
+  ipcMain.on('terminal:input', (event, data: string) => {
+    findTerminal(event)?.write(data)
   })
 
-  ipcMain.on('terminal:resize', (_event, opts: { cols: number; rows: number }) => {
-    terminalProcess?.resize(opts.cols, opts.rows)
+  ipcMain.on('terminal:resize', (event, opts: { cols: number; rows: number }) => {
+    findTerminal(event)?.resize(opts.cols, opts.rows)
   })
 
-  ipcMain.handle('terminal:kill', async () => {
-    if (terminalProcess) {
-      // 从池中移除
-      for (const [id, tp] of terminalProcesses) {
-        if (tp === terminalProcess) { terminalProcesses.delete(id); break }
+  ipcMain.handle('terminal:kill', async (event) => {
+    const tp = findTerminal(event)
+    if (tp) {
+      for (const [id, p] of terminalProcesses) {
+        if (p === tp) { terminalProcesses.delete(id); break }
       }
-      terminalProcess.kill()
-      terminalProcess = null
+      tp.kill()
+      if (terminalProcess === tp) terminalProcess = null
     }
     return { success: true }
   })
 
-  ipcMain.handle('terminal:status', async () => {
+  ipcMain.handle('terminal:status', async (event) => {
+    const tp = findTerminal(event)
     return {
-      running: terminalProcess?.isRunning || false,
-      claudeRunning: terminalProcess?.isClaudeRunning || false,
-      sessionId: terminalProcess?.sessionId || null,
-      error: terminalProcess?.lastError || '',
+      running: tp?.isRunning || false,
+      claudeRunning: tp?.isClaudeRunning || false,
+      sessionId: tp?.sessionId || null,
+      error: tp?.lastError || '',
     }
   })
 
