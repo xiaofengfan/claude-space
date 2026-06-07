@@ -121,6 +121,7 @@ export class TerminalProcess extends EventEmitter {
         this.emit('terminal-data', `\r\n\x1b[33mClaude 已退出 (code ${exitCode || 0}) — 输入 claude 重新启动\x1b[0m\r\n`)
       })
 
+      this._claudeRunning = true
       this.emit('status', {
         running: true, connected: false,
         claudeRunning: true,
@@ -159,7 +160,7 @@ export class TerminalProcess extends EventEmitter {
     const claudeBin = this.options.claudePath || 'claude'
     let cmd = claudeBin
     if (this._sessionId) cmd += ` --resume ${this._sessionId}`
-    cmd += '\n'
+    cmd += '\r'
     this.ptyProcess.write(`\r\n\x1b[36m⚡ 重新启动 Claude...\x1b[0m\r\n`)
     this.ptyProcess.write(cmd)
 
@@ -214,6 +215,26 @@ export class TerminalProcess extends EventEmitter {
   }
 
   private discoverSessionFile(sessionDir: string, beforeFiles: Set<string>): void {
+    // ── --resume 模式：直接监听已有 JSONL 文件，无需轮询发现新文件 ──
+    if (this._sessionId) {
+      const resumeFile = path.join(sessionDir, `${this._sessionId}.jsonl`)
+      try {
+        if (fs.existsSync(resumeFile)) {
+          this.jsonlPath = resumeFile
+          this.jsonlTailSize = 0
+          this.startJsonlWatch()
+          this._claudeRunning = true
+          this.emit('status', {
+            running: true, connected: true,
+            claudeRunning: true,
+            sessionId: this._sessionId,
+            error: '',
+          })
+          return
+        }
+      } catch (_e) { /* 文件检查失败，回退到轮询 */ }
+    }
+
     let attempts = 0
     const check = setInterval(() => {
       attempts++

@@ -957,7 +957,7 @@ const DEFAULT_TEAM = [
         { label: '🚀 项目部署', action: () => setRightView('deploy') },
       ],
     },
-    { label: '关于', items: [{ label: 'Claude Space v1.1.0', disabled: true }] },
+    { label: '关于', items: [{ label: 'Claude Space v1.1.1', disabled: true }] },
   ]
 
   const noProject = !activeProject

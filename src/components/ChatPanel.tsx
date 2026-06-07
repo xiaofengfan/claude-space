@@ -415,7 +415,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
       // 同步写入终端 PTY（如果终端在运行）
       const cleanForTerminal = actualContent.replace(/@\S+/g, '').trim()
       if (cleanForTerminal && onTerminalSend) {
-        onTerminalSend(`[群聊] ${cleanForTerminal}\n`).catch(() => {})
+        onTerminalSend(`[群聊] ${cleanForTerminal}\r`).catch(() => {})
       }
       onAgentSendGroupRef.current(content, mentions)
       return
@@ -434,7 +434,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
     // ── 统一路由：终端 PTY 可用时优先通过 PTY 发送（chat/terminal 共享同一 Claude 实例）──
     // terminalMode: 当前在终端视图；onTerminalSend: PTY 已就绪（terminal:start 已调用）
     // 只要 PTY 就绪就优先走 PTY，避免 spawn 第二个 Claude 实例导致冲突
-    const usePtyRoute = !!(onTerminalSend)
+    const usePtyRoute = !!(onTerminalSend && terminalClaudeRunning)
     if (usePtyRoute) {
       try {
         // 如果 Claude 还没启动，先自动启动
@@ -447,7 +447,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
         }
 
         // 写入 PTY（等同于在终端里打字回车）
-        await onTerminalSend(contentForClaude + '\n')
+        await onTerminalSend(contentForClaude + '\r')
 
         // Chat 面板的 UI 状态由 terminal status / claude:event 事件驱动
         setIsRunning(true)
