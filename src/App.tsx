@@ -161,6 +161,7 @@ const DEFAULT_TEAM = [
       window.electronAPI.terminalStart({
         cwd: activeProject.path,
         sessionId: sessionId,
+        autoApproval,
       }).then(() => setTerminalReady(true)).catch(() => {})
     }
   }
@@ -282,6 +283,7 @@ const DEFAULT_TEAM = [
       await window.electronAPI.terminalStart({
         cwd: project.path,
         sessionId: recent?.sessionId,
+        autoApproval,
       })
       setTerminalReady(true)
     } catch { /* 非关键 */ }
@@ -700,13 +702,14 @@ const DEFAULT_TEAM = [
       await window.electronAPI.terminalStart({
         cwd: activeProject?.path,
         sessionId: currentSessionId,
+        autoApproval,
       })
     } else if (!status.claudeRunning) {
       // 终端在运行但 Claude 已退出 → 重启 Claude
       await window.electronAPI.terminalRestart?.()
     }
     setTerminalClaudeRunning(true)
-  }, [activeProject?.path, currentSessionId])
+  }, [activeProject?.path, currentSessionId, autoApproval])
 
   // 监听终端状态事件
   useEffect(() => {

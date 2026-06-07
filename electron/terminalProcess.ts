@@ -19,6 +19,7 @@ export interface TerminalProcessOptions {
   baseUrl?: string
   cols?: number
   rows?: number
+  permissionMode?: 'auto' | 'manual'  // auto = 跳过权限确认
 }
 
 export interface ClaudeEvent {
@@ -67,7 +68,10 @@ export class TerminalProcess extends EventEmitter {
 
     // claude 命令：优先用传入的绝对路径
     const claudeBin = this.options.claudePath || 'claude'
-    const args: string[] = []
+    const args: string[] = ['--include-partial-messages']
+    if (this.options.permissionMode === 'auto') {
+      args.push('--dangerously-skip-permissions')
+    }
     if (this._sessionId) {
       args.push('--resume', this._sessionId)
     }
@@ -104,9 +108,16 @@ export class TerminalProcess extends EventEmitter {
         env,
       })
 
-      // PTY stdout → xterm.js 渲染
+      // PTY stdout → xterm.js 渲染 + 权限提示检测
       this.ptyProcess.onData((data: string) => {
         this.emit('terminal-data', data)
+        // 检测终端输出中的权限提示，转发到 Chat 审批
+        if (/Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(data)) {
+          const clean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
+          if (clean.length > 5) {
+            this.emit('permission-prompt', { text: clean, timestamp: Date.now() })
+          }
+        }
       })
 
       this.ptyProcess.onExit(({ exitCode }) => {

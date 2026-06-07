@@ -72,6 +72,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
   const assistantMessageRef = useRef<ChatMessage | null>(null)
   const thinkingRef = useRef('')
   const streamingTextRef = useRef(streamingText)
+  const userHasSentRef = useRef(false)  // 用户至少发过一条消息后置 true，防止终端回放旧事件污染 Chat
   const [isRunning, setIsRunning] = useState(false)
   const [connectionError, setConnectionError] = useState('')
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected')
@@ -279,7 +280,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
     thinkingRef.current = ''
 
     // 如果终端发来事件但 chat 没有活跃 assistant 消息 → 自动创建（终端↔Chat 同步）
-    if (!assistantMessageRef.current) {
+    // 但仅在用户已主动发送消息后创建，防止终端启动时的历史回放污染 Chat
+    if (!assistantMessageRef.current && userHasSentRef.current) {
       const autoMsg: ChatMessage = {
         id: 'a_' + Date.now(),
         role: 'assistant',
@@ -402,6 +404,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
       setConnectionError('请先选择一个项目')
       return
     }
+
+    userHasSentRef.current = true
 
     if (!window.electronAPI) return
 

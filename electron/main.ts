@@ -1283,6 +1283,7 @@ function registerIPC(): void {
 
   ipcMain.handle('terminal:start', async (event, opts: {
     cwd?: string; sessionId?: string; cols?: number; rows?: number;
+    autoApproval?: boolean;
   }) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const winId = win?.id ?? 0
@@ -1338,6 +1339,7 @@ function registerIPC(): void {
       model, apiKey, baseUrl,
       cols: opts.cols || 120,
       rows: opts.rows || 40,
+      permissionMode: opts.autoApproval ? 'auto' : 'manual',
     })
 
     // 事件广播到所有绑定此终端的窗口（支持多窗口共享终端）
@@ -1350,6 +1352,9 @@ function registerIPC(): void {
     proc.on('status', (s: any) => {
       broadcastTerminalEvent(sid, 'claude:status-update', s)
       broadcastTerminalEvent(sid, 'terminal:status', s)
+    })
+    proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
+      broadcastTerminalEvent(sid, 'claude:permission-prompt', prompt)
     })
 
     terminalProcess = proc
