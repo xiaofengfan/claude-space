@@ -95,7 +95,9 @@ export class TerminalProcess extends EventEmitter {
     } catch (_e) { /* silent */ }
 
     if (!pty) {
-      this._errorMsg = 'node-pty 不可用'
+      this._errorMsg = 'node-pty 不可用（原生模块加载失败）'
+      console.error('[terminalProcess] ERROR: node-pty unavailable')
+      this._running = false
       this.emit('status', { running: false, connected: false, claudeRunning: false, error: this._errorMsg })
       return
     }
@@ -147,6 +149,7 @@ export class TerminalProcess extends EventEmitter {
       this._running = false
       this._claudeRunning = false
       this._errorMsg = err.message
+      console.error('[terminalProcess] ERROR spawn failed:', err.message, 'bin:', claudeBin, 'cwd:', this.cwd)
       this.emit('status', {
         running: false, connected: false,
         claudeRunning: false,

@@ -1352,6 +1352,10 @@ function registerIPC(): void {
     proc.on('status', (s: any) => {
       broadcastTerminalEvent(sid, 'claude:status-update', s)
       broadcastTerminalEvent(sid, 'terminal:status', s)
+      // 终端错误 → 转发到 Chat stderr 通道展示
+      if (s.error) {
+        broadcastTerminalEvent(sid, 'claude:stderr', `[终端] ${s.error}`)
+      }
     })
     proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
       broadcastTerminalEvent(sid, 'claude:permission-prompt', prompt)
