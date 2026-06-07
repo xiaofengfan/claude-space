@@ -279,9 +279,11 @@ export const ChatPanel = forwardRef(function ChatPanel({
     onClaudeConnectedRef.current(true)
     thinkingRef.current = ''
 
+    // 用户尚未发送消息 → 终端历史回放中，完全跳过，防止污染 Chat 消息和 streamingText
+    if (!userHasSentRef.current) return
+
     // 如果终端发来事件但 chat 没有活跃 assistant 消息 → 自动创建（终端↔Chat 同步）
-    // 但仅在用户已主动发送消息后创建，防止终端启动时的历史回放污染 Chat
-    if (!assistantMessageRef.current && userHasSentRef.current) {
+    if (!assistantMessageRef.current) {
       const autoMsg: ChatMessage = {
         id: 'a_' + Date.now(),
         role: 'assistant',

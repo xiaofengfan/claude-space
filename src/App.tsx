@@ -161,7 +161,7 @@ const DEFAULT_TEAM = [
       window.electronAPI.terminalStart({
         cwd: activeProject.path,
         sessionId: sessionId,
-        autoApproval,
+        autoApproval: autoApprovalRef.current,
       }).then(() => setTerminalReady(true)).catch(() => {})
     }
   }
@@ -255,9 +255,13 @@ const DEFAULT_TEAM = [
   }
 
   const handleSelectProject = useCallback(async (project: ProjectInfo) => {
+    // 同一项目不重复清空消息，防止会话丢失
+    const isSameProject = activeProjectRef.current?.path === project.path
     setActiveProject(project)
-    setMessages([])
-    setStreamingText('')
+    if (!isSameProject) {
+      setMessages([])
+      setStreamingText('')
+    }
     setLeftView('files')  // 默认显示完整文件树
     // 切换项目 → 重置所有团队状态为 idle
     setTeam(prev => {
@@ -265,17 +269,19 @@ const DEFAULT_TEAM = [
       return base.map(e => ({ ...e, status: 'idle' as const }))
     })
     try { setSessions(await window.electronAPI.listSessions(project.path)) } catch (_e) { /* silent */ }
-    try {
-      const recent = await window.electronAPI.getRecentSession?.(project.path)
-      if (recent?.messages?.length) {
-        const msgs = recent.messages
-          .filter((m: any) => m.type === 'user' || m.type === 'assistant')
-          .map((m: any) => parseSessionMessage(m))
-          .filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content)
-        if (msgs.length > 0) setMessages(msgs)
-        if (recent?.sessionId) setCurrentSessionId(recent.sessionId)
-      }
-    } catch (_e) { /* silent */ }
+    if (!isSameProject) {
+      try {
+        const recent = await window.electronAPI.getRecentSession?.(project.path)
+        if (recent?.messages?.length) {
+          const msgs = recent.messages
+            .filter((m: any) => m.type === 'user' || m.type === 'assistant')
+            .map((m: any) => parseSessionMessage(m))
+            .filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content)
+          if (msgs.length > 0) setMessages(msgs)
+          if (recent?.sessionId) setCurrentSessionId(recent.sessionId)
+        }
+      } catch (_e) { /* silent */ }
+    }
 
     // 自动启动终端 + Claude（后台，不切换视图）
     try {
@@ -283,7 +289,7 @@ const DEFAULT_TEAM = [
       await window.electronAPI.terminalStart({
         cwd: project.path,
         sessionId: recent?.sessionId,
-        autoApproval,
+        autoApproval: autoApprovalRef.current,
       })
       setTerminalReady(true)
     } catch { /* 非关键 */ }
@@ -383,6 +389,10 @@ const DEFAULT_TEAM = [
   }, [])
 
   const autoApproval = appSettings?.autoApproval ?? false
+  const autoApprovalRef = useRef(autoApproval)
+  autoApprovalRef.current = autoApproval  // 保持 ref 最新，防止 useCallback 闭包过期
+  const activeProjectRef = useRef(activeProject)
+  activeProjectRef.current = activeProject
 
   // @mention 处理：创建任务 + 更新办公室员工状态
   const handleMentionAgent = useCallback((agentName: string, content: string) => {
@@ -702,7 +712,7 @@ const DEFAULT_TEAM = [
       await window.electronAPI.terminalStart({
         cwd: activeProject?.path,
         sessionId: currentSessionId,
-        autoApproval,
+        autoApproval: autoApprovalRef.current,
       })
     } else if (!status.claudeRunning) {
       // 终端在运行但 Claude 已退出 → 重启 Claude

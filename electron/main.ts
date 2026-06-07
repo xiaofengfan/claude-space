@@ -1285,6 +1285,8 @@ function registerIPC(): void {
     cwd?: string; sessionId?: string; cols?: number; rows?: number;
     autoApproval?: boolean;
   }) => {
+    // 调试日志写到文件（打包版 GUI 无控制台输出）
+    fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'), `[${new Date().toISOString()}] terminal:start called sessionId=${opts.sessionId} cwd=${opts.cwd} autoApproval=${opts.autoApproval}\n`, 'utf-8')
     const win = BrowserWindow.fromWebContents(event.sender)
     const winId = win?.id ?? 0
     const sid = opts.sessionId || 'default'
@@ -1585,6 +1587,9 @@ function registerIPC(): void {
 // ── 应用生命周期 ────────────────────────────────────────
 
 app.whenReady().then(() => {
+  // 启动日志
+  const logFile = path.join(os.homedir(), 'claude-space-debug.log')
+  fs.writeFileSync(logFile, `[${new Date().toISOString()}] APP STARTED v1.1.1 platform=${process.platform} electron=${process.versions.electron}\n`, 'utf-8')
   applyMenu()
   registerIPC()
   createWindow()

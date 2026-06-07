@@ -10,6 +10,14 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
+// 调试日志 — 打包版 console.log 不可见，写文件
+const DEBUG_LOG = path.join(os.homedir(), 'claude-space-debug.log')
+function debugLog(msg: string): void {
+  const ts = new Date().toISOString()
+  const line = `[${ts}] ${msg}\n`
+  fs.appendFileSync(DEBUG_LOG, line, 'utf-8')
+}
+
 export interface TerminalProcessOptions {
   cwd?: string
   sessionId?: string
@@ -68,7 +76,7 @@ export class TerminalProcess extends EventEmitter {
 
     // claude 命令：优先用传入的绝对路径
     const claudeBin = this.options.claudePath || 'claude'
-    const args: string[] = ['--include-partial-messages']
+    const args: string[] = []
     if (this.options.permissionMode === 'auto') {
       args.push('--dangerously-skip-permissions')
     }
@@ -96,7 +104,7 @@ export class TerminalProcess extends EventEmitter {
 
     if (!pty) {
       this._errorMsg = 'node-pty 不可用（原生模块加载失败）'
-      console.error('[terminalProcess] ERROR: node-pty unavailable')
+      debugLog('ERROR: node-pty unavailable')
       this._running = false
       this.emit('status', { running: false, connected: false, claudeRunning: false, error: this._errorMsg })
       return
@@ -109,13 +117,23 @@ export class TerminalProcess extends EventEmitter {
         cwd: this.cwd,
         env,
       })
+      debugLog(`PTY spawned: ${claudeBin} args: ${args.join(' ')} cwd: ${this.cwd} pid: ${this.ptyProcess?.pid}`)
 
       // PTY stdout → xterm.js 渲染 + 权限提示检测
+      let ptyOutputLogged = false
       this.ptyProcess.onData((data: string) => {
         this.emit('terminal-data', data)
-        // 检测终端输出中的权限提示，转发到 Chat 审批
-        if (/Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(data)) {
+        // 捕获前几秒 PTY 输出到日志文件，用于调试 Claude 启动错误
+        if (!ptyOutputLogged) {
           const clean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
+          if (clean.length > 3) {
+            debugLog(`PTY output (first): ${clean.slice(0, 300)}`)
+            ptyOutputLogged = true
+          }
+        }
+        // 检测终端输出中的权限提示 — 必须先清洗 ANSI 再匹配！
+        const clean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
+        if (/Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(clean)) {
           if (clean.length > 5) {
             this.emit('permission-prompt', { text: clean, timestamp: Date.now() })
           }
@@ -123,6 +141,7 @@ export class TerminalProcess extends EventEmitter {
       })
 
       this.ptyProcess.onExit(({ exitCode }) => {
+        debugLog(`PTY exited code=${exitCode} pid=${this.ptyProcess?.pid}`)
         this._claudeRunning = false
         this.stopJsonlWatch()
         this.emit('status', {
@@ -149,7 +168,7 @@ export class TerminalProcess extends EventEmitter {
       this._running = false
       this._claudeRunning = false
       this._errorMsg = err.message
-      console.error('[terminalProcess] ERROR spawn failed:', err.message, 'bin:', claudeBin, 'cwd:', this.cwd)
+      debugLog(`ERROR spawn failed: ${err.message} bin: ${claudeBin} cwd: ${this.cwd}`)
       this.emit('status', {
         running: false, connected: false,
         claudeRunning: false,
