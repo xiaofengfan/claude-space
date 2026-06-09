@@ -87,6 +87,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
   groupChatModeRef.current = groupChatMode
   const onAgentSendGroupRef = useRef(onAgentSendGroup)
   onAgentSendGroupRef.current = onAgentSendGroup
+  // 追踪是否使用终端路由（终端 Claude 交互模式不会退出，result 事件后不应设 isRunning=false）
+  const useTerminalRouteRef = useRef(false)
 
   // 会话名由 App.tsx 管理，这里只读
 
@@ -102,6 +104,10 @@ export const ChatPanel = forwardRef(function ChatPanel({
   onClaudeConnectedRef.current = onClaudeConnected
   const onStatusInfoRef = useRef(onStatusInfo)
   onStatusInfoRef.current = onStatusInfo
+  const onTerminalSendRef = useRef(onTerminalSend)
+  onTerminalSendRef.current = onTerminalSend
+  const terminalClaudeRunningRef = useRef(terminalClaudeRunning)
+  terminalClaudeRunningRef.current = terminalClaudeRunning
   const finalizingRef = useRef(false)
 
   // 滚动到底部
@@ -158,6 +164,13 @@ export const ChatPanel = forwardRef(function ChatPanel({
         setConnectionStatus('connecting')
       } else {
         setConnectionStatus('disconnected')
+      }
+      // 终端路由下：Claude 退出（claudeRunning=false）时应停止 isRunning 并 finalize
+      if (useTerminalRouteRef.current && status.claudeRunning === false && status.running === true) {
+        setIsRunning(false)
+        if (assistantMessageRef.current) {
+          finalizeAssistantMessage()
+        }
       }
       if (status.error) {
         setConnectionError(status.error)
@@ -503,8 +516,9 @@ export const ChatPanel = forwardRef(function ChatPanel({
     const cleanContent = actualContent.replace(/@\S+/g, '').trim()
     const contentForClaude = imageRefs + (isCmd ? cleanContent : (mentions.length > 0 ? cleanContent : actualContent))
 
-    // ── Chat 模式始终走 spawn 路由（stdout 直接流式解析，稳定可靠）──
-    // Terminal PTY 仅用于终端面板交互，Chat 不依赖 JSONL 文件发现
+    // ── 主路径：claude:send spawn 路由（稳定可靠）──
+    // 同时将消息回显到终端 PTY，使终端视图也能看到 Chat 活动
+    useTerminalRouteRef.current = false
     try {
 
       const result = await window.electronAPI.claudeSend({
@@ -518,6 +532,17 @@ export const ChatPanel = forwardRef(function ChatPanel({
         setConnectionError('Claude 发送失败')
         return
       }
+
+      // 消息回显到终端 PTY（仅显示，终端 Claude 有自己的独立会话）
+      if (terminalClaudeRunningRef.current && onTerminalSendRef.current) {
+        try {
+          // 使用 ANSI 标记+注释格式避免终端 Claude 误执行
+          // \x1b[90m = 暗色文字，\x1b[0m = 重置，# 前缀 = 注释语义
+          const echoLine = `\r\n\x1b[90m# [Chat] ${contentForClaude.replace(/\r?\n/g, ' ')}\x1b[0m\r\n`
+          onTerminalSendRef.current(echoLine)
+        } catch { /* 回显失败不影响 Chat 主流程 */ }
+      }
+
       setIsRunning(true)
       setConnectionStatus('connecting')
       setConnectionError('')

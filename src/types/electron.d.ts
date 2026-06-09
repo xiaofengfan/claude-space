@@ -10,7 +10,7 @@ export interface ElectronAPI {
   onClaudeEvent: (callback: (event: any) => void) => () => void
   onClaudeStderr: (callback: (text: string) => void) => () => void
   onClaudeClose: (callback: (code: number | null) => void) => () => void
-  onClaudeStatusUpdate: (callback: (status: { running: boolean; connected: boolean; error: string; sessionId?: string }) => void) => () => void
+  onClaudeStatusUpdate: (callback: (status: { running: boolean; connected: boolean; error: string; sessionId?: string; claudeRunning?: boolean }) => void) => () => void
   onClaudePermissionPrompt: (callback: (prompt: { text: string; timestamp: number }) => void) => () => void
 
   // ── Multi-session management ──────────────────────────
