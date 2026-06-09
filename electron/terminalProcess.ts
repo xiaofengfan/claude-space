@@ -78,7 +78,7 @@ export class TerminalProcess extends EventEmitter {
     const claudeBin = this.options.claudePath || 'claude'
     const args: string[] = []
     if (this.options.permissionMode === 'auto') {
-      args.push('--dangerously-skip-permissions')
+      args.push('--permission-mode', 'bypassPermissions')
     }
     if (this._sessionId) {
       args.push('--resume', this._sessionId)
@@ -206,7 +206,7 @@ export class TerminalProcess extends EventEmitter {
     const claudeBin = this.options.claudePath || 'claude'
     let cmd = claudeBin
     if (this.options.permissionMode === 'auto') {
-      cmd += ' --dangerously-skip-permissions'
+      cmd += ' --permission-mode bypassPermissions'
     }
     if (this._sessionId) cmd += ` --resume ${this._sessionId}`
     cmd += '\r'

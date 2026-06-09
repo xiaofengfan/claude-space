@@ -406,7 +406,10 @@ const DEFAULT_TEAM = [
         autoApproval: autoApprovalRef.current,
       })
       setTerminalReady(true)
-      // 轮询等待终端 Claude 就绪（最多 10 秒），确保 Chat→PTY 路径可用
+      // 乐观设置 Claude 运行中 — 终端启动即代表 Claude 正在启动
+      // 防止 Chat 在终端就绪前回退到 spawn 路由创建冲突的第二个 Claude 进程
+      setTerminalClaudeRunning(true)
+      // 轮询确认终端 Claude 就绪（用于状态显示）
       let attempts = 0
       const pollReady = setInterval(async () => {
         attempts++

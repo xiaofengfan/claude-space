@@ -68,7 +68,7 @@ export class ClaudeProcess extends EventEmitter {
       args.push('--output-format', 'stream-json')
       args.push('--verbose')
       args.push('--include-partial-messages')
-      args.push('--dangerously-skip-permissions')
+      args.push('--permission-mode', 'bypassPermissions')
     } else {
       // Manual approval: interactive mode for stdin/stdout permission flow
       args.push('--input-format', 'stream-json')

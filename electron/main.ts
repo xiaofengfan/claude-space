@@ -1340,6 +1340,19 @@ function registerIPC(): void {
     const cliInfo = await detectCli()
     const claudePath = cliInfo.found ? cliInfo.path : undefined
 
+    // 校验 session 文件是否存在 — 不存在则放弃 resume，启动全新会话
+    const encodedPath = encodeClaudePath((opts.cwd || '').replace(/\\/g, '/'))
+    const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+    let validSessionId: string | undefined = undefined
+    if (opts.sessionId) {
+      const jsonlFile = path.join(sessionDir, `${opts.sessionId}.jsonl`)
+      if (fs.existsSync(jsonlFile)) {
+        validSessionId = opts.sessionId
+      } else {
+        console.log(`[terminal:start] session file not found: ${jsonlFile}, starting fresh session`)
+      }
+    }
+
     // 读取模型配置
     let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
     let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
@@ -1357,7 +1370,7 @@ function registerIPC(): void {
 
     const proc = new TerminalProcess({
       cwd: opts.cwd,
-      sessionId: opts.sessionId,
+      sessionId: validSessionId,
       claudePath,
       model, apiKey, baseUrl,
       cols: opts.cols || 120,

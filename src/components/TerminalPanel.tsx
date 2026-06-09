@@ -76,6 +76,12 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
     termRef.current = term
     fitAddonRef.current = fitAddon
 
+    // Chat 模式下终端不可见 → 立即 blur，防止 xterm.js 捕获键盘事件
+    // （否则打字会逐字符发送到 PTY，干扰 Chat 的正常流程）
+    if (!visible) {
+      term.blur()
+    }
+
     // 用户输入 → PTY
     term.onData((data) => onTerminalData?.(data))
 
@@ -219,6 +225,10 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
           })
         }
       }, 100)
+    }
+    // 终端不可见时 blur，防止 xterm.js 捕获键盘事件发送到 PTY
+    if (!visible && termRef.current) {
+      termRef.current.blur()
     }
   }, [visible])
 
