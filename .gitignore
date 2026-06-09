@@ -5,3 +5,4 @@ release/
 *.log
 .env
 test-screenshots/
+screenshot_*.png
