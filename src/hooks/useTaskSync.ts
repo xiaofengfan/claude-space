@@ -194,11 +194,11 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
         // Only trigger for tools NOT already handled above (TaskCreate/TaskUpdate/AskUserQuestion)
         if (name !== 'TaskCreate' && name !== 'TaskUpdate' && name !== 'AskUserQuestion' &&
             SENSITIVE_TOOLS.includes(name)) {
-          // Check if this tool_use has a permission field indicating it needs approval
+          // Check if this tool_use explicitly asks for permission
+          // 仅匹配 permission.status === 'prompt'/'ask'，不再用 !block.permission 兜底
+          // （--dangerously-skip-permissions 模式下无 permission 字段，不应误触发）
           const needsPermission = block.permission?.status === 'prompt' ||
-            block.permission?.status === 'ask' ||
-            // In interactive mode, sensitive tools without explicit allow may need approval
-            !block.permission  // no permission field = default behavior (may need approval)
+            block.permission?.status === 'ask'
 
           if (needsPermission && !autoApproval) {
             const toolSummary = getToolDetail(name, input)
@@ -236,9 +236,10 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
             onApproval?.(approval)
           }
 
-          // Auto-approval: 自动发送 y 响应到 Claude stdin（防止 Claude 阻塞等待权限）
-          if (autoApproval && SENSITIVE_TOOLS.includes(name)) {
-            // 发送 y + Enter 到 Claude stdin，使 Claude 继续执行
+          // Auto-approval: 仅在 Claude 确实等待权限时才发送响应
+          // 如果 --dangerously-skip-permissions 已生效，Claude 自动放行，不应发送 y 干扰 stdin
+          if (autoApproval && needsPermission && SENSITIVE_TOOLS.includes(name)) {
+            // 发送 y + Enter 到 Claude stdin，使其继续执行
             onAutoApprove?.('y\r')
             const approvalId = 'auto_' + Date.now().toString(36)
             const toolSummary = getToolDetail(name, input)
