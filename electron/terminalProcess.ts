@@ -185,6 +185,11 @@ export class TerminalProcess extends EventEmitter {
     }
   }
 
+  /** 更新权限模式（在终端运行中动态切换，下次 restart 生效） */
+  updatePermissionMode(mode: 'auto' | 'manual'): void {
+    this.options.permissionMode = mode
+  }
+
   /** 重新启动 Claude（在当前 PTY 中，Claude 退出后调用） */
   restart(): void {
     if (!this.ptyProcess) {
@@ -200,6 +205,9 @@ export class TerminalProcess extends EventEmitter {
     // 在同一个 PTY 中重新输入 claude 命令
     const claudeBin = this.options.claudePath || 'claude'
     let cmd = claudeBin
+    if (this.options.permissionMode === 'auto') {
+      cmd += ' --dangerously-skip-permissions'
+    }
     if (this._sessionId) cmd += ` --resume ${this._sessionId}`
     cmd += '\r'
     this.ptyProcess.write(`\r\n\x1b[36m⚡ 重新启动 Claude...\x1b[0m\r\n`)

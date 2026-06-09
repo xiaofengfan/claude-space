@@ -10,6 +10,7 @@ interface UseTaskSyncOpts {
   onMonitorEvent?: (evt: { id: string; type: string; title: string; detail: string; status: 'running' | 'completed' | 'pending'; timestamp: number }) => void
   onTaskComplete?: (taskTitle: string) => void
   onActivityStart?: () => void  // Claude 开始执行工具时触发，用于自动切换面板
+  onAutoApprove?: (response: string) => void  // 自动审批时发送响应到终端/spawn stdin
 }
 
 export interface ApprovalRequest {
@@ -25,7 +26,7 @@ export interface ApprovalRequest {
 /** Sensitive tools that typically require user permission */
 const SENSITIVE_TOOLS = ['Bash', 'Write', 'Edit', 'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Agent']
 
-export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApproval, autoApproval, onMonitorEvent, onTaskComplete, onActivityStart }: UseTaskSyncOpts) {
+export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApproval, autoApproval, onMonitorEvent, onTaskComplete, onActivityStart, onAutoApprove }: UseTaskSyncOpts) {
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
 
@@ -235,8 +236,10 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
             onApproval?.(approval)
           }
 
-          // Auto-approval: log and mark as done
+          // Auto-approval: 自动发送 y 响应到 Claude stdin（防止 Claude 阻塞等待权限）
           if (autoApproval && SENSITIVE_TOOLS.includes(name)) {
+            // 发送 y + Enter 到 Claude stdin，使 Claude 继续执行
+            onAutoApprove?.('y\r')
             const approvalId = 'auto_' + Date.now().toString(36)
             const toolSummary = getToolDetail(name, input)
             const autoTask: TaskItem = {
@@ -268,8 +271,8 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
     // ── Listen for stderr-based permission prompts (fallback detection) ──
     const unsubPerm = window.electronAPI.onClaudePermissionPrompt?.((prompt: { text: string; timestamp: number }) => {
       if (autoApproval) {
-        // Auto-approve: send 'y' to stdin
-        window.electronAPI.claudeWriteStdin?.('y\n')
+        // Auto-approve: 通过回调发送 y（自动路由到终端或 spawn stdin）
+        onAutoApprove?.('y\r')
         // Log it
         window.electronAPI.approvalLog?.({
           timestamp: new Date().toISOString(),

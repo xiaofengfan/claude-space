@@ -519,6 +519,12 @@ const DEFAULT_TEAM = [
   const autoApproval = appSettings?.autoApproval ?? false
   const autoApprovalRef = useRef(autoApproval)
   autoApprovalRef.current = autoApproval  // 保持 ref 最新，防止 useCallback 闭包过期
+
+  // 自动审批设置变更 → 同步到终端进程（动态切换权限模式）
+  useEffect(() => {
+    window.electronAPI.terminalSetPermissionMode?.(autoApproval ? 'auto' : 'manual').catch(() => {})
+  }, [autoApproval])
+
   const activeProjectRef = useRef(activeProject)
   activeProjectRef.current = activeProject
 
@@ -665,6 +671,7 @@ const DEFAULT_TEAM = [
     activeProjectPath: activeProject?.path,
     onApproval: setPendingApproval,
     autoApproval,
+    onAutoApprove: (response: string) => sendApprovalResponse(response),
     onActivityStart: () => {
       // Claude 开始执行工具时，自动切换到看板让用户看到实时进度
       setRightView('tasks')
@@ -683,6 +690,16 @@ const DEFAULT_TEAM = [
     },
   })
 
+  // 审批响应：优先走终端 PTY（当前主流模式），fallback 走 spawn stdin
+  const sendApprovalResponse = useCallback((response: string) => {
+    // PTY 终端模式优先 — 审批响应需发送到终端 stdin 而非 spawn stdin
+    if (terminalReady) {
+      window.electronAPI.terminalInput(response)
+    } else {
+      window.electronAPI.claudeWriteStdin?.(response)
+    }
+  }, [terminalReady])
+
   const handleApprove = useCallback(async (approvalId: string, optionIndex: number) => {
     const approval = pendingApproval
     if (!approval) return
@@ -693,16 +710,16 @@ const DEFAULT_TEAM = [
 
     if (isStderrPrompt) {
       // stderr-based permission prompt: send y/n directly
-      const response = optionIndex === 0 ? 'y\n' : 'n\n'
-      window.electronAPI.claudeWriteStdin?.(response)
+      const response = optionIndex === 0 ? 'y\r' : 'n\r'
+      sendApprovalResponse(response)
     } else if (isToolPermission) {
       // Tool permission: option 0=allow once, 1=always allow, 2=deny
       if (optionIndex === 0) {
-        window.electronAPI.claudeWriteStdin?.('y\n')
+        sendApprovalResponse('y\r')
       } else if (optionIndex === 1) {
-        window.electronAPI.claudeWriteStdin?.('a\n')  // 'a' = always allow in Claude Code
+        sendApprovalResponse('a\r')  // 'a' = always allow in Claude Code
       } else {
-        window.electronAPI.claudeWriteStdin?.('n\n')
+        sendApprovalResponse('n\r')
       }
     }
 
@@ -721,14 +738,14 @@ const DEFAULT_TEAM = [
       modelId: appSettings?.activeModelId || undefined,
     })
     setPendingApproval(null)
-  }, [pendingApproval, tasks, handleTasksChange, appSettings])
+  }, [pendingApproval, tasks, handleTasksChange, appSettings, sendApprovalResponse])
 
   const handleDismissApproval = useCallback((approvalId: string) => {
     const approval = pendingApproval
 
-    // Send deny to Claude stdin
+    // Send deny to Claude stdin — 路由同 handleApprove
     if (approval?.toolName && approval.toolName !== 'AskUserQuestion') {
-      window.electronAPI.claudeWriteStdin?.('n\n')
+      sendApprovalResponse('n\r')
     }
 
     const updated = tasks.map(t =>
@@ -745,7 +762,7 @@ const DEFAULT_TEAM = [
       })
     }
     setPendingApproval(null)
-  }, [tasks, handleTasksChange, pendingApproval, appSettings])
+  }, [tasks, handleTasksChange, pendingApproval, appSettings, sendApprovalResponse])
 
   const openProjectManager = useCallback(() => {
     loadProjectsForDialog()

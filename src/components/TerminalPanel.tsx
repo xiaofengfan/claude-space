@@ -49,6 +49,7 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const [termState, setTermState] = useState<TerminalState>({
     shellRunning: false, claudeRunning: false, connected: false, error: '',
   })
@@ -78,11 +79,126 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
     // 用户输入 → PTY
     term.onData((data) => onTerminalData?.(data))
 
+    // ── 剪贴板：自定义键盘事件处理 ──────────────────────
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // Ctrl+Shift+C → 复制选中文本
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        const selection = term.getSelection()
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {
+            // fallback for older browsers / non-HTTPS
+            const textarea = document.createElement('textarea')
+            textarea.value = selection
+            textarea.style.position = 'fixed'
+            textarea.style.opacity = '0'
+            document.body.appendChild(textarea)
+            textarea.select()
+            try { document.execCommand('copy') } catch { /* silent */ }
+            document.body.removeChild(textarea)
+          })
+        }
+        return false // 阻止默认行为
+      }
+      // Ctrl+Shift+V → 粘贴到终端
+      if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+        navigator.clipboard.readText().then(text => {
+          if (text) onTerminalData?.(text)
+        }).catch(() => { /* clipboard read denied */ })
+        return false
+      }
+      // Ctrl+Insert → 复制
+      if (e.ctrlKey && e.key === 'Insert') {
+        const selection = term.getSelection()
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {})
+        }
+        return false
+      }
+      // Shift+Insert → 粘贴
+      if (e.shiftKey && e.key === 'Insert') {
+        navigator.clipboard.readText().then(text => {
+          if (text) onTerminalData?.(text)
+        }).catch(() => {})
+        return false
+      }
+      return true
+    })
+
+    // ── 右键菜单 ────────────────────────────────────────
+    const container = containerRef.current
+    let contextMenu: HTMLDivElement | null = null
+
+    const hideContextMenu = () => {
+      if (contextMenu) {
+        contextMenu.remove()
+        contextMenu = null
+      }
+    }
+
+    container.addEventListener('contextmenu', (e: MouseEvent) => {
+      e.preventDefault()
+      hideContextMenu()
+
+      const menu = document.createElement('div')
+      menu.className = 'terminal-context-menu'
+      menu.style.cssText = `
+        position: fixed; left: ${e.clientX}px; top: ${e.clientY}px;
+        background: #2a2a4a; border: 1px solid #444; border-radius: 6px;
+        padding: 4px 0; min-width: 180px; z-index: 10000;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4); font-size: 13px;
+      `
+      const hasSelection = !!term.getSelection()
+
+      const addItem = (label: string, shortcut: string, disabled: boolean, action: () => void) => {
+        const item = document.createElement('div')
+        item.className = 'terminal-context-item'
+        item.style.cssText = `
+          padding: 6px 12px; cursor: ${disabled ? 'default' : 'pointer'};
+          opacity: ${disabled ? '0.4' : '1'}; color: #ccc;
+          display: flex; justify-content: space-between; align-items: center;
+          transition: background 0.15s;
+        `
+        item.innerHTML = `<span>${label}</span><span style="color:#888;font-size:11px">${shortcut}</span>`
+        if (!disabled) {
+          item.addEventListener('mouseenter', () => { item.style.background = '#3a3a6a' })
+          item.addEventListener('mouseleave', () => { item.style.background = 'transparent' })
+          item.addEventListener('click', () => { action(); hideContextMenu() })
+        }
+        menu.appendChild(item)
+      }
+
+      addItem('📋 复制', 'Ctrl+Shift+C', !hasSelection, () => {
+        const sel = term.getSelection()
+        if (sel) {
+          navigator.clipboard.writeText(sel).catch(() => {})
+        }
+      })
+      addItem('📄 粘贴', 'Ctrl+Shift+V', false, () => {
+        navigator.clipboard.readText().then(t => { if (t) onTerminalData?.(t) }).catch(() => {})
+      })
+      // separator
+      const sep = document.createElement('div')
+      sep.style.cssText = 'margin: 4px 0; border-top: 1px solid #444'
+      menu.appendChild(sep)
+      addItem('🔄 重启 Claude', '', false, () => handleRestart())
+
+      document.body.appendChild(menu)
+      contextMenu = menu
+      contextMenuRef.current = menu
+
+      const closeOnClick = () => { hideContextMenu(); document.removeEventListener('click', closeOnClick) }
+      setTimeout(() => document.addEventListener('click', closeOnClick), 0)
+    })
+
     // 容器尺寸变化
     const observer = new ResizeObserver(() => fitAddon.fit())
     observer.observe(containerRef.current)
 
-    return () => { observer.disconnect(); term.dispose() }
+    return () => {
+      observer.disconnect()
+      hideContextMenu()
+      term.dispose()
+    }
   }, [cwd, sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 响应式主题切换 — 运行时更新 xterm 颜色

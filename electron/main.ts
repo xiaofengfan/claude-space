@@ -1428,6 +1428,19 @@ function registerIPC(): void {
     return { success: true }
   })
 
+  ipcMain.handle('terminal:set-permission-mode', async (event, mode: 'auto' | 'manual') => {
+    const tp = findTerminal(event)
+    if (tp) {
+      tp.updatePermissionMode(mode)
+      return { success: true }
+    }
+    // 也更新所有已注册终端进程
+    for (const [, proc] of terminalProcesses) {
+      proc.updatePermissionMode(mode)
+    }
+    return { success: true }
+  })
+
   ipcMain.handle('terminal:status', async (event) => {
     const tp = findTerminal(event)
     return {

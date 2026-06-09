@@ -113,6 +113,7 @@ export interface ElectronAPI {
   terminalResize: (opts: { cols: number; rows: number }) => void
   terminalKill: () => Promise<{ success: boolean }>
   terminalStatus: () => Promise<{ running: boolean; claudeRunning: boolean; sessionId: string | null; error: string }>
+  terminalSetPermissionMode: (mode: 'auto' | 'manual') => Promise<{ success: boolean }>
   onTerminalData: (callback: (data: string) => void) => () => void
   onTerminalStatus: (callback: (status: any) => void) => () => void
 

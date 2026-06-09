@@ -214,6 +214,7 @@ const electronAPI = {
     ipcRenderer.send('terminal:resize', opts),
   terminalKill: () => ipcRenderer.invoke('terminal:kill'),
   terminalStatus: () => ipcRenderer.invoke('terminal:status'),
+  terminalSetPermissionMode: (mode: 'auto' | 'manual') => ipcRenderer.invoke('terminal:set-permission-mode', mode),
   onTerminalData: (callback: (data: string) => void) => {
     const handler = (_event: any, data: string) => callback(data)
     ipcRenderer.on('terminal:data', handler)
