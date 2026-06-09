@@ -503,70 +503,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
     const cleanContent = actualContent.replace(/@\S+/g, '').trim()
     const contentForClaude = imageRefs + (isCmd ? cleanContent : (mentions.length > 0 ? cleanContent : actualContent))
 
-    // ── 统一路由：终端 PTY 可用时优先通过 PTY 发送（chat/terminal 共享同一 Claude 实例）──
-    // terminalMode: 当前在终端视图；onTerminalSend: PTY 已就绪（terminal:start 已调用）
-    // 只要 PTY 就绪就优先走 PTY，避免 spawn 第二个 Claude 实例导致冲突
-    // 但 PTY 不支持图片 → 有图片时跳过 PTY，走 spawn 路由
-    const hasImages = images && images.length > 0
-    const usePtyRoute = !!(onTerminalSend && terminalClaudeRunning && !hasImages)
-    if (usePtyRoute) {
-      try {
-        // 如果 Claude 还没启动，先自动启动
-        if (!terminalClaudeRunning && onLaunchClaudeForChat) {
-          setConnectionStatus('connecting')
-          setConnectionError('正在启动 Claude...')
-          await onLaunchClaudeForChat()
-          // 等待 Claude 启动 + 发现 JSONL 会话文件
-          await new Promise(r => setTimeout(r, 2000))
-        }
-
-        // 写入 PTY（等同于在终端里打字回车）
-        await onTerminalSend(contentForClaude + '\r')
-
-        // Chat 面板的 UI 状态由 terminal status / claude:event 事件驱动
-        setIsRunning(true)
-        setConnectionStatus('connecting')
-        setConnectionError('')
-        onClaudeRunning(true)
-        onClaudeConnected(false)
-        onStreamingText('')
-        streamingTextRef.current = ''
-        setPendingTools(new Map())
-        thinkingRef.current = ''
-        finalizingRef.current = false
-
-        const assistantMsg: ChatMessage = {
-          id: 'a_' + Date.now(),
-          role: 'assistant',
-          content: '',
-          timestamp: Date.now(),
-          isStreaming: true,
-          agentIcon: mentions.length > 0 ? '👤' : '🤖',
-          agentName: mentions.length > 0 ? mentions.join(', ') : 'Claude',
-        }
-        assistantMessageRef.current = assistantMsg
-
-        onMessagesChange(prev => [
-          ...prev,
-          {
-            id: 'u_' + Date.now(),
-            role: 'user',
-            content: isCmd ? `⚡ 命令: ${actualContent}` : content,
-            timestamp: Date.now(),
-            agentIcon: '👑',
-            agentName: '控制人',
-            images: images,
-          },
-          assistantMsg,
-        ])
-        return
-      } catch (err: any) {
-        setConnectionError('终端发送失败: ' + (err.message || '未知错误'))
-        // 不 return — 回退到 chat 模式 spawn
-      }
-    }
-
-    // ── 回退：spawn 独立 Claude 进程（终端未运行时）──
+    // ── Chat 模式始终走 spawn 路由（stdout 直接流式解析，稳定可靠）──
+    // Terminal PTY 仅用于终端面板交互，Chat 不依赖 JSONL 文件发现
     try {
 
       const result = await window.electronAPI.claudeSend({

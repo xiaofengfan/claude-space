@@ -367,7 +367,6 @@ export class TerminalProcess extends EventEmitter {
         const stat = fs.statSync(this.jsonlPath)
         if (stat.size > this.jsonlTailSize) {
           this.tailFrom(this.jsonlTailSize)
-          // tailFrom 内部会更新 jsonlTailSize 为实际读取位置
         }
       } catch (_e) { /* silent */ }
     }, 300)
