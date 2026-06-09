@@ -172,7 +172,7 @@ function createWindow(projectPath?: string): void {
   if (!mainWindow) mainWindow = win
 
   const url = isDev
-    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
+    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:55173')
     : `file://${path.join(__dirname, '../dist/index.html')}`
 
   const fullUrl = projectPath
@@ -226,7 +226,7 @@ function createFileViewerWindow(filePath: string, fileName: string, projectPath?
   if (!mainWindow) mainWindow = win
 
   const url = isDev
-    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
+    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:55173')
     : `file://${path.join(__dirname, '../dist/index.html')}`
 
   const params = new URLSearchParams()
@@ -878,6 +878,27 @@ function registerIPC(): void {
     }
   })
 
+  // ── 图片临时存储 ──────────────────────────────────────
+  ipcMain.handle('image:save-temp', async (_event, opts: {
+    projectPath: string; images: Array<{ base64: string; mediaType: string }>
+  }) => {
+    const saved: string[] = []
+    try {
+      const tempDir = path.join(opts.projectPath, '.claude-temp-images')
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+      for (const img of opts.images) {
+        const ext = img.mediaType === 'image/png' ? '.png' : img.mediaType === 'image/jpeg' ? '.jpg' : img.mediaType === 'image/gif' ? '.gif' : img.mediaType === 'image/webp' ? '.webp' : '.png'
+        const fileName = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}${ext}`
+        const filePath = path.join(tempDir, fileName)
+        fs.writeFileSync(filePath, Buffer.from(img.base64, 'base64'))
+        saved.push(filePath)
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message, paths: saved }
+    }
+    return { success: true, paths: saved }
+  })
+
   ipcMain.handle('file:create', async (_event, opts: { dirPath: string; fileName: string; content?: string }) => {
     try {
       const filePath = path.join(opts.dirPath, opts.fileName)
@@ -1349,6 +1370,11 @@ function registerIPC(): void {
       broadcastTerminalEvent(sid, 'terminal:data', data)
     })
     proc.on('event', (event: any) => {
+      if (event.type === 'assistant' || event.type === 'user') {
+        const boundWins = terminalWindowBindings.get(sid)
+        fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
+          `[${new Date().toISOString()}] main: broadcast event type=${event.type} sid=${sid?.slice(0,8)} boundWindows=${boundWins?.size || 0}\n`, 'utf-8')
+      }
       broadcastTerminalEvent(sid, 'claude:event', event)
     })
     proc.on('status', (s: any) => {
@@ -1375,7 +1401,15 @@ function registerIPC(): void {
   })
 
   ipcMain.on('terminal:input', (event, data: string) => {
-    findTerminal(event)?.write(data)
+    const tp = findTerminal(event)
+    if (tp) {
+      fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
+        `[${new Date().toISOString()}] terminal:input write dataLen=${data.length} running=${tp.isRunning}\n`, 'utf-8')
+      tp.write(data)
+    } else {
+      fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
+        `[${new Date().toISOString()}] terminal:input NO TERMINAL FOUND\n`, 'utf-8')
+    }
   })
 
   ipcMain.on('terminal:resize', (event, opts: { cols: number; rows: number }) => {

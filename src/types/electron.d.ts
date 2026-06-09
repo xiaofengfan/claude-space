@@ -53,6 +53,7 @@ export interface ElectronAPI {
   createFile: (opts: { dirPath: string; fileName: string; content?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>
   openFileInNewWindow: (opts: { filePath: string; fileName: string; projectPath?: string }) => Promise<{ success: boolean }>
   openFileDialog: () => Promise<{ canceled: boolean; filePath?: string }>
+  saveTempImages: (opts: { projectPath: string; images: Array<{ base64: string; mediaType: string }> }) => Promise<{ success: boolean; paths: string[]; error?: string }>
 
   // Session management
   listSessions: (projectPath?: string) => Promise<any[]>
@@ -106,7 +107,7 @@ export interface ElectronAPI {
   gitDiffStaged: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
 
   // Terminal management
-  terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number }) => Promise<{ success: boolean }>
+  terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) => Promise<{ success: boolean }>
   terminalRestart: () => Promise<{ success: boolean }>
   terminalInput: (data: string) => void
   terminalResize: (opts: { cols: number; rows: number }) => void

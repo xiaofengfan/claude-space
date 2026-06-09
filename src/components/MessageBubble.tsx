@@ -44,6 +44,14 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         <div className="message-content">
           {message.thinking && <ThinkingBlock thinking={message.thinking} />}
           {message.toolCalls?.map(tool => <ToolUseBlock key={tool.id} tool={tool} />)}
+          {/* 图片附件（用户消息） */}
+          {message.images && message.images.length > 0 && (
+            <div className="message-images">
+              {message.images.map((img, i) => (
+                <img key={i} src={img.dataUrl} alt={`截图 ${i + 1}`} className="message-image-thumb" />
+              ))}
+            </div>
+          )}
           {message.content && <div className="message-text">{message.content}</div>}
           {message.isStreaming && !message.content && !message.toolCalls?.length && (
             <div className="message-loading"><span className="dot-pulse" /></div>

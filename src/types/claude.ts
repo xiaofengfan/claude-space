@@ -1,3 +1,10 @@
+/** 图片附件 — 剪贴板粘贴或拖拽的截图 */
+export interface ImageAttachment {
+  base64: string       // 纯 base64 数据（不含 data:xxx;base64, 前缀）
+  mediaType: string    // e.g. 'image/png', 'image/jpeg'
+  dataUrl: string      // data:xxx;base64,... 用于 <img src>
+}
+
 /** Claude stream-json 事件类型 */
 
 export interface ClaudeInitEvent {
@@ -81,6 +88,7 @@ export interface ChatMessage {
   agentId?: string        // 智能体实例ID (e.g., 'arch', 'dev1')
   agentColor?: string     // CSS 颜色用于消息边框
   groupId?: string        // 群聊会话ID
+  images?: ImageAttachment[]  // 用户消息中的图片附件
   usage?: {
     input_tokens: number
     output_tokens: number

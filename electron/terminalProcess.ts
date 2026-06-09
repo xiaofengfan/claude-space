@@ -110,6 +110,7 @@ export class TerminalProcess extends EventEmitter {
       return
     }
     try {
+      debugLog(`start: spawning PTY...`)
       this.ptyProcess = pty.spawn(claudeBin, args, {
         name: 'xterm-256color',
         cols: this.options.cols || 120,
@@ -119,6 +120,7 @@ export class TerminalProcess extends EventEmitter {
       })
       debugLog(`PTY spawned: ${claudeBin} args: ${args.join(' ')} cwd: ${this.cwd} pid: ${this.ptyProcess?.pid}`)
 
+      debugLog(`start: setting up onData handler`)
       // PTY stdout → xterm.js 渲染 + 权限提示检测
       let ptyOutputLogged = false
       this.ptyProcess.onData((data: string) => {
@@ -154,20 +156,26 @@ export class TerminalProcess extends EventEmitter {
       })
 
       this._claudeRunning = true
+      // 直接写文件确保可观测（绕过 debugLog 函数本身可能的异常）
+      try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: before emit status\n`, 'utf-8') } catch {}
       this.emit('status', {
         running: true, connected: false,
         claudeRunning: true,
         sessionId: this._sessionId,
         error: '',
       })
+      try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: after emit status\n`, 'utf-8') } catch {}
 
       // 轮询发现 session JSONL 文件
+      try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: about to call discoverSessionFile\n`, 'utf-8') } catch {}
       this.discoverSessionFile(sessionDir, beforeFiles)
+      try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: after discoverSessionFile\n`, 'utf-8') } catch {}
 
     } catch (err: any) {
       this._running = false
       this._claudeRunning = false
       this._errorMsg = err.message
+      try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: CAUGHT ERROR=${err.message} stack=${err.stack}\n`, 'utf-8') } catch {}
       debugLog(`ERROR spawn failed: ${err.message} bin: ${claudeBin} cwd: ${this.cwd}`)
       this.emit('status', {
         running: false, connected: false,
@@ -248,15 +256,20 @@ export class TerminalProcess extends EventEmitter {
   }
 
   private discoverSessionFile(sessionDir: string, beforeFiles: Set<string>): void {
+    debugLog(`discoverSessionFile: sessionDir=${sessionDir} sessionId=${this._sessionId} beforeCount=${beforeFiles.size}`)
     // ── --resume 模式：直接监听已有 JSONL 文件，无需轮询发现新文件 ──
     if (this._sessionId) {
       const resumeFile = path.join(sessionDir, `${this._sessionId}.jsonl`)
+      debugLog(`discoverSessionFile: checking resume file ${resumeFile}`)
       try {
-        if (fs.existsSync(resumeFile)) {
+        const exists = fs.existsSync(resumeFile)
+        debugLog(`discoverSessionFile: resume file exists=${exists}`)
+        if (exists) {
           this.jsonlPath = resumeFile
           this.jsonlTailSize = 0
           this.startJsonlWatch()
           this._claudeRunning = true
+          debugLog(`JSONL resume: watching ${resumeFile} (${fs.statSync(resumeFile).size} bytes)`)
           this.emit('status', {
             running: true, connected: true,
             claudeRunning: true,
@@ -265,7 +278,7 @@ export class TerminalProcess extends EventEmitter {
           })
           return
         }
-      } catch (_e) { /* 文件检查失败，回退到轮询 */ }
+      } catch (_e) { debugLog(`JSONL resume: file check error ${resumeFile}`) }
     }
 
     let attempts = 0
@@ -276,6 +289,7 @@ export class TerminalProcess extends EventEmitter {
           if (attempts >= 60) {
             // 60次之后切换为慢速重试（5秒间隔），不轻易放弃
             clearInterval(check)
+            debugLog(`discoverSessionFile: sessionDir ${sessionDir} still does not exist after ${attempts} attempts, switching to slow retry`)
             this.emit('status', {
               running: true, connected: false,
               claudeRunning: false,
@@ -309,11 +323,15 @@ export class TerminalProcess extends EventEmitter {
         }
         const after = fs.readdirSync(sessionDir)
         const newFile = after.find(f => !beforeFiles.has(f) && f.endsWith('.jsonl'))
+        if (attempts <= 3 || attempts % 30 === 0) {
+          debugLog(`discoverSessionFile poll #${attempts}: after=${after.filter(f => f.endsWith('.jsonl')).join(',')} beforeCount=${beforeFiles.size} newFile=${newFile || 'none'}`)
+        }
         if (newFile) {
           clearInterval(check)
           this.jsonlPath = path.join(sessionDir, newFile)
           this._sessionId = newFile.replace('.jsonl', '')
           this.jsonlTailSize = 0
+          debugLog(`JSONL discovered: ${newFile} after ${attempts} attempts (${attempts * 100}ms)`)
           this.startJsonlWatch()
           this._claudeRunning = true
           this.emit('status', {
@@ -393,6 +411,10 @@ export class TerminalProcess extends EventEmitter {
                 error: '',
               })
             }
+          }
+          // 只对新事件打印简短日志（非首次大批量回放时）
+          if (event.type === 'assistant' || event.type === 'user') {
+            try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] tailFrom event: type=${event.type} sessionId=${this._sessionId?.slice(0,8)}\n`, 'utf-8') } catch {}
           }
           this.emit('event', event)
         } catch {

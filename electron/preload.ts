@@ -138,6 +138,10 @@ const electronAPI = {
 
   openFileDialog: () => ipcRenderer.invoke('file:open-dialog'),
 
+  /** 保存图片到项目临时目录，返回文件路径列表 */
+  saveTempImages: (opts: { projectPath: string; images: Array<{ base64: string; mediaType: string }> }) =>
+    ipcRenderer.invoke('image:save-temp', opts),
+
   // ── 会话管理 ────────────────────────────────────────
 
   listSessions: (projectPath?: string) => ipcRenderer.invoke('session:list', projectPath),
@@ -202,7 +206,7 @@ const electronAPI = {
 
   // ── 终端管理 ────────────────────────────────────────
 
-  terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number }) =>
+  terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) =>
     ipcRenderer.invoke('terminal:start', opts),
   terminalRestart: () => ipcRenderer.invoke('terminal:restart'),
   terminalInput: (data: string) => ipcRenderer.send('terminal:input', data),

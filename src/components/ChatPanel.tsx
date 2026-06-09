@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { ChatMessage, ClaudeAssistantEvent, ClaudeResultEvent, ToolCall } from '../types/claude'
+import type { ImageAttachment } from '../types/claude'
 import type { ModelConfigSafe } from '../types/settings'
 import { MessageBubble } from './MessageBubble'
 import { InputBox } from './InputBox'
@@ -72,7 +73,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
   const assistantMessageRef = useRef<ChatMessage | null>(null)
   const thinkingRef = useRef('')
   const streamingTextRef = useRef(streamingText)
-  const userHasSentRef = useRef(false)  // 用户至少发过一条消息后置 true，防止终端回放旧事件污染 Chat
+  const userHasSentRef = useRef(false)  // 用户至少发过一条消息后置 true，防止终端历史回放污染 Chat
   const [isRunning, setIsRunning] = useState(false)
   const [connectionError, setConnectionError] = useState('')
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected')
@@ -114,6 +115,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
       switch (event.type) {
         case 'system':
           if (event.subtype === 'init') {
+            window.electronAPI.approvalLog?.({ timestamp: new Date().toISOString(), question: `ChatPanel: system/init model=${event.model || '?'} session=${event.session_id?.slice(0,8) || '?'}`, optionChosen: '', auto: true })
             onClaudeConnectedRef.current(true)
             onStatusInfoRef.current({
               model: event.model || '',
@@ -262,6 +264,19 @@ export const ChatPanel = forwardRef(function ChatPanel({
     })
 
     return () => {
+      // 组件卸载前：封存正在流式输出的消息
+      try {
+        if (assistantMessageRef.current?.isStreaming) {
+          const savedContent = (assistantMessageRef.current.content || '') + (streamingTextRef.current || '')
+          onMessagesChangeRef.current(prev => prev.map(m => {
+            if (m.id === assistantMessageRef.current?.id) {
+              return { ...m, content: savedContent || '(中断)', isStreaming: false }
+            }
+            return m
+          }))
+          assistantMessageRef.current = null
+        }
+      } catch {}
       unsubEvent()
       unsubClose()
       unsubStatus?.()
@@ -274,13 +289,29 @@ export const ChatPanel = forwardRef(function ChatPanel({
 
   function handleAssistantEvent(event: ClaudeAssistantEvent) {
     const { message } = event
-    if (!message?.content) return
+    if (!message?.content) {
+      window.electronAPI.approvalLog?.({ timestamp: new Date().toISOString(), question: `ChatPanel: assistant no content`, optionChosen: '', auto: true })
+      return
+    }
 
     onClaudeConnectedRef.current(true)
     thinkingRef.current = ''
 
-    // 用户尚未发送消息 → 终端历史回放中，完全跳过，防止污染 Chat 消息和 streamingText
-    if (!userHasSentRef.current) return
+    // 用户尚未发送消息 → 跳过，防止终端启动时的 JSONL 历史回放污染 Chat 消息
+    // 消息历史由 App.tsx 的 switchToSession / handleSelectProject 通过 getSessionTranscript 加载
+    if (!userHasSentRef.current) {
+      window.electronAPI.approvalLog?.({ timestamp: new Date().toISOString(), question: `ChatPanel: assistant BLOCKED (userHasSent=false) hasMsg=${!!assistantMessageRef.current}`, optionChosen: '', auto: true })
+      return
+    }
+
+    // 诊断：统计收到的 text/thinking/tool_use 块
+    let textBlocks = 0, thinkBlocks = 0, toolBlocks = 0
+    for (const block of message.content) {
+      if (block.type === 'text') textBlocks++
+      else if (block.type === 'thinking') thinkBlocks++
+      else if (block.type === 'tool_use') toolBlocks++
+    }
+    window.electronAPI.approvalLog?.({ timestamp: new Date().toISOString(), question: `ChatPanel: assistant processing text=${textBlocks} think=${thinkBlocks} tool=${toolBlocks} hasMsg=${!!assistantMessageRef.current}`, optionChosen: '', auto: true })
 
     // 如果终端发来事件但 chat 没有活跃 assistant 消息 → 自动创建（终端↔Chat 同步）
     if (!assistantMessageRef.current) {
@@ -353,6 +384,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
   }
 
   function handleResultEvent(event: ClaudeResultEvent) {
+    window.electronAPI.approvalLog?.({ timestamp: new Date().toISOString(), question: `ChatPanel: result hasMsg=${!!assistantMessageRef.current} finalizing=${finalizingRef.current}`, optionChosen: '', auto: true })
     onClaudeRunningRef.current(false)
     finalizeAssistantMessage()
 
@@ -401,7 +433,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
   }
 
   // 发送消息 — Chat 模式：spawn claude -p；终端模式：写入 PTY
-  const handleSend = useCallback(async (content: string) => {
+  const handleSend = useCallback(async (content: string, images?: ImageAttachment[]) => {
     if (!activeProject) {
       setConnectionError('请先选择一个项目')
       return
@@ -410,6 +442,26 @@ export const ChatPanel = forwardRef(function ChatPanel({
     userHasSentRef.current = true
 
     if (!window.electronAPI) return
+
+    // 关键修复：如果上一次助手回复还在流式输出中，先将其封存
+    // 防止新的 handleSend 清空 streamingTextRef 导致之前的回复内容丢失
+    if (assistantMessageRef.current && assistantMessageRef.current.isStreaming) {
+      const savedContent = (assistantMessageRef.current.content || '') + (streamingTextRef.current || '')
+      const savedTools = Array.from(pendingTools.values())
+      const savedThinking = thinkingRef.current
+      onMessagesChangeRef.current(prev => prev.map(m => {
+        if (m.id === assistantMessageRef.current!.id) {
+          return {
+            ...m,
+            content: savedContent || '(被新消息中断)',
+            thinking: savedThinking,
+            toolCalls: savedTools.length > 0 ? savedTools : undefined,
+            isStreaming: false,
+          }
+        }
+        return m
+      }))
+    }
 
     const isCmd = content.startsWith('/cmd ')
     const actualContent = isCmd ? content.slice(5) : content
@@ -433,14 +485,30 @@ export const ChatPanel = forwardRef(function ChatPanel({
     // 通知办公室：@角色 → 实时更新员工状态
     mentions.forEach(name => onMentionAgent?.(name, content))
 
+    // ── 图片处理：保存到项目临时目录，生成 @ 引用 ──
+    let imageRefs = ''
+    if (images && images.length > 0 && activeProject) {
+      try {
+        const result = await window.electronAPI.saveTempImages({
+          projectPath: activeProject.path,
+          images: images.map(img => ({ base64: img.base64, mediaType: img.mediaType })),
+        })
+        if (result.success && result.paths.length > 0) {
+          imageRefs = result.paths.map(p => `@${p}`).join(' ') + ' '
+        }
+      } catch (_e) { /* 保存失败也继续发文本 */ }
+    }
+
     // 移除 @mention 防止混淆 Claude（非群聊模式）
     const cleanContent = actualContent.replace(/@\S+/g, '').trim()
-    const contentForClaude = isCmd ? cleanContent : (mentions.length > 0 ? cleanContent : actualContent)
+    const contentForClaude = imageRefs + (isCmd ? cleanContent : (mentions.length > 0 ? cleanContent : actualContent))
 
     // ── 统一路由：终端 PTY 可用时优先通过 PTY 发送（chat/terminal 共享同一 Claude 实例）──
     // terminalMode: 当前在终端视图；onTerminalSend: PTY 已就绪（terminal:start 已调用）
     // 只要 PTY 就绪就优先走 PTY，避免 spawn 第二个 Claude 实例导致冲突
-    const usePtyRoute = !!(onTerminalSend && terminalClaudeRunning)
+    // 但 PTY 不支持图片 → 有图片时跳过 PTY，走 spawn 路由
+    const hasImages = images && images.length > 0
+    const usePtyRoute = !!(onTerminalSend && terminalClaudeRunning && !hasImages)
     if (usePtyRoute) {
       try {
         // 如果 Claude 还没启动，先自动启动
@@ -487,6 +555,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
             timestamp: Date.now(),
             agentIcon: '👑',
             agentName: '控制人',
+            images: images,
           },
           assistantMsg,
         ])
@@ -543,6 +612,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
           timestamp: Date.now(),
           agentIcon: '👑',
           agentName: '控制人',
+          images: images,
         },
         assistantMsg,
       ])
@@ -655,11 +725,35 @@ export const ChatPanel = forwardRef(function ChatPanel({
           <MessageBubble key={msg.id} message={msg} />
         ))}
 
+        {/* 流式 thinking — 实时展示 Claude 的思考过程 */}
+        {thinkingRef.current && assistantMessageRef.current?.isStreaming && (
+          <details className="streaming-thinking" open>
+            <summary className="streaming-thinking-summary">💭 思考中...</summary>
+            <div className="streaming-thinking-content">
+              {thinkingRef.current}
+              <span className="cursor-blink">▌</span>
+            </div>
+          </details>
+        )}
+
         {/* 流式文本 */}
-        {streamingText && (
+        {(streamingText || (assistantMessageRef.current?.isStreaming && !streamingText && !thinkingRef.current)) && (
           <div className="streaming-text">
-            {streamingText}
+            {streamingText || '思考中...'}
             <span className="cursor-blink">▌</span>
+          </div>
+        )}
+
+        {/* 流式工具调用 */}
+        {pendingTools.size > 0 && assistantMessageRef.current?.isStreaming && (
+          <div className="streaming-tools">
+            {Array.from(pendingTools.values()).map(tool => (
+              <div key={tool.id} className="streaming-tool-card">
+                <span className="streaming-tool-icon">🔧</span>
+                <span className="streaming-tool-name">{tool.name}</span>
+                {tool.isComplete ? <span className="streaming-tool-done">✅</span> : <span className="streaming-tool-spinner">⏳</span>}
+              </div>
+            ))}
           </div>
         )}
 

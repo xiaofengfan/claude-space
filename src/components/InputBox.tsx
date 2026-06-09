@@ -1,4 +1,5 @@
-import { useState, useRef, KeyboardEvent, useMemo, useEffect } from 'react'
+import { useState, useRef, KeyboardEvent, useMemo, useEffect, ClipboardEvent } from 'react'
+import type { ImageAttachment } from '../types/claude'
 
 // ── Claude Code 斜杠命令 ──────────────────────────────
 interface SlashCommand {
@@ -63,7 +64,7 @@ export function InputBox({
   onSend, onStop, disabled, isRunning, team,
   groupChatMode, onGroupChatModeChange,
 }: {
-  onSend: (content: string) => void; onStop: () => void; disabled: boolean; isRunning: boolean
+  onSend: (content: string, images?: ImageAttachment[]) => void; onStop: () => void; disabled: boolean; isRunning: boolean
   team?: Array<{ agentId: string; name: string; role: string; agentType: string; icon: string; color: string }>
   groupChatMode?: boolean
   onGroupChatModeChange?: (v: boolean) => void
@@ -88,6 +89,7 @@ export function InputBox({
   const [showCommands, setShowCommands] = useState(false)
   const [commandFilter, setCommandFilter] = useState('')
   const [selectedCmdIdx, setSelectedCmdIdx] = useState(0)
+  const [pastedImages, setPastedImages] = useState<ImageAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -139,10 +141,12 @@ export function InputBox({
 
   function handleSend() {
     const text = input.trim()
-    if (!text || disabled) return
+    if ((!text && pastedImages.length === 0) || disabled) return
     const final = cmdMode ? `/cmd ${text}` : text
     setInput(''); setShowMentions(false); setShowCommands(false)
-    onSend(final)
+    const imgs = pastedImages.length > 0 ? [...pastedImages] : undefined
+    setPastedImages([])
+    onSend(final || '描述这张图片', imgs)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -164,6 +168,37 @@ export function InputBox({
       if (e.key === 'Enter') { e.preventDefault(); return }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+  }
+
+  // ── 剪贴板图片粘贴 ──────────────────────────────
+  async function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()  // 阻止把图片二进制当文本粘贴
+        const blob = item.getAsFile()
+        if (!blob) continue
+        const mediaType = item.type  // 'image/png', 'image/jpeg', etc.
+        // 读取为 base64
+        const buf = await blob.arrayBuffer()
+        const bytes = new Uint8Array(buf)
+        let binary = ''
+        for (let j = 0; j < bytes.length; j++) {
+          binary += String.fromCharCode(bytes[j])
+        }
+        const base64 = btoa(binary)
+        const dataUrl = `data:${mediaType};base64,${base64}`
+        setPastedImages(prev => [...prev, { base64, mediaType, dataUrl }])
+        break  // 只处理第一张图片
+      }
+    }
+  }
+
+  function removeImage(index: number) {
+    setPastedImages(prev => prev.filter((_, i) => i !== index))
   }
 
   function handleInput(val: string) {
@@ -310,10 +345,24 @@ export function InputBox({
         value={input}
         onChange={(e) => handleInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={cmdMode ? '输入 CLI 命令...' : disabled ? '请先选择一个项目...' : '/ 命令 @角色 安排任务，Enter 发送...'}
+        onPaste={handlePaste}
+        placeholder={cmdMode ? '输入 CLI 命令...' : disabled ? '请先选择一个项目...' : '/ 命令 @角色 安排任务，Ctrl+V 贴图，Enter 发送...'}
         rows={2}
         disabled={disabled && !cmdMode}
       />
+
+      {/* 图片预览 */}
+      {pastedImages.length > 0 && (
+        <div className="image-preview-bar">
+          {pastedImages.map((img, i) => (
+            <div key={i} className="image-preview-item">
+              <img src={img.dataUrl} alt={`截图 ${i + 1}`} className="image-preview-thumb" />
+              <button className="image-preview-remove" onClick={() => removeImage(i)} title="移除图片">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="input-actions">
         <button className={`btn-mode ${cmdMode ? 'active' : ''}`} onClick={() => setCmdMode(!cmdMode)}>
           {cmdMode ? '💬 Chat' : '⚡ /cmd'}
@@ -328,7 +377,7 @@ export function InputBox({
           </button>
         )}
         {isRunning && <button className="btn-stop" onClick={onStop}>⏹ 停止</button>}
-        <button className="btn-send" onClick={handleSend} disabled={(disabled && !cmdMode) || !input.trim()}>发送 →</button>
+        <button className="btn-send" onClick={handleSend} disabled={(disabled && !cmdMode) || (!input.trim() && pastedImages.length === 0)}>发送 →</button>
       </div>
     </div>
   )

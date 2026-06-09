@@ -1,6 +1,6 @@
 {
   "name": "claude-space",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Claude Space — AI 驱动的项目开发工作台，支持多模型、实时任务追踪、审批管理",
   "private": true,
   "main": "dist-electron/main.js",
@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "postinstall": "electron-rebuild -f -w node-pty -w ssh2",
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {

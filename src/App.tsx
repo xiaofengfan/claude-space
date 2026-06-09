@@ -75,7 +75,80 @@ const DEFAULT_TEAM = [
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [claudeRunning, setClaudeRunning] = useState(false)
   const [claudeConnected, setClaudeConnected] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessagesInner] = useState<ChatMessage[]>([])
+
+  // ── Chat 消息持久化（localStorage keyed by sessionId）──
+  const messagesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestMessagesRef = useRef<ChatMessage[]>([])
+  const persistSessionRef = useRef<string | undefined>(undefined)
+
+  function getMessagesStorageKey(sessionId: string): string {
+    return `claude-space-chat-${sessionId}`
+  }
+
+  function saveMessagesToStorage(sessionId: string, msgs: ChatMessage[]): void {
+    if (!sessionId || msgs.length === 0) return
+    try {
+      const key = getMessagesStorageKey(sessionId)
+      // 只保存非 stream 状态的完整消息，限制数量防止 localStorage 溢出
+      const toSave = msgs.filter(m => !m.isStreaming).slice(-200)
+      localStorage.setItem(key, JSON.stringify(toSave))
+    } catch (e) {
+      // localStorage 满时清理旧会话
+      console.warn('[persist] save failed, clearing old sessions:', e)
+      try {
+        const keysToRemove: string[] = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i)
+          if (k?.startsWith('claude-space-chat-') && k !== getMessagesStorageKey(sessionId)) {
+            keysToRemove.push(k)
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k))
+        const toSave = msgs.filter(m => !m.isStreaming).slice(-100)
+        localStorage.setItem(getMessagesStorageKey(sessionId), JSON.stringify(toSave))
+      } catch { /* 无法恢复 */ }
+    }
+  }
+
+  // 立即持久化（切换会话时调用，不做 debounce）
+  function flushMessagesToStorage(sessionId: string, msgs: ChatMessage[]): void {
+    if (messagesSaveTimer.current) {
+      clearTimeout(messagesSaveTimer.current)
+      messagesSaveTimer.current = null
+    }
+    saveMessagesToStorage(sessionId, msgs)
+  }
+
+  function loadMessagesFromStorage(sessionId: string): ChatMessage[] | null {
+    if (!sessionId) return null
+    try {
+      const key = getMessagesStorageKey(sessionId)
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch { /* silent */ }
+    return null
+  }
+
+  // 包装 setMessages：自动持久化（debounce 500ms）
+  function setMessages(updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])): void {
+    setMessagesInner(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      latestMessagesRef.current = next
+      const sid = persistSessionRef.current
+      if (sid) {
+        if (messagesSaveTimer.current) clearTimeout(messagesSaveTimer.current)
+        messagesSaveTimer.current = setTimeout(() => {
+          // 使用 ref 获取最新消息 + 当前 sessionId，防止闭包过期
+          saveMessagesToStorage(persistSessionRef.current || sid, latestMessagesRef.current)
+        }, 500)
+      }
+      return next
+    })
+  }
   const [streamingText, setStreamingText] = useState('')
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [team, setTeam] = useState<any[]>([])
@@ -84,6 +157,9 @@ const DEFAULT_TEAM = [
   // ── 活跃会话管理 + 名称持久化 ──
   const [activeSessions, setActiveSessions] = useState<Array<{ id: string; name: string; running?: boolean; connected?: boolean }>>([])
   const [sessionNames, setSessionNames] = useState<Record<string, string>>({})
+
+  // 同步 currentSessionId 到 persistSessionRef（供 debounce 持久化使用）
+  useEffect(() => { persistSessionRef.current = currentSessionId }, [currentSessionId])
 
   // 加载持久化的会话名
   useEffect(() => {
@@ -143,19 +219,38 @@ const DEFAULT_TEAM = [
   }
 
   function switchToSession(sessionId: string) {
+    // 切换前：立即保存当前会话消息（不 debounce）
+    if (currentSessionId) {
+      flushMessagesToStorage(currentSessionId, messages)
+    }
     setCurrentSessionId(sessionId)
     // 加入活跃列表
     getOrCreateSession(sessionId)
-    // Load session messages from history
+    // 优先从 localStorage 恢复（即时），再异步从 JSONL 补充（完整历史）
+    const cached = loadMessagesFromStorage(sessionId)
+    if (cached) {
+      setMessages(cached)
+    } else {
+      setMessages([])
+      setStreamingText('')
+    }
+    // 异步加载 JSONL 历史作为补充
     window.electronAPI.getSessionTranscript?.(sessionId).then(t => {
       if (t?.events?.length) {
         const msgs = t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant')
           .map((e: any) => parseSessionMessage(e))
           .filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content)
-        if (msgs.length > 0) setMessages(msgs)
-        else { setMessages([]); setStreamingText('') }
-      } else { setMessages([]); setStreamingText('') }
-    }).catch(() => { setMessages([]); setStreamingText('') })
+        if (msgs.length > 0) {
+          setMessages(prev => {
+            // 合并：JSONL 有但 localStorage 没有的消息
+            const existingIds = new Set(prev.map(m => m.id))
+            const newMsgs = msgs.filter(m => !existingIds.has(m.id))
+            if (newMsgs.length === 0) return prev
+            return [...prev, ...newMsgs]
+          })
+        }
+      }
+    }).catch(() => {})
     // 切换终端
     if (activeProject) {
       window.electronAPI.terminalStart({
@@ -272,13 +367,32 @@ const DEFAULT_TEAM = [
     if (!isSameProject) {
       try {
         const recent = await window.electronAPI.getRecentSession?.(project.path)
+        const recentSid = recent?.sessionId
+        // 优先从 localStorage 恢复（即时渲染）
+        if (recentSid) {
+          const cached = loadMessagesFromStorage(recentSid)
+          if (cached) {
+            setMessages(cached)
+          } else {
+            setMessages([])
+            setStreamingText('')
+          }
+          setCurrentSessionId(recentSid)
+        }
+        // 异步从 JSONL 补充
         if (recent?.messages?.length) {
           const msgs = recent.messages
             .filter((m: any) => m.type === 'user' || m.type === 'assistant')
             .map((m: any) => parseSessionMessage(m))
             .filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content)
-          if (msgs.length > 0) setMessages(msgs)
-          if (recent?.sessionId) setCurrentSessionId(recent.sessionId)
+          if (msgs.length > 0) {
+            setMessages(prev => {
+              const existingIds = new Set(prev.map(m => m.id))
+              const newMsgs = msgs.filter(m => !existingIds.has(m.id))
+              return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev
+            })
+          }
+          if (recentSid && !currentSessionId) setCurrentSessionId(recentSid)
         }
       } catch (_e) { /* silent */ }
     }
@@ -292,6 +406,20 @@ const DEFAULT_TEAM = [
         autoApproval: autoApprovalRef.current,
       })
       setTerminalReady(true)
+      // 轮询等待终端 Claude 就绪（最多 10 秒），确保 Chat→PTY 路径可用
+      let attempts = 0
+      const pollReady = setInterval(async () => {
+        attempts++
+        try {
+          const ts = await window.electronAPI.terminalStatus?.()
+          if (ts?.claudeRunning) {
+            setTerminalClaudeRunning(true)
+            clearInterval(pollReady)
+          } else if (attempts >= 50) {  // 10 秒超时
+            clearInterval(pollReady)
+          }
+        } catch { clearInterval(pollReady) }
+      }, 200)
     } catch { /* 非关键 */ }
   }, [])
 
@@ -970,7 +1098,7 @@ const DEFAULT_TEAM = [
         { label: '🚀 项目部署', action: () => setRightView('deploy') },
       ],
     },
-    { label: '关于', items: [{ label: 'Claude Space v1.1.1', disabled: true }] },
+    { label: '关于', items: [{ label: 'Claude Space v1.1.2', disabled: true }] },
   ]
 
   const noProject = !activeProject
@@ -1068,8 +1196,8 @@ const DEFAULT_TEAM = [
                 </span>
               </div>
 
-              {/* ── Chat 模式 ──────────────────────────── */}
-              {chatMode === 'chat' && (
+              {/* ── Chat 面板（始终挂载，用 display 切换，防止卸载丢失状态）── */}
+              <div style={{ display: chatMode === 'chat' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
                 <ChatPanel messages={messages} streamingText={streamingText} activeProject={activeProject}
                   sessionId={currentSessionId} onSessionIdChange={setCurrentSessionId}
                   onMessagesChange={setMessages} onStreamingText={setStreamingText}
@@ -1116,10 +1244,10 @@ const DEFAULT_TEAM = [
                     autoNameSession(sid, content)
                   }}
                 />
-              )}
+              </div>
 
-              {/* ── Terminal 模式 ──────────────────────── */}
-              {chatMode === 'terminal' && (
+              {/* ── Terminal 面板（始终挂载，用 display 切换）── */}
+              <div style={{ display: chatMode === 'terminal' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
                 <TerminalPanel
                   cwd={activeProject?.path}
                   sessionId={currentSessionId}
@@ -1127,7 +1255,7 @@ const DEFAULT_TEAM = [
                   theme={theme}
                   onTerminalData={handleTerminalInput}
                 />
-              )}
+              </div>
 
               {/* ── Remote Terminal 模式 ────────────────── */}
               {chatMode === 'remote-terminal' && (
