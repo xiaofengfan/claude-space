@@ -1,3 +1,17 @@
+/** 智能体角色类型 */
+export type AgentType = 'Coordinator' | 'Architect' | 'Implementer' | 'SecurityReviewer' | 'CodeExplorer'
+
+/** 团队成员（像素办公室 + 智能体面板） */
+export interface TeamMember {
+  id: string
+  name: string
+  role: string
+  skills: string
+  agentType: AgentType
+  status: 'working' | 'busy' | 'idle' | 'away'
+  color: string
+}
+
 export interface ProjectInfo {
   name: string
   path: string

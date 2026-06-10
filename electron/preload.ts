@@ -137,6 +137,7 @@ const electronAPI = {
     ipcRenderer.invoke('file:open-in-new-window', opts),
 
   openFileDialog: () => ipcRenderer.invoke('file:open-dialog'),
+  openDirectoryDialog: () => ipcRenderer.invoke('dialog:open-directory'),
 
   /** 保存图片到项目临时目录，返回文件路径列表 */
   saveTempImages: (opts: { projectPath: string; images: Array<{ base64: string; mediaType: string }> }) =>
@@ -292,6 +293,15 @@ const electronAPI = {
   },
 
   platform: process.platform,
+
+  /** 获取工作区根目录 */
+  getWorkspaceRoot: () => ipcRenderer.invoke('app:workspace-root'),
+
+  // ── 工作空间管理 ──────────────────────────────────────
+  workspaceList: () => ipcRenderer.invoke('workspace:list'),
+  workspaceAdd: (opts: { name: string; path: string }) => ipcRenderer.invoke('workspace:add', opts),
+  workspaceRemove: (workspaceId: string) => ipcRenderer.invoke('workspace:remove', workspaceId),
+  workspaceSetActive: (workspaceId: string) => ipcRenderer.invoke('workspace:set-active', workspaceId),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

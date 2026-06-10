@@ -13,6 +13,7 @@ import { TerminalProcess } from './terminalProcess'
 import { SshService } from './sshService'
 import type { SshServerConfig, DeployTarget } from './sshService'
 import { SshTerminalProcess } from './sshTerminalProcess'
+import { encodeClaudePath, decodeClaudePath, maskApiKey, readJsonlSafe, enqueueFileWrite, getWorkspaceRoot, withFileLock } from './utils'
 
 // ── 全局状态 ────────────────────────────────────────────
 
@@ -61,66 +62,35 @@ const windows: BrowserWindow[] = []  // 所有窗口追踪
 // Inject settings loader into AgentPool for per-agent model resolution
 agentPool.setSettingsLoader(() => loadSettings())
 
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || 'E:/claudespace'
+// ── 工作空间管理（多空间支持）──────────────────────
+export interface WorkspaceConfig {
+  id: string; name: string; path: string; isActive: boolean
+  createdAt: string
+}
+let _workspaceRoot = getWorkspaceRoot()  // 初始值，loadSettings 时更新
+let _workspaces: WorkspaceConfig[] = []  // 持久化的工作空间列表
+
+function getActiveWorkspaceRoot(): string {
+  // 优先使用持久化的活跃工作空间
+  if (_workspaces.length > 0) {
+    const active = _workspaces.find(w => w.isActive)
+    if (active) return active.path
+  }
+  return _workspaceRoot
+}
+
+function syncWorkspaceRootFromSettings(settings: AppSettings | null): void {
+  if (settings?.workspaces?.length) {
+    _workspaces = settings.workspaces
+    const active = _workspaces.find(w => w.isActive)
+    if (active) _workspaceRoot = active.path
+  }
+}
+
 const CLAUDE_HOME = path.join(os.homedir(), '.claude')
 
 // ── JSONL 安全读取 ──────────────────────────────────────────
-/** 读取 JSONL 文件，跳过不完整/损坏的行（Claude CLI 可能正在写入最后一行） */
-function readJsonlSafe(filePath: string): any[] {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8')
-    const lines = raw.split('\n')
-    const results: any[] = []
-    let parseErrors = 0
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim()
-      if (!line) continue
-      try {
-        results.push(JSON.parse(line))
-        parseErrors = 0
-      } catch {
-        parseErrors++
-        // 只有最后一行可能是部分写入（Claude CLI 正在写），
-        // 中间行的解析失败意味着数据损坏 → 记录日志
-        if (i < lines.length - 1 && parseErrors <= 1) {
-          console.warn('[jsonl] 解析失败 (行 ' + i + '):', line.slice(0, 80))
-        }
-      }
-    }
-    return results
-  } catch { return [] }
-}
-
 // ── 文件写入队列 ────────────────────────────────────────────
-// 串行化同一文件的写入操作，防止读-改-写 TOCTOU 竞态
-const writeQueues = new Map<string, Promise<void>>()
-
-function enqueueFileWrite(filePath: string, writeFn: () => void): void {
-  const prev = writeQueues.get(filePath) || Promise.resolve()
-  const next = prev.then(() => {
-    try {
-      writeFn()
-    } catch (err) {
-      console.error(`[file-queue] 写入 ${path.basename(filePath)} 失败:`, err)
-    }
-  }).catch(() => { /* 队列链不断 */ })
-  writeQueues.set(filePath, next)
-}
-
-/** 原子读-改-写：在整个周期内持有文件锁 */
-async function withFileLock<T>(filePath: string, fn: () => T): Promise<T> {
-  const prev = writeQueues.get(filePath) || Promise.resolve()
-  let result: T
-  const next = prev.then(() => {
-    result = fn()
-  }).catch((err) => {
-    console.error(`[file-lock] ${path.basename(filePath)} 操作失败:`, err)
-    throw err
-  })
-  writeQueues.set(filePath, next)
-  await next
-  return result!
-}
 const TASKS_FILE = path.join(os.homedir(), '.claude', 'claude-space-tasks.json')
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'claude-space-settings.json')
 const SESSION_NAMES_FILE = path.join(os.homedir(), '.claude', 'claude-space-session-names.json')
@@ -315,7 +285,7 @@ interface ProjectInfo {
 }
 
 function scanProjects(rootPath?: string): ProjectInfo[] {
-  const root = rootPath || WORKSPACE_ROOT
+  const root = rootPath || getActiveWorkspaceRoot()
   const projects: ProjectInfo[] = []
 
   try {
@@ -433,11 +403,6 @@ function scanDirectory(dirPath: string, maxDepth: number, depth: number = 0): an
   return result
 }
 
-// ── 路径编码 (Claude Code Windows: :/ → --, / → -) ──────
-function encodeClaudePath(p: string): string {
-  return p.replace(':\\', '--').replace(':/', '--').replace(/\//g, '-').replace(/\\/g, '-')
-}
-
 // ── 会话管理 ────────────────────────────────────────────
 
 function listSessions(projectPath?: string): any[] {
@@ -464,7 +429,7 @@ function listSessions(projectPath?: string): any[] {
       const projectsDir = path.join(CLAUDE_HOME, 'projects')
       if (fs.existsSync(projectsDir)) {
         for (const encoded of fs.readdirSync(projectsDir)) {
-          const decoded = decodeURIComponent(encoded)
+          const decoded = decodeClaudePath(encoded)
           const sessionDir = path.join(projectsDir, encoded)
           if (!fs.statSync(sessionDir).isDirectory()) continue
           for (const file of fs.readdirSync(sessionDir)) {
@@ -518,14 +483,26 @@ interface ModelConfig {
 interface AppSettings {
   version: number; activeModelId: string | null; models: ModelConfig[]
   autoApproval?: boolean; defaultGroupChat?: boolean
+  sshServers?: SshServerConfig[]
+  deployTargets?: DeployTarget[]
+  workspaces?: WorkspaceConfig[]
 }
 interface ModelConfigSafe {
   id: string; name: string; provider: string; apiKeyHint: string
   baseUrl: string; model: string; apiKeySource: 'env' | 'user'
 }
+interface SshServerSafe {
+  id: string; name: string; host: string; port: number
+  username: string; authMethod: string
+  passwordHint: string; privateKeyPath: string; privateKeyHint: string
+  fingerprint?: string; createdAt: string; updatedAt: string
+}
 interface AppSettingsSafe {
   version: number; activeModelId: string | null; models: ModelConfigSafe[]
   autoApproval?: boolean; defaultGroupChat?: boolean
+  sshServers?: SshServerSafe[]
+  deployTargets?: DeployTarget[]
+  workspaces?: WorkspaceConfig[]
 }
 
 function loadSettings(): AppSettings | null {
@@ -545,11 +522,6 @@ function saveSettings(settings: AppSettings): void {
     fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf-8')
     fs.renameSync(tmp, SETTINGS_FILE)
   })
-}
-
-function maskApiKey(key: string): string {
-  if (!key || key.length < 8) return '****'
-  return key.slice(0, 3) + '****' + key.slice(-4)
 }
 
 // ── IPC 注册 ────────────────────────────────────────────
@@ -802,7 +774,7 @@ function registerIPC(): void {
     if (/[<>:"/\\|?*]/.test(projectName)) {
       return { canceled: false, error: '项目名称包含非法字符：< > : " / \\ | ? *' }
     }
-    const projectPath = path.join(WORKSPACE_ROOT, projectName)
+    const projectPath = path.join(getActiveWorkspaceRoot(), projectName)
     // 检查目录是否已存在
     if (fs.existsSync(projectPath)) {
       return { canceled: false, error: `项目目录已存在：${projectPath}` }
@@ -923,6 +895,14 @@ function registerIPC(): void {
     })
     if (result.canceled) return { canceled: true }
     return { canceled: false, filePath: result.filePaths[0] }
+  })
+
+  ipcMain.handle('dialog:open-directory', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+    })
+    if (result.canceled) return { canceled: true }
+    return { canceled: false, dirPath: result.filePaths[0] }
   })
 
   // 会话管理
@@ -1072,6 +1052,10 @@ function registerIPC(): void {
         autoApproval: false,
         sshServers: [],
         deployTargets: [],
+        workspaces: [{
+          id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
+          createdAt: new Date().toISOString(),
+        }],
       }
       // 同时写入文件
       saveSettings({
@@ -1086,9 +1070,17 @@ function registerIPC(): void {
         autoApproval: false,
         sshServers: [],
         deployTargets: [],
+        workspaces: [{
+          id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
+          createdAt: new Date().toISOString(),
+        }],
       })
+      // 首次加载：同步默认工作空间到内存
+      _workspaces = [{ id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true, createdAt: new Date().toISOString() }]
       return defaultSettings
     }
+    // 同步工作空间到内存
+    syncWorkspaceRootFromSettings(raw)
     // 返回脱敏版本
     return {
       version: raw.version || 1,
@@ -1113,6 +1105,7 @@ function registerIPC(): void {
         updatedAt: s.updatedAt || new Date().toISOString(),
       })),
       deployTargets: raw.deployTargets || [],
+      workspaces: raw.workspaces || [],
     } as AppSettingsSafe
   })
 
@@ -1135,7 +1128,7 @@ function registerIPC(): void {
       })
 
       const existingServers = existing?.sshServers || []
-      const mergedSshServers: SshServerConfig[] = ((settings as any).sshServers || []).map((s: any) => {
+      const mergedSshServers: SshServerConfig[] = (settings.sshServers || []).map((s: any) => {
         const existing = existingServers.find((es: any) => es.id === s.id)
         return {
           id: s.id, name: s.name,
@@ -1157,7 +1150,10 @@ function registerIPC(): void {
         models,
         autoApproval: settings.autoApproval ?? false,
         sshServers: mergedSshServers,
-        deployTargets: (settings as any).deployTargets || [],
+        deployTargets: settings.deployTargets || [],
+        // 工作空间由专用 IPC (workspace:add/remove/set-active) 管理并实时持久化
+        // settings.workspaces 来自前端 state 可能过时，优先使用文件中的最新值
+        workspaces: existing?.workspaces || settings.workspaces || [],
       })
       return { success: true }
     })
@@ -1233,7 +1229,10 @@ function registerIPC(): void {
       if (!fs.existsSync(APPROVAL_LOG)) return []
       const lines = fs.readFileSync(APPROVAL_LOG, 'utf-8').split('\n').filter(Boolean)
       return lines.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean).slice(-100)
-    } catch { return [] }
+    } catch (e) {
+      console.warn('[approval:history] 读取审批日志失败:', e)
+      return []
+    }
   })
 
   // ── Git 操作 ────────────────────────────────────────────
@@ -1641,6 +1640,62 @@ function registerIPC(): void {
   })
   ipcMain.handle('win:is-maximized', (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+  })
+  ipcMain.handle('app:workspace-root', async () => getActiveWorkspaceRoot())
+
+  // ── 工作空间管理 IPC ──────────────────────────────
+  ipcMain.handle('workspace:list', async () => {
+    // 首次调用且 _workspaces 为空时，自动创建默认空间并同步到内存
+    if (_workspaces.length === 0) {
+      _workspaces = [{
+        id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
+        createdAt: new Date().toISOString(),
+      }]
+      // 持久化默认空间，确保后续 settings:load 也能加载到
+      const existing = loadSettings()
+      if (!existing?.workspaces?.length) {
+        saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+      }
+    }
+    return _workspaces
+  })
+
+  ipcMain.handle('workspace:add', async (_event, opts: { name: string; path: string }) => {
+    const id = 'ws_' + Date.now().toString(36)
+    const ws: WorkspaceConfig = { id, name: opts.name, path: opts.path, isActive: false, createdAt: new Date().toISOString() }
+    _workspaces.push(ws)
+    // 持久化到 settings
+    const existing = loadSettings()
+    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+    return { success: true, workspace: ws }
+  })
+
+  ipcMain.handle('workspace:remove', async (_event, workspaceId: string) => {
+    const idx = _workspaces.findIndex(w => w.id === workspaceId)
+    if (idx < 0) return { success: false, error: '工作空间不存在' }
+    const wasActive = _workspaces[idx].isActive
+    _workspaces.splice(idx, 1)
+    if (wasActive && _workspaces.length > 0) {
+      _workspaces[0].isActive = true
+      _workspaceRoot = _workspaces[0].path
+    } else if (_workspaces.length === 0) {
+      _workspaceRoot = getWorkspaceRoot()
+    }
+    const existing = loadSettings()
+    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:set-active', async (_event, workspaceId: string) => {
+    let found = false
+    _workspaces = _workspaces.map(w => {
+      if (w.id === workspaceId) { found = true; _workspaceRoot = w.path; return { ...w, isActive: true } }
+      return { ...w, isActive: false }
+    })
+    if (!found) return { success: false, error: '工作空间不存在' }
+    const existing = loadSettings()
+    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+    return { success: true, path: _workspaceRoot }
   })
 }
 

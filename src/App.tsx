@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { ProjectInfo, TaskItem, ChatMessage, SessionInfo, ToolCall } from './types'
 import type { AppSettingsSafe } from './types/settings'
+import { DEFAULT_TEAM } from './constants/team'
 import { MenuBar, MenuGroup } from './components/MenuBar'
 import { ProjectBrowser } from './components/ProjectBrowser'
 import { ProjectManagerDialog } from './components/ProjectManagerDialog'
@@ -30,6 +31,7 @@ import { FileViewerWindow } from './components/FileViewerWindow'
 import { AssistantPanel } from './components/AssistantPanel'
 import { useSplitter } from './hooks/useSplitter'
 import { useTaskSync, ApprovalRequest } from './hooks/useTaskSync'
+import { WorkspaceSelectDialog } from './components/WorkspaceSelectDialog'
 
 export default function App() {
   const searchParams = new URLSearchParams(window.location.search)
@@ -47,17 +49,87 @@ export default function App() {
     />
   }
 
-const DEFAULT_TEAM = [
-  { id: 'pm', name: '王经理', role: '项目经理', skills: '进度管理', agentType: 'Coordinator', status: 'working', color: '#4a7cf7' },
-  { id: 'po', name: '李产品', role: '产品经理', skills: '需求分析', agentType: 'Coordinator', status: 'working', color: '#7c5cbf' },
-  { id: 'arch', name: '张架构', role: '架构师', skills: '系统设计', agentType: 'Architect', status: 'busy', color: '#e05555' },
-  { id: 'senior', name: '赵工', role: '高级工程师', skills: '核心开发', agentType: 'Implementer', status: 'working', color: '#3d8b5e' },
-  { id: 'dev1', name: '钱开发', role: '开发工程师', skills: '前后端', agentType: 'Implementer', status: 'working', color: '#e89030' },
-  { id: 'dev2', name: '孙开发', role: '开发工程师', skills: '前端组件', agentType: 'Implementer', status: 'idle', color: '#3a9cc0' },
-  { id: 'qa', name: '周测试', role: '测试工程师', skills: '自动化测试', agentType: 'SecurityReviewer', status: 'idle', color: '#b05090' },
-  { id: 'review', name: '吴审查', role: '代码审查', skills: '代码审计', agentType: 'SecurityReviewer', status: 'busy', color: '#d07040' },
-  { id: 'claude', name: 'Claude', role: 'AI 助手', skills: '代码生成、问题分析、架构设计、全栈开发', agentType: 'CodeExplorer', status: 'working', color: '#d97706' },
-]
+  // ── 工作空间启动选择 ────────────────────────────
+  const [workspaceReady, setWorkspaceReady] = useState(false)
+  const [showWorkspaceSelect, setShowWorkspaceSelect] = useState(false)
+
+  useEffect(() => {
+    window.electronAPI.workspaceList().then(list => {
+      if (list && list.length > 1) {
+        setShowWorkspaceSelect(true)
+      } else {
+        setWorkspaceReady(true)
+      }
+    }).catch(() => setWorkspaceReady(true))
+  }, [])
+
+  async function handleWorkspaceSelect(workspaceId: string) {
+    await window.electronAPI.workspaceSetActive(workspaceId)
+    setShowWorkspaceSelect(false)
+    setWorkspaceReady(true)
+  }
+
+  // ── 工作空间切换 → 软重启 ─────────────────────
+  // 支持两种模式：
+  //   1. workspaceId: 切换到已有工作空间
+  //   2. path (如 D:\projects): 自动查找/创建对应工作空间后切换
+  async function handleWorkspaceSwitch(workspaceIdOrPath: string) {
+    // 停止所有 Claude 进程
+    await window.electronAPI.stopClaude().catch(() => {})
+    await window.electronAPI.sessionStopAll?.().catch(() => {})
+    await window.electronAPI.terminalKill?.().catch(() => {})
+
+    // 判断是路径还是 workspaceId
+    const maybePath = workspaceIdOrPath.includes(':') || workspaceIdOrPath.includes('/') || workspaceIdOrPath.includes('\\')
+    let targetId = workspaceIdOrPath
+
+    if (maybePath) {
+      // 路径模式：先查已有空间，无则自动添加
+      try {
+        const list = await window.electronAPI.workspaceList()
+        const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+        const existing = list?.find((w: any) => norm(w.path) === norm(workspaceIdOrPath))
+        if (existing) {
+          targetId = existing.id
+        } else {
+          const dirName = workspaceIdOrPath.split(/[/\\]/).pop() || workspaceIdOrPath
+          const res = await window.electronAPI.workspaceAdd({ name: dirName, path: workspaceIdOrPath })
+          if (res.success && res.workspace) {
+            targetId = res.workspace.id
+          } else {
+            return // 添加失败，放弃切换
+          }
+        }
+      } catch { return }
+    }
+
+    // 切换到目标空间
+    await window.electronAPI.workspaceSetActive(targetId)
+
+    // 清空 UI 状态
+    setActiveProject(null)
+    setMessages([])
+    setStreamingText('')
+    setCurrentSessionId(undefined)
+    setTasks([])
+    setClaudeRunning(false)
+    setClaudeConnected(false)
+    setTerminalReady(false)
+    setTerminalClaudeRunning(false)
+    setLeftView('files')
+    setRightView('tasks')
+
+    // 重新加载 settings（获取更新后的工作空间信息）
+    try {
+      const s = await window.electronAPI.loadSettings()
+      setAppSettings(s)
+    } catch (_e) { /* silent */ }
+
+    // 重新加载项目列表
+    loadProjectsForDialog()
+    loadTasks()
+  }
+
 
   const [theme, setThemeState] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem('claude-space-theme') as 'dark' | 'light') || 'dark'
@@ -493,6 +565,23 @@ const DEFAULT_TEAM = [
   const handleNewProject = useCallback(async () => {
     setShowNewProjectDialog(true)
   }, [])
+
+  // ── 菜单: 浏览并切换工作空间目录 ──
+  const handleBrowseWorkspaceDir = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.openDirectoryDialog?.()
+      if (result && !result.canceled && result.dirPath) {
+        await handleWorkspaceSwitch(result.dirPath)
+      }
+    } catch { /* 非关键 */ }
+  }, [])
+
+  // 当前活跃工作空间名（从 appSettings 派生）
+  const activeWorkspaceName = (() => {
+    const wss = appSettings?.workspaces || []
+    const active = wss.find(w => w.isActive)
+    return active?.name || '默认工作空间'
+  })()
 
   const handleCreateProject = useCallback(async (name: string) => {
     const res = await window.electronAPI.newProject?.(name)
@@ -1065,6 +1154,10 @@ const DEFAULT_TEAM = [
     {
       label: '项目', items: [
         { label: '管理项目...', shortcut: 'Ctrl+Shift+P', action: openProjectManager },
+        { divider: true, label: '' },
+        { label: `📁 工作空间: ${activeWorkspaceName}`, disabled: true },
+        { label: '📂 选择工作空间目录...', action: handleBrowseWorkspaceDir },
+        { label: '⚙️ 管理工作空间...', action: () => setShowSettings(true) },
         ...(activeProject ? [
           { divider: true, label: '' },
           { label: `当前项目: ${activeProject.name}`, disabled: true },
@@ -1118,10 +1211,27 @@ const DEFAULT_TEAM = [
         { label: '🚀 项目部署', action: () => setRightView('deploy') },
       ],
     },
-    { label: '关于', items: [{ label: 'Claude Space v1.1.3', disabled: true }] },
+    { label: '关于', items: [{ label: 'Claude Space v1.1.5', disabled: true }] },
   ]
 
   const noProject = !activeProject
+
+  // ── 启动时：多工作空间选择 ──
+  if (showWorkspaceSelect) {
+    return <WorkspaceSelectDialog onSelect={handleWorkspaceSelect} />
+  }
+
+  // ── 等待工作空间就绪 ──
+  if (!workspaceReady) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#1a1a2e' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🚀</div>
+          <div style={{ fontSize: 14, color: '#888' }}>Claude Space 启动中...</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="app">
@@ -1140,7 +1250,9 @@ const DEFAULT_TEAM = [
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'docs' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} />
+          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'docs' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
+            await handleWorkspaceSwitch(workspaceId)
+          }} />
           <div className="app-body">
             <aside className="sidebar left-sidebar" style={{ width: leftSplitter.size }}>
               <div className="sidebar-tabs">
@@ -1418,7 +1530,10 @@ const DEFAULT_TEAM = [
             handleSelectProject(p)
           }
         }} />}
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} settings={appSettings} onSettingsChange={handleSaveSettings} />}
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} settings={appSettings} onSettingsChange={handleSaveSettings} onWorkspaceSwitch={async (id) => {
+        setShowSettings(false)
+        await handleWorkspaceSwitch(id)
+      }} />}
       {showNewProjectDialog && <NewProjectDialog onClose={() => setShowNewProjectDialog(false)} onCreate={handleCreateProject} />}
       <ApprovalDialog
         approval={pendingApproval}

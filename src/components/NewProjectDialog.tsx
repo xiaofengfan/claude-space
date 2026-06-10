@@ -10,11 +10,12 @@ export function NewProjectDialog({
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
+  const [workspaceRoot, setWorkspaceRoot] = useState('~/claudespace')
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    // 自动聚焦输入框
     setTimeout(() => inputRef.current?.focus(), 50)
+    window.electronAPI.getWorkspaceRoot().then(setWorkspaceRoot).catch(() => {})
   }, [])
 
   async function handleCreate() {
@@ -54,7 +55,7 @@ export function NewProjectDialog({
         <div className="dialog-body">
           <p style={{ fontSize: 13, color: '#888', marginBottom: 16 }}>
             输入项目名称，将在工作区 <code style={{ background: '#141428', padding: '2px 6px', borderRadius: 4, fontSize: 11 }}>
-              E:\claudespace
+              {workspaceRoot}
             </code> 下创建项目目录。
           </p>
           <div style={{ marginBottom: 12 }}>

@@ -160,8 +160,12 @@ export class AgentPool extends EventEmitter {
 
     process.on('close', (code) => {
       clearAgentTimeout()
+      // 如果 timeout 已经处理过（agent.status === 'error'），不再重复递减 activeCount
+      const wasHandledByTimeout = agent.status === 'error'
       agent.status = 'idle'
-      this.activeCount--
+      if (!wasHandledByTimeout) {
+        this.activeCount--
+      }
       this.emit('agent-close', { agentId: agent.agentId, code })
 
       // Process next in queue
@@ -180,8 +184,12 @@ export class AgentPool extends EventEmitter {
 
     process.on('error', (err) => {
       clearAgentTimeout()
+      // 防止 error → close 事件链导致 activeCount 重复递减
+      const wasRunning = agent.status === 'running'
       agent.status = 'error'
-      this.activeCount--
+      if (wasRunning) {
+        this.activeCount--
+      }
       this.emit('agent-error', { agentId: agent.agentId, agentType: agent.agentType, agentName: agent.agentName, error: err.message })
       this.processNext()
     })

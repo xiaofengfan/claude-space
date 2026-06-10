@@ -122,7 +122,7 @@ export function InputBox({
       if (lastSlash < 0) { setShowCommands(false); return }
       const charBefore = lastSlash > 0 ? input[lastSlash - 1] : ' '
       const afterSlash = beforeCursor.slice(lastSlash + 1)
-      if (afterSlash.includes(' ') || (lastSlash > 0 && input[lastSlash - 2] === ':' && input[lastSlash - 1] === '/')) {
+      if (afterSlash.includes(' ') || (lastSlash >= 2 && input[lastSlash - 2] === ':' && input[lastSlash - 1] === '/')) {
         setShowCommands(false)
       }
     }
@@ -146,7 +146,7 @@ export function InputBox({
     setInput(''); setShowMentions(false); setShowCommands(false)
     const imgs = pastedImages.length > 0 ? [...pastedImages] : undefined
     setPastedImages([])
-    onSend(final || '描述这张图片', imgs)
+    onSend(final, imgs)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -212,8 +212,11 @@ export function InputBox({
       const charBefore = lastSlash > 0 ? val[lastSlash - 1] : ' '
       const isCmdStart = charBefore === ' ' || charBefore === '\n' || lastSlash === 0
       const afterSlash = beforeCursor.slice(lastSlash + 1)
-      // 排除 URL 中的 / (如 http://)
-      const isUrl = lastSlash > 0 && (val[lastSlash - 2] === ':' && val[lastSlash - 1] === '/' || val[lastSlash - 3] === ':' && val[lastSlash - 2] === '/' && val[lastSlash - 1] === '/')
+      // 排除 URL 中的 / (如 http://)，防止误触发命令菜单
+      const isUrl = lastSlash >= 2 && (
+        (val[lastSlash - 2] === ':' && val[lastSlash - 1] === '/') ||
+        (lastSlash >= 3 && val[lastSlash - 3] === ':' && val[lastSlash - 2] === '/' && val[lastSlash - 1] === '/')
+      )
       if (isCmdStart && !isUrl && !afterSlash.includes(' ') && !afterSlash.includes('\n')) {
         setCommandFilter(afterSlash.toLowerCase())
         setSelectedCmdIdx(0)

@@ -44,8 +44,6 @@ export function useTaskSync({ tasks, onTasksChange, activeProjectPath, onApprova
               if (t.status === 'done') return t
               // Match by toolCallId
               if (toolUseId && t.toolCallId === toolUseId) { changed = true; return { ...t, status: 'done' as const, updatedAt: now } }
-              // Fallback: mark ANY non-done task whose title relates to the completed tool
-              if (toolUseId && !t.toolCallId) { changed = true; return { ...t, status: 'done' as const, updatedAt: now } }
               return t
             })
             if (changed) {

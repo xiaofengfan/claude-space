@@ -53,6 +53,7 @@ export interface ElectronAPI {
   createFile: (opts: { dirPath: string; fileName: string; content?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>
   openFileInNewWindow: (opts: { filePath: string; fileName: string; projectPath?: string }) => Promise<{ success: boolean }>
   openFileDialog: () => Promise<{ canceled: boolean; filePath?: string }>
+  openDirectoryDialog: () => Promise<{ canceled: boolean; dirPath?: string }>
   saveTempImages: (opts: { projectPath: string; images: Array<{ base64: string; mediaType: string }> }) => Promise<{ success: boolean; paths: string[]; error?: string }>
 
   // Session management
@@ -139,6 +140,13 @@ export interface ElectronAPI {
   on: (channel: string, callback: (...args: any[]) => void) => void
   off: (channel: string, callback: (...args: any[]) => void) => void
   platform: string
+  getWorkspaceRoot: () => Promise<string>
+
+  // ── Workspace management ────────────────────────────────
+  workspaceList: () => Promise<Array<{ id: string; name: string; path: string; isActive: boolean; createdAt: string }>>
+  workspaceAdd: (opts: { name: string; path: string }) => Promise<{ success: boolean; workspace?: { id: string; name: string; path: string; isActive: boolean; createdAt: string }; error?: string }>
+  workspaceRemove: (workspaceId: string) => Promise<{ success: boolean; error?: string }>
+  workspaceSetActive: (workspaceId: string) => Promise<{ success: boolean; path?: string; error?: string }>
 }
 
 declare global {

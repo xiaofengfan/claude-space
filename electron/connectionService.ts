@@ -2,24 +2,12 @@
  * 连接服务 — CLI 探测、API 连通性检测、认证验证、会话监控
  * 后续可扩展支持其他模型/提供商
  */
-import { spawn, execFile, execSync } from 'child_process'
+import { spawn, execFile } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { resolveClaudePath } from './utils'
 
-// Resolve claude binary path once at module level
-function resolveClaudePath(): string {
-  try {
-    if (process.platform === 'win32') {
-      const out = execSync('where claude.cmd', { timeout: 5000, windowsHide: true })
-      const lines = out.toString().trim().split('\n')
-      return lines[0]?.trim() || 'claude.cmd'
-    }
-    return 'claude'
-  } catch {
-    return process.platform === 'win32' ? 'claude.cmd' : 'claude'
-  }
-}
 const CLAUDE_BIN = resolveClaudePath()
 
 // ── 类型 ──────────────────────────────────────────────────

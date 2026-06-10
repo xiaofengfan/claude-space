@@ -289,7 +289,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-working-bubble::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:4px solid #4caf50}
 @keyframes bubble-pop{0%{opacity:0;transform:translateX(-50%) scale(.8)}100%{opacity:1;transform:translateX(-50%) scale(1)}}
 
-.flat-role-label{font-size:11px;color:#999;margin-top:5px;font-weight:500}
+.flat-role-label{font-size:11px;color:#888;margin-top:5px;font-weight:500}
 .flat-status{position:absolute;top:2px;right:8px;width:6px;height:6px;border-radius:50%}
 .flat-status.working{background:#4caf50;box-shadow:0 0 3px rgba(76,175,80,.3)}
 .flat-status.busy{background:#ff9800;box-shadow:0 0 4px rgba(255,152,0,.4);animation:pulse-glow .8s infinite}
@@ -300,15 +300,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* Idle bubble */
 .flat-idle-bubble{position:absolute;top:4px;left:50%;transform:translateX(-50%);background:#fff;border:1px solid #ddd;border-radius:10px;padding:2px 8px;font-size:10px;color:#888;white-space:nowrap;z-index:10;animation:bubble-pop .3s ease-out}
 .flat-idle-bubble::after{content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:4px solid #fff}
-@keyframes bubble-pop{0%{opacity:0;transform:translateX(-50%) scale(.8)}100%{opacity:1;transform:translateX(-50%) scale(1)}}
-
-.flat-role-label{font-size:11px;color:#666;margin-top:5px;font-weight:500}
-.flat-status{position:absolute;top:2px;right:8px;width:6px;height:6px;border-radius:50%}
-.flat-status.working{background:#4caf50;box-shadow:0 0 3px rgba(76,175,80,.3)}
-.flat-status.busy{background:#ff9800;box-shadow:0 0 4px rgba(255,152,0,.4);animation:pulse-glow .8s infinite}
-.flat-status.idle{background:#2196f3;box-shadow:0 0 3px rgba(33,150,243,.3)}
-.flat-status.away{background:#f44336;opacity:.5}
-@keyframes pulse-glow{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* Input for edit dialog */
 .cozy-input { width:100%; padding:6px 10px; border:1px solid #3a3a5a; border-radius:4px; background:#2a2a4a; color:#e0e0e0; font-size:13px; margin-top:4px; margin-bottom:12px; }
@@ -362,6 +353,25 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .recent-card-name { font-size:13px; font-weight:500; }
 .recent-card-meta { font-size:11px; color:#666; margin-top:2px; }
 
+/* ── Welcome Workspace Bar ─────────────────────── */
+.welcome-workspace-bar { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:#141428; border:1px solid #2a2a4a; border-radius:10px; margin-bottom:24px; text-align:left; }
+.welcome-workspace-info { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
+.welcome-workspace-icon { font-size:22px; flex-shrink:0; }
+.welcome-workspace-detail { min-width:0; }
+.welcome-workspace-name { font-size:13px; font-weight:600; color:#ccc; display:block; }
+.welcome-workspace-path { font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; margin-top:1px; }
+.welcome-workspace-actions { display:flex; gap:8px; flex-shrink:0; margin-left:12px; }
+.welcome-workspace-btn { padding:6px 12px; font-size:11px; border:1px solid #3a3a5a; border-radius:6px; background:transparent; color:#aaa; cursor:pointer; transition:all .15s; display:inline-flex; align-items:center; }
+.welcome-workspace-btn:hover { border-color:#6c8cff; color:#fff; }
+.welcome-workspace-btn.primary { background:#2a4a7a; border-color:#3a5a8a; color:#aaccff; }
+.welcome-workspace-btn.primary:hover { background:#3a5a8a; color:#fff; }
+.welcome-ws-dropdown { position:absolute; top:calc(100% + 4px); right:0; background:#1e1e36; border:1px solid #3a3a5a; border-radius:8px; min-width:240px; max-height:240px; overflow-y:auto; box-shadow:0 6px 16px rgba(0,0,0,0.5); z-index:101; }
+.welcome-ws-item { display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer; transition:background .15s; font-size:12px; }
+.welcome-ws-item:hover { background:#2a2a4a; }
+.welcome-ws-item.active { background:#1a1a3e; }
+.welcome-ws-item-name { color:#ccc; font-weight:500; }
+.welcome-ws-item-path { font-size:10px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px; }
+
 /* ── Project Browser ───────────────────────────── */
 .project-browser { flex:1; overflow-y:auto; padding:8px; }
 .project-browser-header { display:flex; justify-content:space-between; align-items:center; padding:4px 8px; margin-bottom:8px; font-size:12px; color:#888; }
@@ -403,6 +413,67 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .pixel-edit-dialog { width:420px; }
 .pixel-edit-dialog .input { width:100%; padding:6px 10px; border:1px solid #3a3a5a; border-radius:4px; background:#2a2a4a; color:#e0e0e0; font-size:13px; margin-top:4px; margin-bottom:12px; }
 .pixel-edit-dialog .textarea { resize:vertical; }
+
+/* ── Settings Dialog (Tabbed) ─────────────────── */
+.settings-dialog { background:#1e1e36; border-radius:14px; width:80vw; height:80vh; min-width:600px; min-height:480px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+.settings-header { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; border-bottom:1px solid #2a2a4a; flex-shrink:0; }
+.settings-header h2 { font-size:18px; }
+.settings-tabs { display:flex; gap:0; padding:0 16px; background:#16162a; border-bottom:2px solid #2a2a4a; flex-shrink:0; overflow-x:auto; }
+.settings-tab { display:flex; align-items:center; gap:6px; padding:12px 20px; border:none; background:transparent; color:#888; font-size:13px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all .15s; white-space:nowrap; }
+.settings-tab:hover { color:#ccc; background:rgba(108,140,255,0.06); }
+.settings-tab.active { color:#6c8cff; border-bottom-color:#6c8cff; background:rgba(108,140,255,0.08); }
+.settings-tab-icon { font-size:16px; }
+.settings-tab-label { font-weight:500; }
+.settings-body { flex:1; overflow-y:auto; padding:24px; }
+.settings-tab-content { max-width:700px; }
+
+/* Setting sections inside tab */
+.setting-section { margin-bottom:24px; }
+.setting-section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.setting-section-header h3 { font-size:15px; color:#ccc; margin:0; }
+
+.setting-toggle-row { display:flex; align-items:center; gap:16px; padding:12px 0; }
+.setting-toggle-info { flex:1; }
+.setting-toggle-label { display:block; font-size:13px; color:#ccc; margin-bottom:4px; }
+.setting-toggle-desc { display:block; font-size:11px; color:#888; line-height:1.5; }
+
+/* Workspace tab */
+.workspace-active-banner { display:flex; align-items:center; gap:10px; padding:12px 16px; background:#141428; border:1px solid #3a3a5a; border-radius:8px; margin-bottom:20px; }
+.workspace-active-label { font-size:11px; color:#888; flex-shrink:0; }
+.workspace-active-name { font-size:14px; color:#6c8cff; font-weight:600; }
+.workspace-active-path { font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:auto; max-width:300px; }
+.workspace-list { margin-bottom:20px; }
+.workspace-card { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; margin-bottom:6px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:8px; transition:all .15s; }
+.workspace-card.active { background:#1a1a3e; border-color:#4a7cf7; }
+.workspace-card-body { flex:1; min-width:0; }
+.workspace-card-name { font-size:13px; color:#ccc; font-weight:500; }
+.workspace-card-name .active { color:#6c8cff; }
+.workspace-card-path { font-size:10px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-card-actions { display:flex; gap:6px; flex-shrink:0; margin-left:12px; }
+.workspace-add-form { padding:12px 14px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:8px; }
+.workspace-add-title { font-size:12px; color:#aaa; margin-bottom:10px; }
+.workspace-add-row { display:flex; gap:8px; margin-bottom:4px; }
+.workspace-add-input { padding:7px 10px; font-size:12px; background:#141428; border:1px solid #2a2a4a; border-radius:5px; color:#ddd; outline:none; }
+.workspace-add-input:focus { border-color:#4a7cf7; }
+.form-error { font-size:11px; color:#e0556a; margin-top:6px; }
+
+/* About section */
+.about-info { padding:0; }
+.about-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #1a1a2e; font-size:12px; }
+.about-label { color:#888; }
+.about-value { color:#ccc; font-family:monospace; font-size:11px; }
+
+/* Model cards inside settings tab */
+.btn-add-model { padding:6px 14px; border:1px dashed #3a3a5a; border-radius:6px; background:transparent; color:#888; font-size:12px; cursor:pointer; transition:all .15s; }
+.btn-add-model:hover { border-color:#6c8cff; color:#6c8cff; }
+
+/* Small button variants */
+.btn-small { padding:4px 12px; font-size:11px; border:1px solid #3a3a5a; border-radius:5px; background:transparent; color:#aaa; cursor:pointer; transition:all .15s; }
+.btn-small:hover { border-color:#6c8cff; color:#fff; }
+.btn-small.primary { background:#2a4a7a; border-color:#3a5a8a; color:#aaccff; }
+.btn-small.primary:hover { background:#3a5a8a; color:#fff; }
+.btn-small.danger { background:transparent; border-color:#4a2a2a; color:#d05555; }
+.btn-small.danger:hover { background:#3a1a1a; border-color:#6a2a2a; color:#e05555; }
 
 /* ── Shared ────────────────────────────────────── */
 .btn-primary { padding:8px 18px; border:none; border-radius:6px; background:#6c8cff; color:#fff; font-size:13px; cursor:pointer; }
@@ -650,9 +721,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .chat-model-selector { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .chat-model-select { padding: 4px 8px; font-size: 11px; border: 1px solid #3a3a5a; border-radius: 4px; background: #2a2a4a; color: #ccc; max-width: 200px; }
 
-/* ── Settings Dialog ─────────────────────────────── */
-.settings-dialog { width: 580px; max-height: 85vh; display: flex; flex-direction: column; }
-.settings-dialog .dialog-body { flex: 1; overflow-y: auto; }
+/* ── Settings (legacy helpers — still used by SshSettingsSection) ── */
 .setting-group { margin-bottom: 20px; }
 .setting-group h3 { font-size: 13px; margin-bottom: 10px; color: #aaa; font-weight: 600; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #1a1a3a; }
@@ -1377,6 +1446,60 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 [data-theme="light"] .assistant-submenu-btn{border-color:#c8e6c9;color:#5a8}
 [data-theme="light"] .assistant-submenu-btn:hover{background:#f0faf0;color:#3a6}
 [data-theme="light"] .assistant-welcome-hints{background:#f5f5ff}
+
+/* ── Light theme: Settings Dialog Tabbed ────────── */
+[data-theme="light"] .settings-dialog{background:#fff;box-shadow:0 4px 32px rgba(0,0,0,.15)}
+[data-theme="light"] .settings-header{border-color:#e0e0e0}
+[data-theme="light"] .settings-header h2{color:#222}
+[data-theme="light"] .settings-tabs{background:#f5f5f5;border-color:#e0e0e0}
+[data-theme="light"] .settings-tab{color:#888}
+[data-theme="light"] .settings-tab:hover{color:#333;background:rgba(108,140,255,.06)}
+[data-theme="light"] .settings-tab.active{color:#4a5cf7;border-bottom-color:#6c8cff;background:rgba(108,140,255,.08)}
+[data-theme="light"] .settings-body{color:#333}
+[data-theme="light"] .settings-body h3{color:#444}
+[data-theme="light"] .setting-section-header h3{color:#444}
+[data-theme="light"] .setting-toggle-label{color:#333}
+[data-theme="light"] .setting-toggle-desc{color:#888}
+[data-theme="light"] .toggle-slider{background:#ddd}
+[data-theme="light"] input[type=checkbox]:checked+.toggle-slider{background:#6c8cff}
+[data-theme="light"] .workspace-active-banner{background:#f5f5f5;border-color:#e0e0e0}
+[data-theme="light"] .workspace-active-label{color:#999}
+[data-theme="light"] .workspace-active-name{color:#4a5cf7}
+[data-theme="light"] .workspace-active-path{color:#888}
+[data-theme="light"] .workspace-card{background:#fafafa;border-color:#e8e8e8}
+[data-theme="light"] .workspace-card.active{background:#e8f0fe;border-color:#6c8cff}
+[data-theme="light"] .workspace-card-name{color:#333}
+[data-theme="light"] .workspace-card-path{color:#999}
+[data-theme="light"] .workspace-add-form{background:#fafafa;border-color:#e8e8e8}
+[data-theme="light"] .workspace-add-title{color:#888}
+[data-theme="light"] .workspace-add-input{background:#fff;border-color:#ddd;color:#333}
+[data-theme="light"] .workspace-add-input:focus{border-color:#6c8cff}
+[data-theme="light"] .form-error{color:#d32f2f}
+[data-theme="light"] .about-row{border-color:#f0f0f0}
+[data-theme="light"] .about-label{color:#999}
+[data-theme="light"] .about-value{color:#555}
+[data-theme="light"] .btn-add-model{color:#888;border-color:#ddd}
+[data-theme="light"] .btn-add-model:hover{border-color:#6c8cff;color:#6c8cff}
+[data-theme="light"] .btn-small{border-color:#ddd;color:#666}
+[data-theme="light"] .btn-small:hover{border-color:#6c8cff;color:#000}
+[data-theme="light"] .btn-small.primary{background:#e8f0fe;border-color:#6c8cff;color:#4a5cf7}
+[data-theme="light"] .btn-small.primary:hover{background:#6c8cff;color:#fff}
+[data-theme="light"] .btn-small.danger{border-color:#fcc;color:#d32f2f}
+[data-theme="light"] .btn-small.danger:hover{background:#ffebee;border-color:#d32f2f}
+
+/* ── Light theme: Welcome Workspace Bar ─────────── */
+[data-theme="light"] .welcome-workspace-bar{background:#fff;border-color:#ddd}
+[data-theme="light"] .welcome-workspace-name{color:#333}
+[data-theme="light"] .welcome-workspace-path{color:#888}
+[data-theme="light"] .welcome-workspace-btn{border-color:#ddd;color:#666}
+[data-theme="light"] .welcome-workspace-btn:hover{border-color:#6c8cff;color:#333}
+[data-theme="light"] .welcome-workspace-btn.primary{background:#e8f0fe;border-color:#6c8cff;color:#4a5cf7}
+[data-theme="light"] .welcome-workspace-btn.primary:hover{background:#6c8cff;color:#fff}
+[data-theme="light"] .welcome-ws-dropdown{background:#fff;border-color:#ddd;box-shadow:0 4px 16px rgba(0,0,0,.1)}
+[data-theme="light"] .welcome-ws-item:hover{background:#f5f5f5}
+[data-theme="light"] .welcome-ws-item.active{background:#e8f0fe}
+[data-theme="light"] .welcome-ws-item-name{color:#333}
+[data-theme="light"] .welcome-ws-item-path{color:#999}
 
 /* ── SSH Panel ──────────────────────────────────── */
 .ssh-panel{padding:12px;overflow-y:auto;height:100%}

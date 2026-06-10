@@ -2,6 +2,15 @@
 
 export type ModelProvider = 'Claude' | 'DeepSeek' | 'OpenAI' | 'Custom'
 
+/** 工作空间配置 */
+export interface WorkspaceConfig {
+  id: string
+  name: string
+  path: string
+  isActive: boolean
+  createdAt: string
+}
+
 /** 完整模型配置（存储到 JSON，apiKey 为明文） */
 export interface ModelConfig {
   id: string           // unique, e.g. "deepseek-v3", "claude-sonnet"
@@ -33,6 +42,7 @@ export interface AppSettings {
   defaultGroupChat?: boolean // 默认聊天模式：true=群聊 false=单聊
   sshServers: import('./ssh').SshServerConfig[]       // SSH 服务器配置（明文密钥—永不出主进程）
   deployTargets: import('./ssh').DeployTarget[]        // 部署目标配置
+  workspaces?: WorkspaceConfig[]                       // 工作空间列表
 }
 
 /** 脱敏后的应用设置（发送到渲染进程） */
@@ -44,4 +54,5 @@ export interface AppSettingsSafe {
   defaultGroupChat?: boolean
   sshServers: import('./ssh').SshServerConfigSafe[]    // 脱敏后的 SSH 配置
   deployTargets: import('./ssh').DeployTarget[]         // 部署目标（无敏感信息）
+  workspaces?: WorkspaceConfig[]                        // 工作空间列表
 }

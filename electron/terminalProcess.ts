@@ -8,6 +8,7 @@ try { pty = require('node-pty') } catch { /* unavailable */ }
 import { EventEmitter } from 'events'
 import fs from 'fs'
 import path from 'path'
+import { encodeClaudePath } from './utils'
 import os from 'os'
 
 // 调试日志 — 打包版 console.log 不可见，写文件
@@ -91,7 +92,7 @@ export class TerminalProcess extends EventEmitter {
     env.TERM = 'xterm-256color'
 
     // Session 目录快照
-    const encodedPath = this.encodeClaudePath(this.cwd.replace(/\\/g, '/'))
+    const encodedPath = encodeClaudePath(this.cwd.replace(/\\/g, '/'))
     const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
     let beforeFiles: Set<string> = new Set()
     try {
@@ -222,7 +223,7 @@ export class TerminalProcess extends EventEmitter {
     })
 
     // 重新发现 session 文件
-    const encodedPath = this.encodeClaudePath(this.cwd.replace(/\\/g, '/'))
+    const encodedPath = encodeClaudePath(this.cwd.replace(/\\/g, '/'))
     const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
     let beforeFiles: Set<string> = new Set()
     try {
@@ -244,13 +245,14 @@ export class TerminalProcess extends EventEmitter {
 
   kill(): void {
     this.stopJsonlWatch()
-    if (this.ptyProcess) {
+    const oldPty = this.ptyProcess  // 保存引用，防止 setTimeout 内 this.ptyProcess 被 start() 覆盖
+    this.ptyProcess = null
+    if (oldPty) {
       try {
-        if (this._claudeRunning) this.ptyProcess.write('\x03') // Ctrl+C
+        if (this._claudeRunning) oldPty.write('\x03') // Ctrl+C 优雅退出
       } catch (_e) { /* silent */ }
       setTimeout(() => {
-        try { this.ptyProcess?.kill() } catch (_e) { /* silent */ }
-        this.ptyProcess = null
+        try { oldPty.kill() } catch (_e) { /* 进程已退出 */ }
       }, 500)
     }
     this._running = false
@@ -259,9 +261,6 @@ export class TerminalProcess extends EventEmitter {
 
   // ── 私有 ────────────────────────────────────────────────
 
-  private encodeClaudePath(p: string): string {
-    return p.replace(':\\', '--').replace(':/', '--').replace(/\//g, '-').replace(/\\/g, '-')
-  }
 
   private discoverSessionFile(sessionDir: string, beforeFiles: Set<string>): void {
     debugLog(`discoverSessionFile: sessionDir=${sessionDir} sessionId=${this._sessionId} beforeCount=${beforeFiles.size}`)

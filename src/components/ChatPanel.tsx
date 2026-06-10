@@ -289,7 +289,9 @@ export const ChatPanel = forwardRef(function ChatPanel({
           }))
           assistantMessageRef.current = null
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[ChatPanel] cleanup error:', e)
+      }
       unsubEvent()
       unsubClose()
       unsubStatus?.()
@@ -419,22 +421,24 @@ export const ChatPanel = forwardRef(function ChatPanel({
 
     const finalContent = (assistantMessageRef.current?.content || '') + (streamingTextRef.current || '')
     const finalTools = Array.from(pendingTools.values())
+    // 保存消息 ID，防止在异步更新期间被清空
+    const targetMsgId = assistantMessageRef.current.id
 
     if (finalContent || finalTools.length > 0) {
       onMessagesChangeRef.current(prev => {
+        // 按 ID 精确查找流式消息（而非依赖数组末尾位置）
+        // 修复：onTaskComplete 等回调可能在流式期间插入消息，lastIndex 不可靠
+        const idx = prev.findIndex(m => m.id === targetMsgId)
+        if (idx < 0) return prev
         const updated = [...prev]
-        const lastMsg = updated[updated.length - 1]
-        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-          updated[updated.length - 1] = {
-            ...lastMsg,
-            content: finalContent,
-            thinking: thinkingRef.current,
-            toolCalls: finalTools,
-            isStreaming: false,
-          }
-          return updated
+        updated[idx] = {
+          ...updated[idx],
+          content: finalContent,
+          thinking: thinkingRef.current,
+          toolCalls: finalTools.length > 0 ? finalTools : undefined,
+          isStreaming: false,
         }
-        return prev
+        return updated
       })
     }
 
@@ -571,7 +575,7 @@ export const ChatPanel = forwardRef(function ChatPanel({
         {
           id: 'u_' + Date.now(),
           role: 'user',
-          content: isCmd ? `⚡ 命令: ${actualContent}` : content,
+          content: isCmd ? `⚡ 命令: ${actualContent}` : (content || (images?.length ? '[图片消息]' : '')),
           timestamp: Date.now(),
           agentIcon: '👑',
           agentName: '控制人',

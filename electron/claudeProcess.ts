@@ -1,19 +1,7 @@
-import { ChildProcess, spawn, execSync } from 'child_process'
+import { ChildProcess, spawn } from 'child_process'
 import { EventEmitter } from 'events'
+import { resolveClaudePath } from './utils'
 
-// Resolve claude binary path once at module level
-function resolveClaudePath(): string {
-  try {
-    if (process.platform === 'win32') {
-      const out = execSync('where claude.cmd', { timeout: 5000, windowsHide: true })
-      const lines = out.toString().trim().split('\n')
-      return lines[0]?.trim() || 'claude.cmd'
-    }
-    return 'claude'
-  } catch {
-    return process.platform === 'win32' ? 'claude.cmd' : 'claude'
-  }
-}
 const CLAUDE_BIN = resolveClaudePath()
 
 export interface ClaudeProcessOptions {
@@ -183,9 +171,22 @@ export class ClaudeProcess extends EventEmitter {
 
   kill(): void {
     if (this.proc) {
-      try { this.proc.kill('SIGTERM') } catch (_e) { /* silent */ }
-      setTimeout(() => { try { this.proc?.kill('SIGKILL') } catch (_e) { /* silent */ } }, 2000)
+      const proc = this.proc  // 保存引用，防止 setTimeout 前被置 null
       this.proc = null
+      try {
+        if (process.platform === 'win32') {
+          // Windows: SIGTERM → TerminateProcess；无 SIGKILL，用 taskkill /F 兜底
+          proc.kill('SIGTERM')
+          setTimeout(() => {
+            try { process.kill(proc.pid!, 'SIGTERM') } catch (_e) { /* 进程已退出 */ }
+          }, 2000)
+        } else {
+          proc.kill('SIGTERM')
+          setTimeout(() => {
+            try { proc.kill('SIGKILL') } catch (_e) { /* 进程已退出 */ }
+          }, 2000)
+        }
+      } catch (_e) { /* silent */ }
     }
     this._isRunning = false
   }
