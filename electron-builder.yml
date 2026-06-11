@@ -11,17 +11,13 @@ asarUnpack:
   - "node_modules/node-pty/**"
   - "node_modules/ssh2/**"
   - "node_modules/cpu-features/**"
-  - "node_modules/@electron/rebuild/**"
 win:
   target:
-    - portable
     - nsis
   artifactName: ${name}-${version}-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-portable:
-  artifactName: ${name}-portable-${version}.${ext}
 mac:
   target: dmg
   identity: null

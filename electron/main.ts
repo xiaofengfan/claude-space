@@ -97,6 +97,40 @@ const SESSION_NAMES_FILE = path.join(os.homedir(), '.claude', 'claude-space-sess
 
 const isDev = !app.isPackaged
 
+// Splash screen 路径：dev 时在 electron/ 目录，prod 时在同级 dist-electron/
+const SPLASH_PATH = isDev
+  ? `file://${path.join(__dirname, 'splash.html')}`
+  : `file://${path.join(__dirname, 'splash.html')}`
+
+// ── 启动画面 ────────────────────────────────────────────
+
+let splashWindow: BrowserWindow | null = null
+
+function createSplashWindow(): BrowserWindow {
+  const splash = new BrowserWindow({
+    width: 420,
+    height: 340,
+    frame: false,
+    transparent: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    backgroundColor: '#0f0f23',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+    show: true,
+  })
+
+  // 居中显示
+  splash.center()
+
+  splash.loadURL(SPLASH_PATH)
+  return splash
+}
+
 // ── 窗口创建 ────────────────────────────────────────────
 
 function createWindow(projectPath?: string): void {
@@ -117,7 +151,14 @@ function createWindow(projectPath?: string): void {
     backgroundColor: '#1a1a2e',
   })
 
-  win.on('ready-to-show', () => win.show())
+  win.on('ready-to-show', () => {
+    win.show()
+    // 关闭启动画面
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close()
+      splashWindow = null
+    }
+  })
 
   const mainWinId = win.id
 
@@ -1704,7 +1745,11 @@ function registerIPC(): void {
 app.whenReady().then(() => {
   // 启动日志
   const logFile = path.join(os.homedir(), 'claude-space-debug.log')
-  fs.writeFileSync(logFile, `[${new Date().toISOString()}] APP STARTED v1.1.1 platform=${process.platform} electron=${process.versions.electron}\n`, 'utf-8')
+  fs.writeFileSync(logFile, `[${new Date().toISOString()}] APP STARTED v1.1.5 platform=${process.platform} electron=${process.versions.electron}\n`, 'utf-8')
+
+  // 先显示启动画面，再初始化应用
+  splashWindow = createSplashWindow()
+
   applyMenu()
   registerIPC()
   createWindow()

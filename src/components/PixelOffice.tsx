@@ -160,12 +160,15 @@ export function PixelOffice({ activeProject, tasks, team, onTeamChange, availabl
   // ── 任务-员工匹配 + 状态计算 ──────────────────────
   // 核心思路：每个任务通过 agentType 映射到对应角色的员工
 
-  /** 获取分配给某员工的所有活跃任务 */
+  /** 获取分配给某员工的所有活跃任务（仅当前项目） */
   function getAgentTasks(emp: Employee): any[] {
     if (!tasks?.length) return []
 
     return tasks.filter((t: any) => {
       if (t.status === 'done') return false
+
+      // 0) 项目隔离 — 仅匹配当前项目的任务，防止跨项目状态污染
+      if (t.projectPath && activeProject?.path && t.projectPath !== activeProject.path) return false
 
       // 1) 直接 agentType 匹配（最准确）
       if (t.agentType && t.agentType === emp.agentType) return true

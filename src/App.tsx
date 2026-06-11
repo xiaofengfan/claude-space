@@ -1457,7 +1457,7 @@ export default function App() {
                   />
                 </div>
               )}
-              {rightView === 'office' && <PixelOffice activeProject={activeProject} tasks={tasks} team={team.length ? team : DEFAULT_TEAM} onTeamChange={handleTeamChange} availableModels={appSettings?.models?.map(m => ({ id: m.id, name: m.name, provider: m.provider })) || []} />}
+              {rightView === 'office' && <PixelOffice activeProject={activeProject} tasks={tasks.filter((t: TaskItem) => !t.projectPath || t.projectPath === activeProject?.path)} team={team.length ? team : DEFAULT_TEAM} onTeamChange={handleTeamChange} availableModels={appSettings?.models?.map(m => ({ id: m.id, name: m.name, provider: m.provider })) || []} />}
               {rightView === 'connection' && (
                 <div className="right-panel-scroll">
                   <ConnectionPanel
