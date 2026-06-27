@@ -92,8 +92,18 @@ export function WelcomePage({
 
   const activeWs = workspaces.find(w => w.isActive)
 
+  // 彗星路径随机切换
+  const COMET_PATHS = ['a', 'b', 'c', 'd', 'e']
+  const [cometPath, setCometPath] = useState(() => COMET_PATHS[Math.floor(Math.random() * COMET_PATHS.length)])
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCometPath(COMET_PATHS[Math.floor(Math.random() * COMET_PATHS.length)])
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [])
+
   return (
-    <div className="welcome-page">
+    <div className={`welcome-page comet-${cometPath}`}>
       <div className="welcome-center">
         {/* ── 工作空间状态栏 ── */}
         <div className="welcome-workspace-bar">

@@ -115,7 +115,7 @@ function createSplashWindow(): BrowserWindow {
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
-    backgroundColor: '#0f0f23',
+    backgroundColor: '#0d0d0d',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -148,7 +148,7 @@ function createWindow(projectPath?: string): void {
       preload: path.join(__dirname, 'preload.js'),
     },
     show: false,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#0d0d0d',
   })
 
   win.on('ready-to-show', () => {
@@ -211,7 +211,7 @@ function createFileViewerWindow(filePath: string, fileName: string, projectPath?
       preload: path.join(__dirname, 'preload.js'),
     },
     show: false,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#0d0d0d',
   })
 
   win.on('ready-to-show', () => win.show())
@@ -583,7 +583,8 @@ function registerIPC(): void {
     permissionMode?: 'auto' | 'manual'
   }): ClaudeProcess {
     const existing = sessionProcesses.get(sessionId)
-    if (existing) return existing.process
+    if (existing && existing.process.isRunning) return existing.process
+    if (existing) { sessionProcesses.delete(sessionId); existing.process.kill() }
 
     const proc = new ClaudeProcess({
       cwd: opts.projectPath,
@@ -1278,13 +1279,24 @@ function registerIPC(): void {
 
   // ── Git 操作 ────────────────────────────────────────────
 
-  function runGit(projectPath: string, args: string[]): Promise<{ success: boolean; output: string; error?: string }> {
+  function runGit(projectPath: string, args: string[], retried?: boolean): Promise<{ success: boolean; output: string; error?: string }> {
     return new Promise((resolve) => {
       let out = '', err = ''
       const child = spawn('git', args, { cwd: projectPath, windowsHide: true, timeout: 30000 })
       child.stdout?.on('data', (d: Buffer) => { out += d.toString() })
       child.stderr?.on('data', (d: Buffer) => { err += d.toString() })
-      child.on('close', (code) => resolve({ success: code === 0, output: out.trim(), error: err.trim() || undefined }))
+      child.on('close', (code) => {
+        const output = out.trim()
+        const error = err.trim() || undefined
+        // 自动清理 index.lock 后重试一次
+        if (code !== 0 && error?.includes('index.lock') && !retried) {
+          const lockFile = path.join(projectPath, '.git', 'index.lock')
+          try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile) } catch { /* ignore */ }
+          resolve(runGit(projectPath, args, true))
+          return
+        }
+        resolve({ success: code === 0, output, error })
+      })
       child.on('error', (e) => resolve({ success: false, output: '', error: e.message }))
     })
   }
@@ -1320,12 +1332,72 @@ function registerIPC(): void {
   ipcMain.handle('git:remote', async (_e, projectPath: string) => runGit(projectPath, ['remote', '-v']))
   ipcMain.handle('git:remote-set', async (_e, opts: { projectPath: string; name: string; url: string }) =>
     runGit(opts.projectPath, ['remote', 'add', opts.name, opts.url]))
+  ipcMain.handle('git:log-detail', async (_e, projectPath: string) =>
+    runGit(projectPath, ['log', '--format=%H|%ai|%an|%s', '-50']))
+  ipcMain.handle('git:show-commit', async (_e, opts: { projectPath: string; hash: string }) =>
+    runGit(opts.projectPath, ['log', '--format=╔HASH╗%H╔AUTHOR╗%an╔DATE╗%ai╔MSG╗%B╔DIFF╗', '-1', '--stat', opts.hash]))
   ipcMain.handle('git:diff', async (_e, opts: { projectPath: string; file?: string }) =>
     runGit(opts.projectPath, opts.file ? ['diff', opts.file] : ['diff', '--stat']))
   ipcMain.handle('git:show', async (_e, opts: { projectPath: string; file: string }) =>
     runGit(opts.projectPath, ['show', 'HEAD:' + opts.file]))
   ipcMain.handle('git:diff-staged', async (_e, projectPath: string) =>
     runGit(projectPath, ['diff', '--staged', '--stat']))
+  ipcMain.handle('git:remote-info', async (_e, projectPath: string) => {
+    const [remoteV, branchesR] = await Promise.all([
+      runGit(projectPath, ['remote', '-v']),
+      runGit(projectPath, ['branch', '-r']),
+    ])
+    return { success: remoteV.success || branchesR.success, output: remoteV.output, branches: branchesR.output, error: remoteV.error || branchesR.error }
+  })
+  ipcMain.handle('git:remote-log', async (_e, opts: { projectPath: string; remoteBranch?: string }) =>
+    runGit(opts.projectPath, ['log', '--oneline', '-15', '--remotes']))
+  ipcMain.handle('git:fetch', async (_e, projectPath: string) =>
+    runGit(projectPath, ['fetch', '--all', '--quiet']))
+
+  // ── 记忆文件读取（版本详情右侧面板）─────────────────
+  const MEMORY_DIR = path.join(os.homedir(), '.claude', 'projects', 'E--claudespace', 'memory')
+
+  ipcMain.handle('memory:list', async () => {
+    try {
+      const indexPath = path.join(MEMORY_DIR, 'MEMORY.md')
+      if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
+      const indexContent = fs.readFileSync(indexPath, 'utf-8')
+      const entries: { name: string; description: string; fileName: string; type?: string }[] = []
+      const linkRegex = /-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/
+      for (const line of indexContent.split('\n')) {
+        const m = line.match(linkRegex)
+        if (m) {
+          const fileName = m[2].trim()
+          const description = m[3].trim()
+          // 读取 frontmatter 获取 type
+          let type = ''
+          try {
+            const filePath = path.join(MEMORY_DIR, fileName)
+            if (fs.existsSync(filePath)) {
+              const raw = fs.readFileSync(filePath, 'utf-8')
+              const typeMatch = raw.match(/^\s*type:\s*(\S+)/m)
+              if (typeMatch) type = typeMatch[1]
+            }
+          } catch { /* ignore */ }
+          entries.push({ name: m[1].trim(), description, fileName, type: type || undefined })
+        }
+      }
+      return { success: true, entries }
+    } catch (e: any) {
+      return { success: false, entries: [], error: e.message }
+    }
+  })
+
+  ipcMain.handle('memory:read', async (_e, fileName: string) => {
+    try {
+      const filePath = path.join(MEMORY_DIR, fileName)
+      if (!fs.existsSync(filePath)) return { success: false, content: '', error: '文件不存在' }
+      const content = fs.readFileSync(filePath, 'utf-8')
+      return { success: true, content }
+    } catch (e: any) {
+      return { success: false, content: '', error: e.message }
+    }
+  })
 
   // ── 终端管理（多窗口隔离）───────────────────────────
 

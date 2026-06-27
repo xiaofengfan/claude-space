@@ -201,9 +201,18 @@ const electronAPI = {
   gitConfigSet: (opts: { projectPath: string; key: string; value: string }) => ipcRenderer.invoke('git:config-set', opts),
   gitRemote: (projectPath: string) => ipcRenderer.invoke('git:remote', projectPath),
   gitRemoteSet: (opts: { projectPath: string; name: string; url: string }) => ipcRenderer.invoke('git:remote-set', opts),
+  gitLogDetail: (projectPath: string) => ipcRenderer.invoke('git:log-detail', projectPath),
+  gitShowCommit: (opts: { projectPath: string; hash: string }) => ipcRenderer.invoke('git:show-commit', opts),
   gitDiff: (opts: { projectPath: string; file?: string }) => ipcRenderer.invoke('git:diff', opts),
   gitShow: (opts: { projectPath: string; file: string }) => ipcRenderer.invoke('git:show', opts),
   gitDiffStaged: (projectPath: string) => ipcRenderer.invoke('git:diff-staged', projectPath),
+  gitRemoteInfo: (projectPath: string) => ipcRenderer.invoke('git:remote-info', projectPath),
+  gitRemoteLog: (opts: { projectPath: string; remoteBranch?: string }) => ipcRenderer.invoke('git:remote-log', opts),
+  gitFetch: (projectPath: string) => ipcRenderer.invoke('git:fetch', projectPath),
+
+  // ── 记忆读取 ────────────────────────────────────────────
+  memoryList: () => ipcRenderer.invoke('memory:list'),
+  memoryRead: (fileName: string) => ipcRenderer.invoke('memory:read', fileName),
 
   // ── 终端管理 ────────────────────────────────────────
 

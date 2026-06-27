@@ -11,34 +11,107 @@
     width: 100vw; height: 100vh;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 40%, #16213e 100%);
+    background: #0d0d0d;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     overflow: hidden;
     -webkit-app-region: drag;
     user-select: none;
+    position: relative;
   }
 
-  /* 背景光晕 */
+  /* ── 光线动画 (科技感背景) ── */
+  .ray { position: absolute; pointer-events: none; }
+
+  /* ── 水平光线 — 从左到右扫描 ── */
+  .ray-h {
+    height: 2px; width: 0;
+    background: linear-gradient(90deg, transparent, rgba(100, 100, 120, 0.8), transparent);
+    animation: rayScanH 4s ease-in-out infinite;
+    box-shadow: 0 0 6px rgba(100, 100, 120, 0.3);
+  }
+  .ray-h:nth-child(1) { top: 20%; animation-delay: 0s; }
+  .ray-h:nth-child(2) { top: 48%; animation-delay: 1.2s; }
+  .ray-h:nth-child(3) { top: 76%; animation-delay: 2.6s; }
+
+  @keyframes rayScanH {
+    0%   { left: -10%; width: 0; opacity: 0; }
+    25%  { opacity: 1; }
+    60%  { width: 30%; opacity: 0.5; }
+    100% { left: 100%; width: 0; opacity: 0; }
+  }
+
+  /* ── 垂直光线 — 从上到下扫描 ── */
+  .ray-v {
+    width: 2px; height: 0;
+    background: linear-gradient(180deg, transparent, rgba(90, 90, 110, 0.6), transparent);
+    animation: rayScanV 5s ease-in-out infinite;
+    box-shadow: 0 0 6px rgba(90, 90, 110, 0.2);
+  }
+  .ray-v:nth-child(4) { left: 25%; animation-delay: 0.6s; }
+  .ray-v:nth-child(5) { left: 72%; animation-delay: 2.4s; }
+
+  @keyframes rayScanV {
+    0%   { top: -10%; height: 0; opacity: 0; }
+    25%  { opacity: 0.8; }
+    60%  { height: 35%; opacity: 0.4; }
+    100% { top: 100%; height: 0; opacity: 0; }
+  }
+
+  /* ── 斜光线 (对角线闪烁) ── */
+  .ray-d {
+    width: 160px; height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(80, 80, 100, 0.5), transparent);
+    transform: rotate(-30deg);
+    animation: rayDiagonal 7s ease-in-out infinite;
+    box-shadow: 0 0 8px rgba(80, 80, 100, 0.15);
+  }
+  .ray-d:nth-child(6) { top: 28%; left: -10%; animation-delay: 0.3s; }
+  .ray-d:nth-child(7) { top: 62%; left: 15%; animation-delay: 3.8s; }
+
+  @keyframes rayDiagonal {
+    0%   { transform: rotate(-30deg) translateX(-120px); opacity: 0; }
+    35%  { opacity: 0.6; }
+    70%  { opacity: 0; }
+    100% { transform: rotate(-30deg) translateX(350px); opacity: 0; }
+  }
+
+  /* ── 背景光晕 (石墨灰呼吸) ── */
   .glow {
     position: absolute;
     border-radius: 50%;
     filter: blur(80px);
     opacity: 0.15;
+    animation: glowPulse 5s ease-in-out infinite alternate;
   }
   .glow-1 {
     width: 260px; height: 260px;
-    background: #7c3aed;
-    top: -80px; left: -60px;
+    background: #4a4a5a;
+    top: -120px; left: -100px;
+    animation-delay: 0s;
   }
   .glow-2 {
-    width: 200px; height: 200px;
-    background: #3b82f6;
-    bottom: -60px; right: -40px;
+    width: 220px; height: 220px;
+    background: #3a3a4a;
+    bottom: -100px; right: -80px;
+    animation-delay: 2.5s;
+  }
+  .glow-3 {
+    width: 180px; height: 180px;
+    background: #333;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation-delay: 1.2s;
+    opacity: 0.08;
+  }
+
+  @keyframes glowPulse {
+    0%   { transform: scale(1); opacity: 0.10; }
+    100% { transform: scale(1.25); opacity: 0.22; }
   }
 
   /* Logo 区域 */
   .logo-container {
-    position: relative; z-index: 1;
+    position: relative; z-index: 2;
     display: flex; flex-direction: column;
     align-items: center; gap: 16px;
   }
@@ -46,9 +119,9 @@
   .logo-icon {
     width: 72px; height: 72px;
     border-radius: 18px;
-    background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%);
+    background: linear-gradient(135deg, #4a4a5a 0%, #333 50%, #2a2a3a 100%);
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 8px 32px rgba(124, 58, 237, 0.35);
+    box-shadow: 0 8px 32px rgba(74, 74, 90, 0.25);
   }
 
   .logo-icon svg {
@@ -58,31 +131,31 @@
   .product-name {
     font-size: 28px; font-weight: 700;
     letter-spacing: -0.5px;
-    background: linear-gradient(135deg, #e0e7ff 0%, #a5b4fc 50%, #93c5fd 100%);
+    background: linear-gradient(135deg, #ccc 0%, #aaa 50%, #888 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .product-subtitle {
-    font-size: 13px; color: rgba(148, 163, 184, 0.7);
+    font-size: 13px; color: rgba(136, 136, 136, 0.7);
     letter-spacing: 2px;
     text-transform: uppercase;
   }
 
   /* 加载指示器 */
   .loading-bar {
-    position: relative; z-index: 1;
+    position: relative; z-index: 2;
     margin-top: 36px;
     width: 180px; height: 3px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
     border-radius: 2px;
     overflow: hidden;
   }
 
   .loading-bar-fill {
     height: 100%; width: 40%;
-    background: linear-gradient(90deg, #7c3aed, #3b82f6);
+    background: linear-gradient(90deg, #4a4a5a, #666);
     border-radius: 2px;
     animation: slide 1.4s ease-in-out infinite;
   }
@@ -94,26 +167,38 @@
 
   .version {
     position: absolute; bottom: 16px;
-    font-size: 11px; color: rgba(148, 163, 184, 0.35);
+    font-size: 11px; color: rgba(136, 136, 136, 0.35);
     letter-spacing: 1px;
+    z-index: 2;
   }
 </style>
 </head>
 <body>
 
+<!-- 光线扫描动画 -->
+<div class="ray ray-h"></div>
+<div class="ray ray-h"></div>
+<div class="ray ray-h"></div>
+<div class="ray ray-v"></div>
+<div class="ray ray-v"></div>
+<div class="ray ray-d"></div>
+<div class="ray ray-d"></div>
+
+<!-- 背景光晕 -->
 <div class="glow glow-1"></div>
 <div class="glow glow-2"></div>
+<div class="glow glow-3"></div>
 
 <div class="logo-container">
   <div class="logo-icon">
     <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M24 6L6 16v16l18 10 18-10V16L24 6z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
-      <path d="M24 18l-8 5v9l8 5 8-5v-9l-8-5z" fill="rgba(255,255,255,0.2)" stroke="rgba(255,255,255,0.6)" stroke-width="1.2"/>
-      <circle cx="24" cy="24" r="3" fill="rgba(255,255,255,0.65)"/>
-      <line x1="24" y1="21" x2="24" y2="10" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
-      <line x1="24" y1="27" x2="24" y2="38" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
-      <line x1="21" y1="24" x2="10" y2="24" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
-      <line x1="27" y1="24" x2="38" y2="24" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+      <path d="M24 6L6 16v16l18 10 18-10V16L24 6z" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.25)" stroke-width="1.5"/>
+      <path d="M24 18l-8 5v9l8 5 8-5v-9l-8-5z" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
+      <circle cx="24" cy="24" r="3" fill="rgba(255,255,255,0.5)"/>
+      <line x1="24" y1="21" x2="24" y2="10" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+      <line x1="24" y1="27" x2="24" y2="38" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+      <line x1="21" y1="24" x2="10" y2="24" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+      <line x1="27" y1="24" x2="38" y2="24" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
     </svg>
   </div>
   <span class="product-name">Claude Space</span>
@@ -124,7 +209,7 @@
   <div class="loading-bar-fill"></div>
 </div>
 
-<span class="version">v1.1.6</span>
+<span class="version">v1.1.7</span>
 
 </body>
 </html>

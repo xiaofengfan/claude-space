@@ -11,13 +11,18 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
   const [log, setLog] = useState('')
   const [remote, setRemote] = useState('')
   const [config, setConfig] = useState<Record<string, string>>({})
-  const [tab, setTab] = useState<'status' | 'history' | 'config'>('status')
+  const [tab, setTab] = useState<'status' | 'history' | 'config' | 'remote'>('status')
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
   const [commitMsg, setCommitMsg] = useState('')
   const [remoteUrl, setRemoteUrl] = useState('')
   const [userName, setUserName] = useState('')
   const [userEmail, setUserEmail] = useState('')
+
+  // ── 远程数据 ──
+  const [remoteBranches, setRemoteBranches] = useState<string[]>([])
+  const [remoteLog, setRemoteLog] = useState('')
+  const [fetching, setFetching] = useState(false)
 
   const load = useCallback(async () => {
     if (!projectPath) return
@@ -37,9 +42,35 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
     setLoading(false)
   }, [projectPath])
 
+  const loadRemote = useCallback(async () => {
+    if (!projectPath) return
+    try {
+      const [info, rLog] = await Promise.all([
+        window.electronAPI.gitRemoteInfo(projectPath),
+        window.electronAPI.gitRemoteLog({ projectPath }),
+      ])
+      if (info?.success) {
+        setRemote(info.output)
+        setRemoteBranches(info.branches?.split('\n').filter(Boolean).map(b => b.trim()) || [])
+      }
+      if (rLog?.success) setRemoteLog(rLog.output)
+    } catch { /* silent */ }
+  }, [projectPath])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { if (tab === 'remote') loadRemote() }, [tab, loadRemote])
 
   const changedFiles = status.split('\n').filter(l => l.trim() && !l.startsWith('##'))
+
+  const doFetch = async () => {
+    if (!projectPath) return
+    setFetching(true)
+    setMsg('获取远程更新...')
+    const r = await window.electronAPI.gitFetch(projectPath)
+    setMsg(r?.success ? '✅ 远程已同步' : `❌ ${r?.error || '同步失败'}`)
+    setFetching(false)
+    loadRemote()
+  }
 
   return (
     <div className="git-slide-overlay" onClick={onClose}>
@@ -53,9 +84,9 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
 
         {/* Tabs */}
         <div className="git-slide-tabs">
-          {(['status', 'history', 'config'] as const).map(t => (
+          {(['status', 'history', 'remote', 'config'] as const).map(t => (
             <button key={t} className={`git-slide-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {t === 'status' ? '📋 状态' : t === 'history' ? '📜 历史' : '⚙️ 配置'}
+              {t === 'status' ? '📋 状态' : t === 'history' ? '📜 历史' : t === 'remote' ? '🌐 远程' : '⚙️ 配置'}
             </button>
           ))}
         </div>
@@ -88,6 +119,51 @@ export function GitSlidePanel({ projectPath, onClose }: Props) {
           {/* ── History Tab ── */}
           {tab === 'history' && (
             <pre className="git-output git-log-full">{log || '无记录'}</pre>
+          )}
+
+          {/* ── Remote Tab ── */}
+          {tab === 'remote' && (
+            <>
+              {msg && <div className={`git-msg ${msg.startsWith('✅') ? 'success' : 'error'}`}>{msg}</div>}
+              <div className="git-section">
+                <div className="git-section-title">🔗 远程仓库</div>
+                {remote ? <pre className="git-output">{remote}</pre> : <p className="empty-hint">未配置远程仓库</p>}
+              </div>
+              <div className="git-section">
+                <div className="git-section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  🌿 远程分支
+                  <span style={{ fontSize: 9, color: '#666', background: 'var(--bg-base)', padding: '1px 6px', borderRadius: 8, marginLeft: 'auto' }}>{remoteBranches.length}</span>
+                </div>
+                <div style={{ maxHeight: 120, overflowY: 'auto' }}>
+                  {remoteBranches.length === 0 && <p className="empty-hint" style={{ padding: '6px 0' }}>无远程分支</p>}
+                  {remoteBranches.map((br, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px', fontSize: 11, borderRadius: 3 }}>
+                      <span style={{ color: 'var(--accent-text)', fontSize: 12 }}>⎇</span>
+                      <span style={{ color: '#ccc', fontFamily: 'monospace' }}>{br}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="git-section" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="git-section-title">📜 远程提交</div>
+                <div style={{ flex: 1, overflowY: 'auto' }}>
+                  {remoteLog ? remoteLog.split('\n').filter(Boolean).map((line, i) => {
+                    const m = line.match(/^([a-f0-9]+)\s+(.*)/)
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '4px 4px', fontSize: 11, borderRadius: 3 }}>
+                        <span style={{ fontFamily: 'monospace', color: 'var(--accent-text)', flexShrink: 0, fontSize: 10, minWidth: 52 }}>{m?.[1]?.slice(0, 7) || '......'}</span>
+                        <span style={{ color: '#aaa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.[2] || line}</span>
+                      </div>
+                    )
+                  }) : <p className="empty-hint" style={{ padding: '8px 0' }}>无远程提交记录</p>}
+                </div>
+              </div>
+              <div style={{ padding: '6px 0' }}>
+                <button className="git-btn" onClick={doFetch} disabled={fetching} style={{ width: '100%' }}>
+                  {fetching ? '同步中...' : '⬇ 拉取远程更新'}
+                </button>
+              </div>
+            </>
           )}
 
           {/* ── Config Tab ── */}

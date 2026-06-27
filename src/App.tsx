@@ -140,6 +140,8 @@ export default function App() {
   const [showProjectManager, setShowProjectManager] = useState(false)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
   const [showGitPanel, setShowGitPanel] = useState(false)
+  const [showConnPanel, setShowConnPanel] = useState(false)
+  const [showSshSlidePanel, setShowSshSlidePanel] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
 
   const [projects, setProjects] = useState<ProjectInfo[]>([])
@@ -1250,7 +1252,7 @@ export default function App() {
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'docs' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
+          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'docs' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
             await handleWorkspaceSwitch(workspaceId)
           }} />
           <div className="app-body">
@@ -1435,9 +1437,7 @@ export default function App() {
                 </button>
                 <button className={rightView === 'plan' ? 'active' : ''} onClick={() => setRightView('plan')}>📋 计划</button>
                 <button className={rightView === 'office' ? 'active' : ''} onClick={() => setRightView('office')}>🏢 办公室</button>
-                <button className={rightView === 'connection' ? 'active' : ''} onClick={() => setRightView('connection')}>🔗 连接</button>
                 <button className={rightView === 'assistant' ? 'active' : ''} onClick={() => setRightView('assistant')}>🤖 助手</button>
-                <button className={rightView === 'ssh' ? 'active' : ''} onClick={() => setRightView('ssh')}>🔌 SSH</button>
               </div>
               {rightView === 'tasks' && (
                 <div className="right-panel-scroll">
@@ -1542,6 +1542,44 @@ export default function App() {
       />
       {showGitPanel && activeProject && (
         <GitSlidePanel projectPath={activeProject.path} onClose={() => setShowGitPanel(false)} />
+      )}
+      {showConnPanel && appSettings && (
+        <div className="git-slide-overlay" onClick={() => setShowConnPanel(false)}>
+          <div className="git-slide-panel" style={{ width: 480 }} onClick={e => e.stopPropagation()}>
+            <div className="git-slide-header">
+              <span className="git-slide-title">🔗 连接状态</span>
+              <button className="icon-btn" onClick={() => setShowConnPanel(false)} title="关闭">✕</button>
+            </div>
+            <div className="git-slide-body">
+              <ConnectionPanel
+                settings={appSettings}
+                claudeRunning={claudeRunning}
+                claudeConnected={claudeConnected}
+                activeSessionId={currentSessionId}
+                activeModelId={appSettings?.activeModelId || null}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {showSshSlidePanel && appSettings && (
+        <div className="git-slide-overlay" onClick={() => setShowSshSlidePanel(false)}>
+          <div className="git-slide-panel" style={{ width: 480 }} onClick={e => e.stopPropagation()}>
+            <div className="git-slide-header">
+              <span className="git-slide-title">🔌 SSH 远程</span>
+              <button className="icon-btn" onClick={() => setShowSshSlidePanel(false)} title="关闭">✕</button>
+            </div>
+            <div className="git-slide-body">
+              <SshConnectionPanel
+                settings={appSettings}
+                sshStatus={sshStatus}
+                onSshStatusChange={setSshStatus}
+                onOpenRemoteTerminal={() => setChatMode('remote-terminal')}
+                onBrowseRemoteFiles={() => setRightView('remote-files')}
+              />
+            </div>
+          </div>
+        </div>
       )}
       {pendingProject && activeProject && (
         <ProjectSwitchDialog

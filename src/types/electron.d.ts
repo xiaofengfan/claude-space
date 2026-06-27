@@ -103,9 +103,18 @@ export interface ElectronAPI {
   gitRemote: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
   gitRemoteSet: (opts: { projectPath: string; name: string; url: string }) => Promise<{ success: boolean; output: string; error?: string }>
   gitConfigSet: (opts: { projectPath: string; key: string; value: string }) => Promise<{ success: boolean; output: string; error?: string }>
+  gitLogDetail: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
+  gitShowCommit: (opts: { projectPath: string; hash: string }) => Promise<{ success: boolean; output: string; error?: string }>
   gitDiff: (opts: { projectPath: string; file?: string }) => Promise<{ success: boolean; output: string; error?: string }>
   gitShow: (opts: { projectPath: string; file: string }) => Promise<{ success: boolean; output: string; error?: string }>
   gitDiffStaged: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
+  gitRemoteInfo: (projectPath: string) => Promise<{ success: boolean; output: string; branches: string; error?: string }>
+  gitRemoteLog: (opts: { projectPath: string; remoteBranch?: string }) => Promise<{ success: boolean; output: string; error?: string }>
+  gitFetch: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
+
+  // Memory operations
+  memoryList: () => Promise<{ success: boolean; entries: { name: string; description: string; fileName: string; type?: string }[]; error?: string }>
+  memoryRead: (fileName: string) => Promise<{ success: boolean; content: string; error?: string }>
 
   // Terminal management
   terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) => Promise<{ success: boolean }>

@@ -1,17 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
+import { VersionDetailDialog } from './VersionDetailDialog'
 
 interface Props {
   projectPath?: string
 }
 
+interface CommitEntry {
+  hash: string
+  date: string
+  author: string
+  message: string
+}
+
 export function GitPanel({ projectPath }: Props) {
   const [status, setStatus] = useState<string>('')
   const [branch, setBranch] = useState<string>('')
-  const [log, setLog] = useState<string>('')
+  const [commits, setCommits] = useState<CommitEntry[]>([])
   const [commitMsg, setCommitMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
   const [isRepo, setIsRepo] = useState(true)
+  const [selectedHash, setSelectedHash] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (!projectPath) return
@@ -30,8 +39,19 @@ export function GitPanel({ projectPath }: Props) {
       } else {
         setMsg(s?.error || '获取状态失败')
       }
-      const l = await window.electronAPI.gitLog?.(projectPath)
-      if (l?.success) setLog(l.output)
+
+      // 加载详细版本列表
+      const l = await window.electronAPI.gitLogDetail?.(projectPath)
+      if (l?.success) {
+        const parsed: CommitEntry[] = l.output.split('\n')
+          .filter(line => line.includes('|'))
+          .map(line => {
+            const [hash, date, author, ...msgParts] = line.split('|')
+            return { hash: hash?.trim() || '', date: date?.trim() || '', author: author?.trim() || '', message: msgParts.join('|').trim() }
+          })
+          .filter(c => c.hash)
+        setCommits(parsed)
+      }
     } catch (e: any) { setMsg(e.message) }
     setLoading(false)
   }, [projectPath])
@@ -69,6 +89,24 @@ export function GitPanel({ projectPath }: Props) {
     refresh()
   }
 
+  function formatRelativeTime(dateStr: string): string {
+    try {
+      const d = new Date(dateStr)
+      const now = new Date()
+      const diffMs = now.getTime() - d.getTime()
+      const diffMin = Math.floor(diffMs / 60000)
+      if (diffMin < 1) return '刚刚'
+      if (diffMin < 60) return `${diffMin} 分钟前`
+      const diffHour = Math.floor(diffMin / 60)
+      if (diffHour < 24) return `${diffHour} 小时前`
+      const diffDay = Math.floor(diffHour / 24)
+      if (diffDay < 7) return `${diffDay} 天前`
+      const diffWeek = Math.floor(diffDay / 7)
+      if (diffWeek < 4) return `${diffWeek} 周前`
+      return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+    } catch { return dateStr }
+  }
+
   if (!projectPath) {
     return <div className="git-panel"><p className="empty-hint">请先选择一个项目</p></div>
   }
@@ -81,7 +119,7 @@ export function GitPanel({ projectPath }: Props) {
           <button className="icon-btn" onClick={refresh} disabled={loading} title="刷新">🔄</button>
         </div>
         <div className="git-section" style={{ textAlign: 'center', padding: 24 }}>
-          <p style={{ color: '#888', marginBottom: 12 }}>此项目不是 Git 仓库</p>
+          <p style={{ color: 'var(--accent-text)', marginBottom: 12 }}>此项目不是 Git 仓库</p>
           <button className="btn-primary" onClick={async () => {
             setLoading(true)
             const r = await window.electronAPI.gitInit?.(projectPath)
@@ -142,11 +180,45 @@ export function GitPanel({ projectPath }: Props) {
         </div>
       </div>
 
-      {/* Log */}
-      <div className="git-section">
-        <div className="git-section-title">📜 最近提交</div>
-        <pre className="git-output git-log">{log || '无记录'}</pre>
+      {/* 版本列表 - 取代旧的简单日志 */}
+      <div className="git-section" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="git-section-title" style={{ display: 'flex', alignItems: 'center' }}>
+          📜 版本列表
+          <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>
+            {commits.length} 个版本
+          </span>
+        </div>
+        <div className="version-list">
+          {commits.length === 0 && !loading && (
+            <p className="empty-hint" style={{ padding: 12 }}>无提交记录</p>
+          )}
+          {commits.map((c, i) => (
+            <div
+              key={c.hash}
+              className={`version-item ${i === 0 ? 'version-item-latest' : ''}`}
+              onClick={() => setSelectedHash(c.hash)}
+              title="点击查看版本详情"
+            >
+              <div className="version-item-row">
+                <span className="version-item-icon">{i === 0 ? '🟢' : '📄'}</span>
+                <span className="version-item-hash">{c.hash.slice(0, 7)}</span>
+                <span className="version-item-time">{formatRelativeTime(c.date)}</span>
+              </div>
+              <div className="version-item-msg">{c.message}</div>
+              <div className="version-item-author">{c.author}</div>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* 版本详情弹窗 */}
+      {selectedHash && projectPath && (
+        <VersionDetailDialog
+          projectPath={projectPath}
+          hash={selectedHash}
+          onClose={() => setSelectedHash(null)}
+        />
+      )}
     </div>
   )
 }

@@ -6,12 +6,16 @@ export function ProjectNav({
   leftView,
   onLeftViewChange,
   onGitClick,
+  onConnectionClick,
+  onSshClick,
   onWorkspaceChange,
 }: {
   project: ProjectInfo | null
   leftView: string
   onLeftViewChange: (view: string) => void
   onGitClick?: () => void
+  onConnectionClick?: () => void
+  onSshClick?: () => void
   onWorkspaceChange?: (workspaceId: string) => void  // 通知父组件切换空间+软重启
 }) {
   const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string; path: string; isActive: boolean }>>([])
@@ -90,6 +94,8 @@ export function ProjectNav({
             )}
           </div>
         )}
+        <button className="nav-action-btn" onClick={onConnectionClick} title="连接状态">🔗 连接</button>
+        <button className="nav-action-btn" onClick={onSshClick} title="SSH 远程访问">🔌 SSH</button>
         <button className="nav-action-btn" onClick={onGitClick} title="Git 版本管理">⎇ Git</button>
         <button className="nav-action-btn" disabled title="即将推出">▶ 运行</button>
         <button className="nav-action-btn" disabled title="即将推出">🐛 调试</button>
