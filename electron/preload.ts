@@ -226,6 +226,14 @@ const electronAPI = {
   knowledgeCreate: (opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => ipcRenderer.invoke('knowledge:create', opts),
   knowledgeDelete: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('knowledge:delete', opts),
 
+  // ── 开发控制台 ────────────────────────────────────────────
+  openConsoleWindow: () => ipcRenderer.invoke('console:open-window'),
+  devStart: (opts: { command: string; name: string }) => ipcRenderer.invoke('dev:start', opts),
+  devStop: () => ipcRenderer.invoke('dev:stop'),
+  onDevOutput: (callback: (data: string) => void) => { const f = (_e: any, d: string) => callback(d); ipcRenderer.on('dev:output', f); return () => ipcRenderer.removeListener('dev:output', f) },
+  onDevError: (callback: (data: string) => void) => { const f = (_e: any, d: string) => callback(d); ipcRenderer.on('dev:error', f); return () => ipcRenderer.removeListener('dev:error', f) },
+  onDevStatus: (callback: (status: { running: boolean; name: string }) => void) => { const f = (_e: any, s: { running: boolean; name: string }) => callback(s); ipcRenderer.on('dev:status', f); return () => ipcRenderer.removeListener('dev:status', f) },
+
   // ── 终端管理 ────────────────────────────────────────
 
   terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) =>
@@ -242,6 +250,8 @@ const electronAPI = {
     ipcRenderer.on('terminal:data', handler)
     return () => ipcRenderer.removeListener('terminal:data', handler)
   },
+  onConsoleLogLine: (callback: (line: string) => void) => { const f = (_e: any, l: string) => callback(l); ipcRenderer.on('console:log-line', f); return () => ipcRenderer.removeListener('console:log-line', f) },
+  getConsoleLogHistory: () => ipcRenderer.invoke('console:get-log-history'),
   onTerminalStatus: (callback: (status: any) => void) => {
     const handler = (_event: any, data: any) => callback(data)
     ipcRenderer.on('terminal:status', handler)

@@ -32,6 +32,7 @@ import { AssistantPanel } from './components/AssistantPanel'
 import { ContentRulesPanel } from './components/ContentRulesPanel'
 import { MemoryPanel } from './components/MemoryPanel'
 import { KnowledgeDialog } from './components/KnowledgeDialog'
+import { ConsolePanel } from './components/ConsolePanel'
 import { ActivityBar, VIEW_LABELS } from './components/ActivityBar'
 import { useSplitter } from './hooks/useSplitter'
 import { useTaskSync, ApprovalRequest } from './hooks/useTaskSync'
@@ -41,6 +42,7 @@ export default function App() {
   const searchParams = new URLSearchParams(window.location.search)
   const urlProject = searchParams.get('project')
   const isFileViewer = searchParams.get('fileViewer') === '1'
+  const isConsoleWindow = searchParams.get('consoleWindow') === '1'
   const viewerFilePath = searchParams.get('filePath') || ''
   const viewerFileName = searchParams.get('fileName') || ''
 
@@ -51,6 +53,11 @@ export default function App() {
       fileName={viewerFileName}
       projectPath={urlProject || undefined}
     />
+  }
+
+  // Console window: standalone console panel
+  if (isConsoleWindow) {
+    return <ConsolePanel />
   }
 
   // ── 工作空间启动选择 ────────────────────────────
@@ -143,6 +150,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showProjectManager, setShowProjectManager] = useState(false)
   const [showKnowledge, setShowKnowledge] = useState(false)
+  const [showConsole, setShowConsole] = useState(false)
+  const [consoleHeight, setConsoleHeight] = useState(200)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
   const [showGitPanel, setShowGitPanel] = useState(false)
   const [showConnPanel, setShowConnPanel] = useState(false)
@@ -1266,7 +1275,7 @@ export default function App() {
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
+          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onConsoleClick={() => setShowConsole(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
             await handleWorkspaceSwitch(workspaceId)
           }} />
           <div className="app-body">
@@ -1542,6 +1551,40 @@ export default function App() {
               )}
             </aside>
           </div>
+        </>
+      )}
+
+
+
+      {showConsole && (
+        <>
+        <div
+          className="console-bottom-drag"
+          onMouseDown={(e) => {
+            e.preventDefault()
+            const startY = e.clientY
+            const startH = consoleHeight
+            const onMove = (ev: MouseEvent) => {
+              const delta = startY - ev.clientY
+              setConsoleHeight(Math.max(100, Math.min(600, startH + delta)))
+            }
+            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+            document.addEventListener('mousemove', onMove)
+            document.addEventListener('mouseup', onUp)
+          }}
+        />
+        <div className="console-bottom-panel" style={{ height: consoleHeight + 'px' }}>
+          <div className="console-bottom-header">
+            <span style={{ fontSize: 11, fontWeight: 600 }}>🖥️ 控制台</span>
+            <span style={{ fontSize: 9, color: '#666', marginLeft: 4 }}>~/.claude/claude-space-debug.log</span>
+            <div style={{ flex: 1 }} />
+            <button className="btn btn-sm" onClick={() => window.electronAPI.openConsoleWindow?.()} title="弹出窗口">⛶ 弹出</button>
+            <button className="btn btn-sm" onClick={() => setShowConsole(false)} title="关闭">✕</button>
+          </div>
+          <div className="console-bottom-body">
+            <ConsolePanel embedded />
+          </div>
+        </div>
         </>
       )}
 

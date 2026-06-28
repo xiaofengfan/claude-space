@@ -127,6 +127,16 @@ export interface ElectronAPI {
   knowledgeCreate: (opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => Promise<{ success: boolean; fileName?: string; error?: string }>
   knowledgeDelete: (opts: { projectPath: string; fileName: string }) => Promise<{ success: boolean; error?: string }>
 
+  // Console window
+  openConsoleWindow: () => Promise<void>
+  devStart: (opts: { command: string; name: string }) => Promise<{ success: boolean; error?: string }>
+  devStop: () => Promise<{ success: boolean; error?: string }>
+  onDevOutput: (callback: (data: string) => void) => () => void
+  onDevError: (callback: (data: string) => void) => () => void
+  onDevStatus: (callback: (status: { running: boolean; name: string }) => void) => () => void
+  onConsoleLogLine: (callback: (line: string) => void) => () => void
+  getConsoleLogHistory: () => Promise<{ success: boolean; lines: string[]; error?: string }>
+
   // Terminal management
   terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) => Promise<{ success: boolean }>
   terminalRestart: () => Promise<{ success: boolean }>

@@ -1,3 +1,15 @@
+
+// ── 全局日志缓冲区（供控制台窗口使用）────────────────
+const LOG_BUFFER_SIZE = 5000
+const logBuffer: string[] = []
+
+function pushLog(text: string, source: string = 'terminal') {
+  const line = `[${new Date().toLocaleTimeString()}][${source}] ${text}`
+  logBuffer.push(line)
+  if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.splice(0, logBuffer.length - LOG_BUFFER_SIZE)
+  // 广播到所有窗口
+  for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('console:log-line', line) } catch {} }
+}
 /**
  * Electron 主进程 — 窗口管理、IPC 路由、Claude 进程生命周期。
  */
@@ -1598,6 +1610,54 @@ function registerIPC(): void {
     } catch (e: any) { return { success: false, error: e.message } }
   })
 
+  
+  ipcMain.handle('console:get-log-history', async () => { return { success: true, lines: [...logBuffer] } })
+
+  // ── 开发进程管理 ────────────────────────────────────
+  let devProcess: any = null
+
+  ipcMain.handle('dev:start', async (_e: any, opts: { command: string; name: string }) => {
+    if (devProcess) { try { devProcess.kill() } catch {}; devProcess = null }
+    try {
+      const { spawn } = require('child_process')
+      devProcess = spawn(opts.command, [], { shell: true, cwd: process.cwd(), env: { ...process.env } })
+      devProcess.stdout?.on('data', (d: Buffer) => { broadcastToAllWindows('dev:output', d.toString()) })
+      devProcess.stderr?.on('data', (d: Buffer) => { broadcastToAllWindows('dev:error', d.toString()) })
+      devProcess.on('exit', () => { devProcess = null; broadcastToAllWindows('dev:status', { running: false, name: opts.name }) })
+      broadcastToAllWindows('dev:status', { running: true, name: opts.name })
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('dev:stop', async () => {
+    if (devProcess) { try { devProcess.kill() } catch {}; devProcess = null; return { success: true } }
+    return { success: false, error: 'No running process' }
+  })
+
+  function broadcastToAllWindows(channel: string, ...args: any[]) {
+    for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, ...args) } catch {} }
+  }
+
+  // ── 控制台窗口 ────────────────────────────────────
+  ipcMain.handle('console:open-window', async () => {
+    try {
+      const win = new BrowserWindow({
+        width: 1200, height: 700,
+        title: '开发者控制台',
+        backgroundColor: '#0d0d0d',
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }
+      })
+      if (process.env.VITE_DEV_SERVER_URL) {
+        win.loadURL(process.env.VITE_DEV_SERVER_URL + '?consoleWindow=1')
+      } else {
+        win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { consoleWindow: '1' } })
+      }
+      win.on('closed', () => { const idx = windows.indexOf(win); if (idx >= 0) windows.splice(idx, 1)(w => w !== win) })
+      windows.push(win)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
   // ── 终端管理（多窗口隔离）───────────────────────────
 
   // 根据事件来源窗口查找对应终端（h: windowTerminals → terminalProcesses → terminalProcess）
@@ -1691,7 +1751,7 @@ function registerIPC(): void {
 
     // 事件广播到所有绑定此终端的窗口（支持多窗口共享终端）
     proc.on('terminal-data', (data: string) => {
-      broadcastTerminalEvent(sid, 'terminal:data', data)
+      broadcastTerminalEvent(sid, 'terminal:data', data); pushLog(data, 'terminal'); if (devProcess) pushLog(data, 'dev')
     })
     proc.on('event', (event: any) => {
       if (event.type === 'assistant' || event.type === 'user') {
