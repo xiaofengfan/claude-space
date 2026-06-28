@@ -67,7 +67,7 @@ export function VersionDetailDialog({ projectPath, hash, onClose }: Props) {
 
   async function loadMemoryList() {
     try {
-      const r = await window.electronAPI.memoryList()
+      const r = await window.electronAPI.memoryList(projectPath)
       if (r?.success) {
         setMemoryEntries(r.entries)
         // 找到与当前项目最相关的记忆（匹配 projectPath 或 "claude-space"）
@@ -92,7 +92,7 @@ export function VersionDetailDialog({ projectPath, hash, onClose }: Props) {
     setMemoryLoading(fileName)
     setMemoryContent('')
     try {
-      const r = await window.electronAPI.memoryRead(fileName)
+      const r = await window.electronAPI.memoryRead({ projectPath, fileName })
       if (r?.success) {
         setMemoryContent(r.content)
       }

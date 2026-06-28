@@ -29,6 +29,10 @@ import { ApprovalDialog } from './components/ApprovalDialog'
 import { FileEditor } from './components/FileEditor'
 import { FileViewerWindow } from './components/FileViewerWindow'
 import { AssistantPanel } from './components/AssistantPanel'
+import { ContentRulesPanel } from './components/ContentRulesPanel'
+import { MemoryPanel } from './components/MemoryPanel'
+import { KnowledgeDialog } from './components/KnowledgeDialog'
+import { ActivityBar, VIEW_LABELS } from './components/ActivityBar'
 import { useSplitter } from './hooks/useSplitter'
 import { useTaskSync, ApprovalRequest } from './hooks/useTaskSync'
 import { WorkspaceSelectDialog } from './components/WorkspaceSelectDialog'
@@ -134,10 +138,11 @@ export default function App() {
   const [theme, setThemeState] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem('claude-space-theme') as 'dark' | 'light') || 'dark'
   )
-  const [leftView, setLeftView] = useState<'files' | 'sessions' | 'docs' | 'git'>('files')
+  const [leftView, setLeftView] = useState<'files' | 'sessions' | 'rules' | 'memory' | 'git'>('files')
   const [rightView, setRightView] = useState<'tasks' | 'office' | 'connection' | 'plan' | 'assistant' | 'ssh' | 'remote-files' | 'deploy'>('tasks')
   const [showSettings, setShowSettings] = useState(false)
   const [showProjectManager, setShowProjectManager] = useState(false)
+  const [showKnowledge, setShowKnowledge] = useState(false)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
   const [showGitPanel, setShowGitPanel] = useState(false)
   const [showConnPanel, setShowConnPanel] = useState(false)
@@ -374,7 +379,7 @@ export default function App() {
   const [terminalClaudeRunning, setTerminalClaudeRunning] = useState(false)
   const [sshStatus, setSshStatus] = useState<{ serverId: string | null; status: string; error: string }>({ serverId: null, status: 'disconnected', error: '' })
 
-  const leftSplitter = useSplitter({ direction: 'horizontal', initialSize: 260, minSize: 180, maxSize: 420 })
+  const leftSplitter = useSplitter({ direction: 'horizontal', initialSize: 290, minSize: 180, maxSize: 420 })
   const rightSplitter = useSplitter({ direction: 'horizontal', initialSize: 340, minSize: 280, maxSize: 560, reverse: true })
 
   // Theme effect
@@ -1171,7 +1176,7 @@ export default function App() {
       label: '视图', items: [
         { label: '项目文件', shortcut: 'Ctrl+1', action: () => setLeftView('files') },
         { label: '会话历史', shortcut: 'Ctrl+2', action: () => { if (activeProject) loadSessions(activeProject.path); setLeftView('sessions') } },
-        { label: '项目文档', shortcut: 'Ctrl+3', action: () => setLeftView('docs') },
+        { label: '项目规则', shortcut: 'Ctrl+3', action: () => setLeftView('rules') },
         ...(activeProject ? [
           { divider: true, label: '' },
           { label: '任务看板', shortcut: 'Ctrl+4', action: () => setRightView('tasks') },
@@ -1191,6 +1196,15 @@ export default function App() {
         { divider: true, label: '' },
         { label: `Model: ${statusInfo.model || '默认'}`, disabled: true },
         { label: `Tokens: ${statusInfo.tokens.toLocaleString()}`, disabled: true },
+      ],
+    },
+    {
+      label: '知识', items: [
+        { label: '📊 知识管理', action: () => setShowKnowledge(true) },
+        { label: '🧠 记忆面板', shortcut: '', action: () => setLeftView('memory') },
+        { label: '📋 项目规则', shortcut: '', action: () => setLeftView('rules') },
+        { divider: true, label: '' },
+        { label: `记忆数: ${(() => { try { return '统计中' } catch { return '' } })()}`, disabled: true },
       ],
     },
     {
@@ -1252,39 +1266,50 @@ export default function App() {
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'docs' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
+          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
             await handleWorkspaceSwitch(workspaceId)
           }} />
           <div className="app-body">
-            <aside className="sidebar left-sidebar" style={{ width: leftSplitter.size }}>
-              <div className="sidebar-tabs">
-                <button className={leftView === 'files' ? 'active' : ''} onClick={() => setLeftView('files')}>📁 项目</button>
-                <button className={leftView === 'sessions' ? 'active' : ''} onClick={() => { loadSessions(activeProject.path); setLeftView('sessions') }}>💬 会话</button>
-                <button className={leftView === 'docs' ? 'active' : ''} onClick={() => setLeftView('docs')}>📝 文档</button>
-                <button className={leftView === 'git' ? 'active' : ''} onClick={() => setLeftView('git')}>⎇ Git</button>
-              </div>
-              {leftView === 'files' && (
-                <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="files" onOpenFile={handleOpenFile} projectPath={activeProject?.path} />
-              )}
-              {leftView === 'sessions' && (
-                <SessionList
-                  sessions={sessions}
-                  activeProject={activeProject}
-                  activeSessionId={currentSessionId}
-                  activeSessions={activeSessions}
-                  sessionNames={sessionNames}
-                  onSelectSession={(sid) => switchToSession(sid)}
-                  onNewSession={createNewSession}
-                  onDeleteSession={deleteSession}
-                />
-              )}
-              {leftView === 'docs' && (
-                <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="docs" onOpenFile={handleOpenFile} projectPath={activeProject?.path} />
-              )}
-              {leftView === 'git' && (
-                <GitPanel projectPath={activeProject?.path} />
-              )}
-            </aside>
+            {/* VS Code 风格左侧栏: ActivityBar + SideBar */}
+            <div style={{ display: 'flex', flexShrink: 0 }}>
+              <ActivityBar activeView={leftView} onViewChange={(v) => {
+                if (v === 'sessions') loadSessions(activeProject.path)
+                setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'git')
+              }} />
+              <aside className="sidebar left-sidebar" style={{ width: Math.max(leftSplitter.size - 48, 132) }}>
+                <div className="sidebar-header">{VIEW_LABELS[leftView] || ''}</div>
+                <div className="sidebar-content">
+                  {leftView === 'files' && (
+                    <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="files" onOpenFile={handleOpenFile} projectPath={activeProject?.path} />
+                  )}
+                  {leftView === 'sessions' && (
+                    <SessionList
+                      sessions={sessions} activeProject={activeProject} activeSessionId={currentSessionId}
+                      activeSessions={activeSessions} sessionNames={sessionNames}
+                      onSelectSession={(sid) => switchToSession(sid)} onNewSession={createNewSession} onDeleteSession={deleteSession}
+                    />
+                  )}
+                  {leftView === 'rules' && (
+                    <ContentRulesPanel activeProjectPath={activeProject?.path} theme={theme} onOpenFile={handleOpenFile} />
+                  )}
+                  {leftView === 'memory' && (
+                    <MemoryPanel theme={theme} activeProjectPath={activeProject?.path} />
+                  )}
+                  {leftView === 'git' && (
+                    <GitPanel projectPath={activeProject?.path} onCommitSuccess={(msg) => {
+                      if (appSettings?.autoMemory && activeProject?.path) {
+                        window.electronAPI.memoryAutoCreate({
+                          projectPath: activeProject.path,
+                          title: `Git: ${msg.slice(0, 80)}`,
+                          content: `## 提交信息\n\n${msg}\n\n## 自动保存\n\n此记忆由 Git 提交自动创建于 ${new Date().toLocaleString('zh-CN')}`,
+                          type: 'project',
+                        }).catch(() => {})
+                      }
+                    }} />
+                  )}
+                </div>
+              </aside>
+            </div>
 
             <div className="splitter splitter-h" onMouseDown={leftSplitter.onMouseDown} />
 
@@ -1333,6 +1358,7 @@ export default function App() {
               {/* ── Chat 面板（始终挂载，用 display 切换，防止卸载丢失状态）── */}
               <div style={{ display: chatMode === 'chat' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
                 <ChatPanel messages={messages} streamingText={streamingText} activeProject={activeProject}
+                  autoMemory={appSettings?.autoMemory} activeProjectPath={activeProject?.path}
                   sessionId={currentSessionId} onSessionIdChange={setCurrentSessionId}
                   onMessagesChange={setMessages} onStreamingText={setStreamingText}
                   onClaudeRunning={setClaudeRunning} onClaudeConnected={setClaudeConnected} onStatusInfo={setStatusInfo}
@@ -1534,6 +1560,13 @@ export default function App() {
         setShowSettings(false)
         await handleWorkspaceSwitch(id)
       }} />}
+      {showKnowledge && activeProject?.path && (
+        <KnowledgeDialog
+          theme={theme}
+          projectPath={activeProject.path}
+          onClose={() => setShowKnowledge(false)}
+        />
+      )}
       {showNewProjectDialog && <NewProjectDialog onClose={() => setShowNewProjectDialog(false)} onCreate={handleCreateProject} />}
       <ApprovalDialog
         approval={pendingApproval}

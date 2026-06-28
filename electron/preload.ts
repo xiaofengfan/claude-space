@@ -133,6 +133,8 @@ const electronAPI = {
 
   createFile: (opts: { dirPath: string; fileName: string; content?: string }) => ipcRenderer.invoke('file:create', opts),
 
+  deleteFile: (filePath: string) => ipcRenderer.invoke('file:delete', filePath),
+
   openFileInNewWindow: (opts: { filePath: string; fileName: string; projectPath?: string }) =>
     ipcRenderer.invoke('file:open-in-new-window', opts),
 
@@ -210,9 +212,19 @@ const electronAPI = {
   gitRemoteLog: (opts: { projectPath: string; remoteBranch?: string }) => ipcRenderer.invoke('git:remote-log', opts),
   gitFetch: (projectPath: string) => ipcRenderer.invoke('git:fetch', projectPath),
 
-  // ── 记忆读取 ────────────────────────────────────────────
-  memoryList: () => ipcRenderer.invoke('memory:list'),
-  memoryRead: (fileName: string) => ipcRenderer.invoke('memory:read', fileName),
+  // ── 记忆管理（项目隔离）────────────────────────────────
+  memoryList: (projectPath: string) => ipcRenderer.invoke('memory:list', projectPath),
+  memoryRead: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('memory:read', opts),
+  memoryWrite: (opts: { projectPath: string; fileName: string; content: string }) => ipcRenderer.invoke('memory:write', opts),
+  memoryCreate: (opts: { projectPath: string; fileName: string; name: string; description: string; type: string; content: string }) => ipcRenderer.invoke('memory:create', opts),
+  memoryDelete: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('memory:delete', opts),
+  memoryAutoCreate: (opts: { projectPath: string; title: string; content: string; type?: string }) => ipcRenderer.invoke('memory:auto-create', opts),
+
+  // ── 知识管理 ────────────────────────────────────────────
+  knowledgeList: (projectPath: string) => ipcRenderer.invoke('knowledge:list', projectPath),
+  knowledgeRead: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('knowledge:read', opts),
+  knowledgeCreate: (opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => ipcRenderer.invoke('knowledge:create', opts),
+  knowledgeDelete: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('knowledge:delete', opts),
 
   // ── 终端管理 ────────────────────────────────────────
 

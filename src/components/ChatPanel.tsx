@@ -26,6 +26,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
   terminalClaudeRunning,
   onLaunchClaudeForChat,
   autoApproval,
+  autoMemory,
+  activeProjectPath,
   onAutoApprovalChange,
   onMentionAgent,
   // ── 群聊扩展 ──
@@ -57,6 +59,8 @@ export const ChatPanel = forwardRef(function ChatPanel({
   terminalClaudeRunning?: boolean
   onLaunchClaudeForChat?: () => Promise<void>
   autoApproval?: boolean
+  autoMemory?: boolean
+  activeProjectPath?: string
   onAutoApprovalChange?: (v: boolean) => void
   onMentionAgent?: (agentName: string, content: string) => void
   // ── 群聊扩展 ──
@@ -409,6 +413,23 @@ export const ChatPanel = forwardRef(function ChatPanel({
         tokens: event.usage.input_tokens + event.usage.output_tokens,
         cost: event.total_cost_usd || 0,
       })
+    }
+
+    // Auto-memory: save session turn as memory
+    if (event.subtype === 'success' && autoMemory && activeProjectPath) {
+      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')
+      const lastAsstMsg = [...messages].reverse().find(m => m.role === 'assistant')
+      if (lastUserMsg) {
+        const title = String(lastUserMsg.content || '').slice(0, 80).replace(/[\n\r]/g, ' ').trim()
+        const asstContent = String(lastAsstMsg?.content || '').slice(0, 2000)
+        const content = `## 用户提问\n\n${String(lastUserMsg.content || '').slice(0, 3000)}\n\n## AI 回复\n\n${asstContent}`
+        window.electronAPI.memoryAutoCreate({
+          projectPath: activeProjectPath,
+          title: title || '会话记录',
+          content,
+          type: 'project',
+        }).catch(() => {})
+      }
     }
   }
 

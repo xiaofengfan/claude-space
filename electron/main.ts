@@ -916,8 +916,36 @@ function registerIPC(): void {
   ipcMain.handle('file:create', async (_event, opts: { dirPath: string; fileName: string; content?: string }) => {
     try {
       const filePath = path.join(opts.dirPath, opts.fileName)
+      // ensure the directory exists
+      const dir = path.dirname(filePath)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
       fs.writeFileSync(filePath, opts.content || '', 'utf-8')
       return { success: true, filePath }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:delete', async (_event, filePath: string) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: '文件不存在' }
+      }
+      // Safety: prevent deleting critical system directories
+      const normalized = path.normalize(filePath)
+      const homedir = path.normalize(os.homedir())
+      if (normalized === homedir || normalized === path.normalize(process.cwd())) {
+        return { success: false, error: '不允许删除此路径' }
+      }
+      // Prevent deleting directories (only allow file deletion)
+      const stat = fs.statSync(filePath)
+      if (stat.isDirectory()) {
+        return { success: false, error: '不允许删除目录' }
+      }
+      fs.unlinkSync(filePath)
+      return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
@@ -1354,49 +1382,220 @@ function registerIPC(): void {
   ipcMain.handle('git:fetch', async (_e, projectPath: string) =>
     runGit(projectPath, ['fetch', '--all', '--quiet']))
 
-  // ── 记忆文件读取（版本详情右侧面板）─────────────────
-  const MEMORY_DIR = path.join(os.homedir(), '.claude', 'projects', 'E--claudespace', 'memory')
+  // ── 记忆管理（项目隔离：{projectPath}/.claude/memory/）───
 
-  ipcMain.handle('memory:list', async () => {
+  function getMemoryDir(projectPath: string): string {
+    const encoded = encodeClaudePath(projectPath)
+    return path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
+  }
+
+  ipcMain.handle('memory:list', async (_e, projectPath: string) => {
     try {
-      const indexPath = path.join(MEMORY_DIR, 'MEMORY.md')
+      const memDir = getMemoryDir(projectPath)
+      const indexPath = path.join(memDir, 'MEMORY.md')
       if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
       const indexContent = fs.readFileSync(indexPath, 'utf-8')
-      const entries: { name: string; description: string; fileName: string; type?: string }[] = []
+      const entries: { name: string; description: string; fileName: string; type?: string; mtime?: string }[] = []
       const linkRegex = /-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/
       for (const line of indexContent.split('\n')) {
         const m = line.match(linkRegex)
         if (m) {
           const fileName = m[2].trim()
           const description = m[3].trim()
-          // 读取 frontmatter 获取 type
           let type = ''
+          let mtime = ''
           try {
-            const filePath = path.join(MEMORY_DIR, fileName)
+            const filePath = path.join(memDir, fileName)
             if (fs.existsSync(filePath)) {
+              const stat = fs.statSync(filePath)
+              mtime = stat.mtime.toISOString()
               const raw = fs.readFileSync(filePath, 'utf-8')
               const typeMatch = raw.match(/^\s*type:\s*(\S+)/m)
               if (typeMatch) type = typeMatch[1]
             }
           } catch { /* ignore */ }
-          entries.push({ name: m[1].trim(), description, fileName, type: type || undefined })
+          entries.push({ name: m[1].trim(), description, fileName, type: type || undefined, mtime: mtime || undefined })
         }
       }
+      // Sort by mtime descending (newest first)
+      entries.sort((a, b) => {
+        if (!a.mtime) return 1
+        if (!b.mtime) return -1
+        return b.mtime.localeCompare(a.mtime)
+      })
       return { success: true, entries }
     } catch (e: any) {
       return { success: false, entries: [], error: e.message }
     }
   })
 
-  ipcMain.handle('memory:read', async (_e, fileName: string) => {
+  ipcMain.handle('memory:read', async (_e, opts: { projectPath: string; fileName: string }) => {
     try {
-      const filePath = path.join(MEMORY_DIR, fileName)
+      const memDir = getMemoryDir(opts.projectPath)
+      const filePath = path.join(memDir, opts.fileName)
       if (!fs.existsSync(filePath)) return { success: false, content: '', error: '文件不存在' }
       const content = fs.readFileSync(filePath, 'utf-8')
       return { success: true, content }
     } catch (e: any) {
       return { success: false, content: '', error: e.message }
     }
+  })
+
+  ipcMain.handle('memory:write', async (_e, opts: { projectPath: string; fileName: string; content: string }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
+      const filePath = path.join(memDir, opts.fileName)
+      fs.writeFileSync(filePath, opts.content, 'utf-8')
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('memory:create', async (_e, opts: {
+    projectPath: string; fileName: string; name: string; description: string; type: string; content: string
+  }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
+      const sessionId = 'manual_' + Date.now().toString(36)
+      const slug = opts.name.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '') || 'untitled'
+      const fullContent = `---\nname: ${slug}\ndescription: ${opts.description}\nmetadata:\n  type: ${opts.type}\n  originSessionId: ${sessionId}\n---\n\n${opts.content}`
+      const filePath = path.join(memDir, opts.fileName)
+      fs.writeFileSync(filePath, fullContent, 'utf-8')
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      let indexContent = ''
+      if (fs.existsSync(indexPath)) indexContent = fs.readFileSync(indexPath, 'utf-8')
+      const newLine = `- [${opts.name}](${opts.fileName}) — ${opts.description}\n`
+      if (indexContent.trim()) {
+        const fmEnd = indexContent.indexOf('---\n', 4)
+        if (indexContent.startsWith('---') && fmEnd > 0) {
+          indexContent = indexContent.slice(0, fmEnd + 4) + '\n' + newLine + indexContent.slice(fmEnd + 4)
+        } else { indexContent += '\n' + newLine }
+      } else { indexContent = `# 记忆索引\n\n${newLine}` }
+      fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      return { success: true, filePath }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('memory:auto-create', async (_e, opts: {
+    projectPath: string; title: string; content: string; type?: string
+  }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
+      const timestamp = Date.now()
+      const fileName = `auto-${timestamp.toString(36)}.md`
+      const slug = opts.title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'auto-memory'
+      const desc = opts.title.length > 60 ? opts.title.slice(0, 60) + '...' : opts.title
+      const fullContent = `---\nname: ${slug}\ndescription: ${desc}\nmetadata:\n  type: ${opts.type || 'project'}\n  origin: auto-save\n  originSessionId: auto_${timestamp.toString(36)}\n---\n\n# ${opts.title}\n\n> 自动保存时间：${new Date().toLocaleString('zh-CN')}\n\n${opts.content}`
+      fs.writeFileSync(path.join(memDir, fileName), fullContent, 'utf-8')
+      // Update MEMORY.md index
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      let indexContent = ''
+      if (fs.existsSync(indexPath)) indexContent = fs.readFileSync(indexPath, 'utf-8')
+      const newLine = `- [${opts.title}](${fileName}) — ${desc}\n`
+      if (indexContent.trim()) {
+        const fmEnd = indexContent.indexOf('---\n', 4)
+        if (indexContent.startsWith('---') && fmEnd > 0) {
+          indexContent = indexContent.slice(0, fmEnd + 4) + '\n' + newLine + indexContent.slice(fmEnd + 4)
+        } else { indexContent += '\n' + newLine }
+      } else { indexContent = `# 记忆索引\n\n${newLine}` }
+      fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      return { success: true, fileName }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('memory:delete', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      const filePath = path.join(memDir, opts.fileName)
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      if (fs.existsSync(indexPath)) {
+        let indexContent = fs.readFileSync(indexPath, 'utf-8')
+        const escaped = opts.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        indexContent = indexContent.replace(new RegExp(`^- \\[.+?\\]\\(${escaped}\\) — .+$`, 'gm'), '').replace(/\n{3,}/g, '\n\n')
+        fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 知识管理（{projectPath}/.claude/knowledge/）───────
+  function getKnowledgeDir(projectPath: string): string {
+    return path.join(projectPath, '.claude', 'knowledge')
+  }
+
+  ipcMain.handle('knowledge:read', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const fp = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
+      if (!fs.existsSync(fp)) return { success: false, content: '', error: '文件不存在' }
+      return { success: true, content: fs.readFileSync(fp, 'utf-8') }
+    } catch (e: any) { return { success: false, content: '', error: e.message } }
+  })
+
+  ipcMain.handle('knowledge:list', async (_e, projectPath: string) => {
+    try {
+      const knDir = getKnowledgeDir(projectPath)
+      const indexPath = path.join(knDir, 'KNOWLEDGE.md')
+      if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
+      const content = fs.readFileSync(indexPath, 'utf-8')
+      const entries: any[] = []
+      for (const line of content.split('\n')) {
+        const m = line.match(/-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/)
+        if (m) {
+          const fileName = m[2].trim()
+          const filePath = path.join(knDir, fileName)
+          let type = 'general', tags = '', status = 'draft', mtime = '', sources = ''
+          try {
+            if (fs.existsSync(filePath)) {
+              const raw = fs.readFileSync(filePath, 'utf-8')
+              const st = fs.statSync(filePath); mtime = st.mtime.toISOString()
+              const t = raw.match(/^type:\s*(\S+)/m); if (t) type = t[1]
+              const tg = raw.match(/^tags:\s*(.+)/m); if (tg) tags = tg[1]
+              const s = raw.match(/^status:\s*(\S+)/m); if (s) status = s[1]
+              const src = raw.match(/^sources:\s*(.+)/m); if (src) sources = src[1]
+            }
+          } catch { /* ignore */ }
+          entries.push({ name: m[1].trim(), fileName, description: m[3].trim(), type, tags, status, mtime, sources })
+        }
+      }
+      entries.sort((a: any, b: any) => (b.mtime || '').localeCompare(a.mtime || ''))
+      return { success: true, entries }
+    } catch (e: any) { return { success: false, entries: [], error: e.message } }
+  })
+
+  ipcMain.handle('knowledge:create', async (_e, opts: {
+    projectPath: string; title: string; content: string; type: string; tags: string; sources?: string
+  }) => {
+    try {
+      const knDir = getKnowledgeDir(opts.projectPath)
+      if (!fs.existsSync(knDir)) fs.mkdirSync(knDir, { recursive: true })
+      const fileName = opts.title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) + '.md'
+      const now = new Date().toISOString().split('T')[0]
+      const fullContent = `---\ntitle: ${opts.title}\ntype: ${opts.type}\ntags: ${opts.tags}\nstatus: draft\ncreated: ${now}\nupdated: ${now}\nsources: ${opts.sources || ''}\n---\n\n${opts.content}`
+      fs.writeFileSync(path.join(knDir, fileName), fullContent, 'utf-8')
+      const indexPath = path.join(knDir, 'KNOWLEDGE.md')
+      let idx = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf-8') : '# 知识索引\n\n'
+      idx += `- [${opts.title}](${fileName}) — ${opts.type} | ${opts.tags}\n`
+      fs.writeFileSync(indexPath, idx, 'utf-8')
+      return { success: true, fileName }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('knowledge:delete', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const fp = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
+      if (fs.existsSync(fp)) fs.unlinkSync(fp)
+      const indexPath = path.join(getKnowledgeDir(opts.projectPath), 'KNOWLEDGE.md')
+      if (fs.existsSync(indexPath)) {
+        let c = fs.readFileSync(indexPath, 'utf-8')
+        const esc = opts.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        c = c.replace(new RegExp(`^- \\[.+?\\]\\(${esc}\\) — .+$`, 'gm'), '').replace(/\n{3,}/g, '\n\n')
+        fs.writeFileSync(indexPath, c, 'utf-8')
+      }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
   })
 
   // ── 终端管理（多窗口隔离）───────────────────────────

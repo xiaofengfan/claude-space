@@ -324,6 +324,17 @@ export function SettingsDialog({
 
                 <div className="setting-toggle-row" style={{ borderTop: '1px solid #2a2a4a', paddingTop: 16, marginTop: 16 }}>
                   <div className="setting-toggle-info">
+                    <span className="setting-toggle-label">🧠 自动记忆</span>
+                    <span className="setting-toggle-desc">开启后，每次会话对话和 Git 提交将自动保存为项目记忆。</span>
+                  </div>
+                  <label className="toggle-switch">
+                    <input type="checkbox" checked={settings?.autoMemory ?? false} onChange={(e) => { if (!settings) return; onSettingsChange({ ...settings, autoMemory: e.target.checked }) }} />
+                    <span className="toggle-slider"></span>
+                  </label>
+                </div>
+
+                <div className="setting-toggle-row" style={{ borderTop: '1px solid #2a2a4a', paddingTop: 16, marginTop: 16 }}>
+                  <div className="setting-toggle-info">
                     <span className="setting-toggle-label">默认群聊模式</span>
                     <span className="setting-toggle-desc">启动应用时默认使用群聊还是单聊模式。</span>
                   </div>

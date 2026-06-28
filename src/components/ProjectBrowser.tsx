@@ -65,9 +65,9 @@ export function ProjectBrowser({
     setLoading(false)
   }
 
-  // Filter documents: MD, DOCX, XLSX, PDF, etc.
+  // Filter documents: MD, DOCX, XLSX, PDF, etc. (used by docs sub-view and docs mode)
   const docsTree = useMemo(() => {
-    if (mode !== 'docs') return []
+    if (mode !== 'docs' && mode !== 'files') return []
     return filterDocFiles(fileTree)
   }, [fileTree, mode])
 
@@ -182,6 +182,37 @@ export function ProjectBrowser({
 
   // ── Full file tree (all files) + project info ─
   if (mode === 'files') {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const [fileSubView, setFileSubView] = useState<'project' | 'docs'>('project')
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const [docsViewMode, setDocsViewMode] = useState<'tree' | 'list'>('tree')
+
+    // Flat list of all doc files for list mode
+    const flatDocFiles = useMemo(() => {
+      const flat: { name: string; path: string }[] = []
+      function walk(nodes: FileNode[]) {
+        for (const node of nodes) {
+          if (node.type === 'file') flat.push({ name: node.name, path: node.path })
+          if (node.children) walk(node.children)
+        }
+      }
+      walk(docsTree)
+      return flat
+    }, [docsTree])
+
+    async function handleUpload() {
+      if (!activeProject) return
+      const result = await window.electronAPI.openFileDialog()
+      if (result && !result.canceled && result.filePath) {
+        const res = await window.electronAPI.readFile(result.filePath)
+        if (res?.success && res.content !== undefined) {
+          const fileName = result.filePath.split(/[/\\]/).pop() || 'untitled'
+          await window.electronAPI.createFile({ dirPath: activeProject.path, fileName, content: res.content })
+          loadFileTree(activeProject.path)
+        }
+      }
+    }
+
     return (
       <div className="project-browser">
         {activeProject && (
@@ -194,11 +225,50 @@ export function ProjectBrowser({
             </div>
           </div>
         )}
-        <div className="file-tree">
-          {loading ? <div className="empty-hint">加载中...</div>
-            : fileTree.length > 0 ? <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} gitStatus={gitStatus} projectPath={activeProject?.path} />
-            : <div className="empty-hint">{activeProject ? '加载文件树...' : '选择项目自动加载'}</div>}
+        <div className="project-sub-tabs">
+          <button className={`project-sub-tab${fileSubView === 'project' ? ' active' : ''}`} onClick={() => setFileSubView('project')}>📁 项目</button>
+          <button className={`project-sub-tab${fileSubView === 'docs' ? ' active' : ''}`} onClick={() => setFileSubView('docs')}>📝 文档</button>
         </div>
+        {fileSubView === 'project' ? (
+          <div className="file-tree">
+            {loading ? <div className="empty-hint">加载中...</div>
+              : fileTree.length > 0 ? <FileTreeNodes nodes={fileTree} depth={0} onOpenFile={handleOpenDocFile} gitStatus={gitStatus} projectPath={activeProject?.path} />
+              : <div className="empty-hint">{activeProject ? '加载文件树...' : '选择项目自动加载'}</div>}
+          </div>
+        ) : (
+          <div className="docs-browser">
+            <div className="docs-toolbar">
+              <button className="docs-toolbar-btn" onClick={handleNewFile} title="新建文件">➕</button>
+              <button className="docs-toolbar-btn" onClick={handleUpload} title="上传文件">📤</button>
+              <button className="docs-toolbar-btn" onClick={() => activeProject && loadFileTree(activeProject.path)} title="刷新">🔄</button>
+              <div style={{ flex: 1 }} />
+              <button className={`docs-view-btn${docsViewMode === 'tree' ? ' active' : ''}`} onClick={() => setDocsViewMode('tree')} title="目录视图">📂</button>
+              <button className={`docs-view-btn${docsViewMode === 'list' ? ' active' : ''}`} onClick={() => setDocsViewMode('list')} title="列表视图">📋</button>
+            </div>
+            {docsViewMode === 'tree' ? (
+              <div className="file-tree">
+                {loading ? <div className="empty-hint">加载中...</div>
+                  : docsTree.length > 0 ? <FileTreeNodes nodes={docsTree} depth={0} onOpenFile={handleOpenDocFile} projectPath={activeProject?.path} />
+                  : <div className="empty-hint">{activeProject ? '暂无文档文件' : '选择项目后自动加载'}</div>}
+              </div>
+            ) : (
+              <div className="file-tree">
+                {flatDocFiles.length > 0 ? (
+                  <div className="docs-flat-list">
+                    {flatDocFiles.map((f) => (
+                      <div key={f.path} className="docs-flat-item" onClick={() => handleOpenDocFile(f.path)}>
+                        <span className="file-tree-icon">{getFileIcon(f.name)}</span>
+                        <span className="file-tree-name">{f.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-hint">{activeProject ? '暂无文档文件' : '选择项目后自动加载'}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {newFileDialog}
       </div>
     )

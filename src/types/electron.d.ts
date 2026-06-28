@@ -51,6 +51,7 @@ export interface ElectronAPI {
   readFile: (filePath: string) => Promise<{ success: boolean; content?: string; size?: number; isBinary?: boolean; error?: string }>
   writeFile: (opts: { filePath: string; content: string }) => Promise<{ success: boolean; error?: string }>
   createFile: (opts: { dirPath: string; fileName: string; content?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>
+  deleteFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
   openFileInNewWindow: (opts: { filePath: string; fileName: string; projectPath?: string }) => Promise<{ success: boolean }>
   openFileDialog: () => Promise<{ canceled: boolean; filePath?: string }>
   openDirectoryDialog: () => Promise<{ canceled: boolean; dirPath?: string }>
@@ -112,9 +113,19 @@ export interface ElectronAPI {
   gitRemoteLog: (opts: { projectPath: string; remoteBranch?: string }) => Promise<{ success: boolean; output: string; error?: string }>
   gitFetch: (projectPath: string) => Promise<{ success: boolean; output: string; error?: string }>
 
-  // Memory operations
-  memoryList: () => Promise<{ success: boolean; entries: { name: string; description: string; fileName: string; type?: string }[]; error?: string }>
-  memoryRead: (fileName: string) => Promise<{ success: boolean; content: string; error?: string }>
+  // Memory operations (project isolation via projectPath)
+  memoryList: (projectPath: string) => Promise<{ success: boolean; entries: { name: string; description: string; fileName: string; type?: string; mtime?: string }[]; error?: string }>
+  memoryRead: (opts: { projectPath: string; fileName: string }) => Promise<{ success: boolean; content: string; error?: string }>
+  memoryWrite: (opts: { projectPath: string; fileName: string; content: string }) => Promise<{ success: boolean; error?: string }>
+  memoryCreate: (opts: { projectPath: string; fileName: string; name: string; description: string; type: string; content: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>
+  memoryDelete: (opts: { projectPath: string; fileName: string }) => Promise<{ success: boolean; error?: string }>
+  memoryAutoCreate: (opts: { projectPath: string; title: string; content: string; type?: string }) => Promise<{ success: boolean; fileName?: string; error?: string }>
+
+  // Knowledge management
+  knowledgeList: (projectPath: string) => Promise<{ success: boolean; entries: { name: string; fileName: string; description: string; type: string; tags: string; status: string; mtime: string; sources: string }[]; error?: string }>
+  knowledgeRead: (opts: { projectPath: string; fileName: string }) => Promise<{ success: boolean; content: string; error?: string }>
+  knowledgeCreate: (opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => Promise<{ success: boolean; fileName?: string; error?: string }>
+  knowledgeDelete: (opts: { projectPath: string; fileName: string }) => Promise<{ success: boolean; error?: string }>
 
   // Terminal management
   terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) => Promise<{ success: boolean }>

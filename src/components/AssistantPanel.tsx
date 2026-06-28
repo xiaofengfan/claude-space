@@ -100,8 +100,8 @@ export function AssistantPanel({ theme, models, activeModelId, activeProjectPath
   }, [])
 
   useEffect(() => {
-    window.electronAPI.memoryList().then(r => { if (r?.success) setMemoryEntries(r.entries) }).catch(() => {})
-  }, [])
+    if (activeProjectPath) window.electronAPI.memoryList(activeProjectPath).then(r => { if (r?.success) setMemoryEntries(r.entries) }).catch(() => {})
+  }, [activeProjectPath])
 
   function handleAssistantEvent(event: ClaudeAssistantEvent) {
     const { message } = event
@@ -272,7 +272,7 @@ export function AssistantPanel({ theme, models, activeModelId, activeProjectPath
     setSelectedAction(actionId)
     if (!selectedMemory) return
     try {
-      const r = await window.electronAPI.memoryRead(selectedMemory)
+      const r = await window.electronAPI.memoryRead({ projectPath: activeProjectPath!, fileName: selectedMemory })
       if (r?.success) {
         const memoryName = memoryEntries.find(e => e.fileName === selectedMemory)?.name || selectedMemory
         const act = MEMORY_ACTIONS.find(a => a.id === actionId)

@@ -1,3 +1,4 @@
+export type { RuleCategory, RuleItem, RuleTemplate } from './rules'
 export type { ProjectInfo, SessionInfo, TaskItem, AgentType, TeamMember } from './project'
 export type { ChatMessage, ToolCall, ClaudeStreamEvent, ClaudeInitEvent, ClaudeAssistantEvent, ClaudeResultEvent } from './claude'
 export type { ModelConfig, ModelConfigSafe, ModelProvider, AppSettings, AppSettingsSafe } from './settings'

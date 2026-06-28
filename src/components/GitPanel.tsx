@@ -3,6 +3,7 @@ import { VersionDetailDialog } from './VersionDetailDialog'
 
 interface Props {
   projectPath?: string
+  onCommitSuccess?: (message: string) => void
 }
 
 interface CommitEntry {
@@ -12,7 +13,7 @@ interface CommitEntry {
   message: string
 }
 
-export function GitPanel({ projectPath }: Props) {
+export function GitPanel({ projectPath, onCommitSuccess }: Props) {
   const [status, setStatus] = useState<string>('')
   const [branch, setBranch] = useState<string>('')
   const [commits, setCommits] = useState<CommitEntry[]>([])
@@ -62,11 +63,12 @@ export function GitPanel({ projectPath }: Props) {
     if (!projectPath || !commitMsg) return
     setLoading(true)
     setMsg('提交中...')
-    const r = await window.electronAPI.gitCommit?.({ projectPath, message: commitMsg })
+    const msg = commitMsg
+    const r = await window.electronAPI.gitCommit?.({ projectPath, message: msg })
     setMsg(r?.success ? '✅ 提交成功' : `❌ ${r?.error || '失败'}`)
     setCommitMsg('')
     setLoading(false)
-    refresh()
+    if (r?.success) onCommitSuccess?.(msg)
   }
 
   const doPull = async () => {
