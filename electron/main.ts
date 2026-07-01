@@ -1,4 +1,3 @@
-
 // ── 全局日志缓冲区（供控制台窗口使用）────────────────
 const LOG_BUFFER_SIZE = 5000
 const logBuffer: string[] = []
@@ -539,6 +538,28 @@ interface AppSettings {
   sshServers?: SshServerConfig[]
   deployTargets?: DeployTarget[]
   workspaces?: WorkspaceConfig[]
+  ides?: IdeConfig[]
+}
+interface IdeConfig {
+  id: string; name: string; executablePath: string
+  args?: string; icon?: string
+}
+const DEFAULT_IDES: IdeConfig[] = [
+  { id: 'vscode', name: 'VS Code', executablePath: 'code', args: '{projectPath}', icon: '💻' },
+  { id: 'idea', name: 'IntelliJ IDEA', executablePath: 'idea', args: '{projectPath}', icon: '🧩' },
+  { id: 'cursor', name: 'Cursor', executablePath: 'cursor', args: '{projectPath}', icon: '🖥️' },
+  { id: 'windsurf', name: 'Windsurf', executablePath: 'windsurf', args: '{projectPath}', icon: '🌊' },
+]
+
+/** 合并用户 IDE 配置与默认预设：用户配置覆盖同名预设，无同名则追加 */
+function mergeIdeConfigs(userIdes: IdeConfig[]): IdeConfig[] {
+  const merged = [...DEFAULT_IDES]
+  for (const u of userIdes) {
+    const idx = merged.findIndex(d => d.id === u.id)
+    if (idx >= 0) merged[idx] = u
+    else merged.push(u)
+  }
+  return merged
 }
 interface ModelConfigSafe {
   id: string; name: string; provider: string; apiKeyHint: string
@@ -556,6 +577,7 @@ interface AppSettingsSafe {
   sshServers?: SshServerSafe[]
   deployTargets?: DeployTarget[]
   workspaces?: WorkspaceConfig[]
+  ides?: IdeConfig[]
 }
 
 function loadSettings(): AppSettings | null {
@@ -639,18 +661,10 @@ function registerIPC(): void {
     content: string; projectPath?: string; sessionId?: string; modelId?: string;
     autoApproval?: boolean;
   }) => {
-    let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
-    let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
-    let model: string | undefined = process.env.ANTHROPIC_MODEL
-    if (opts.modelId) {
-      const raw = loadSettings()
-      const cfg = raw?.models.find(m => m.id === opts.modelId)
-      if (cfg) { apiKey = cfg.apiKey || apiKey; baseUrl = cfg.baseUrl || baseUrl; model = cfg.model || model }
-    }
-
+    // Claude 对话完全由 ~/.claude/settings.json 的 env 段控制，不传入模型配置
     const sid = opts.sessionId || 'default'
     const proc = getOrCreateSessionProcess(sid, {
-      projectPath: opts.projectPath, model, apiKey, baseUrl,
+      projectPath: opts.projectPath,
       permissionMode: opts.autoApproval ? 'auto' : 'manual',
     })
 
@@ -759,18 +773,20 @@ function registerIPC(): void {
   }) => {
     console.log('[main] agent:send-group groupId:', opts.groupId, 'targets:', opts.targets.length, 'contentLen:', opts.content?.length, 'content:', opts.content?.slice(0, 80))
 
-    // Resolve model config
-    let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
-    let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
-    let model: string | undefined = process.env.ANTHROPIC_MODEL
+    // 多智能体群聊：Agent 池需要模型配置（与 Claude 会话分离）
+    let apiKey: string | undefined
+    let baseUrl: string | undefined
+    let model: string | undefined
 
-    if (opts.modelId) {
-      const raw = loadSettings()
-      const cfg = raw?.models.find(m => m.id === opts.modelId)
+    const raw = loadSettings()
+    const targetModelId = opts.modelId || raw?.activeModelId
+
+    if (targetModelId) {
+      const cfg = raw?.models.find(m => m.id === targetModelId)
       if (cfg) {
-        apiKey = cfg.apiKey || apiKey
-        baseUrl = cfg.baseUrl || baseUrl
-        model = cfg.model || model
+        apiKey = cfg.apiKey
+        baseUrl = cfg.baseUrl
+        model = cfg.model
       }
     }
 
@@ -865,6 +881,46 @@ function registerIPC(): void {
     shell.openPath(projectPath)
   })
 
+  // ── IDE 打开 ────────────────────────────────────────────
+  /** 打开指定 IDE：executablePath 为可执行文件，args 模板替换后作为参数 */
+  function openIde(executablePath: string, args: string | undefined, projectPath: string): { success: boolean; error?: string } {
+    try {
+      const { exec } = require('child_process')
+      const argTemplate = args || '{projectPath}'
+      const argStr = argTemplate.replace('{projectPath}', `"${projectPath}"`)
+      // exec 通过 cmd.exe 运行，自动处理 PATH/PATHEXT 和带空格的路径
+      exec(`"${executablePath}" ${argStr}`, { windowsHide: true }, (err) => {
+        if (err) console.error(`openIde error: ${err.message}`)
+      })
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  ipcMain.handle('project:open-in-vscode', async (_event, projectPath: string) => {
+    const settings = loadSettings()
+    const ide = settings?.ides?.find(i => i.id === 'vscode') || DEFAULT_IDES.find(i => i.id === 'vscode')
+    if (!ide) return { success: false, error: 'VS Code 未配置' }
+    return openIde(ide.executablePath, ide.args, projectPath)
+  })
+
+  ipcMain.handle('project:open-in-idea', async (_event, projectPath: string) => {
+    const settings = loadSettings()
+    const ide = settings?.ides?.find(i => i.id === 'idea') || DEFAULT_IDES.find(i => i.id === 'idea')
+    if (!ide) return { success: false, error: 'IntelliJ IDEA 未配置' }
+    return openIde(ide.executablePath, ide.args, projectPath)
+  })
+
+  /** 通用 IDE 打开：按 ideId 查找用户或默认配置 */
+  ipcMain.handle('project:open-in-ide', async (_event, opts: { ideId: string; projectPath: string }) => {
+    const settings = loadSettings()
+    const allIdes = mergeIdeConfigs(settings?.ides || [])
+    const ide = allIdes.find(i => i.id === opts.ideId)
+    if (!ide) return { success: false, error: `IDE "${opts.ideId}" 未配置` }
+    return openIde(ide.executablePath, ide.args, opts.projectPath)
+  })
+
   ipcMain.handle('project:open-in-new-window', async (_event, projectPath: string) => {
     createWindow(projectPath)
     return { success: true }
@@ -878,6 +934,173 @@ function registerIPC(): void {
     // 在系统终端中打开，自动启动 claude
     spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${projectPath}" && claude`], { shell: true, windowsHide: true })
   })
+
+  // ── Claude 原生配置读取与文件监视 ──────────────────────────
+  const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json')
+
+  /** 从 ~/.claude/settings.json 的 env 段提取模型相关配置 */
+  function getClaudeEnvConfig() {
+    try {
+      if (!fs.existsSync(CLAUDE_SETTINGS_PATH)) {
+        return { baseUrl: '', authToken: '', defaultModel: '', models: [] }
+      }
+      const raw = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8'))
+      const env = raw?.env || {}
+      const baseUrl = env.ANTHROPIC_BASE_URL || ''
+      const authToken = env.ANTHROPIC_AUTH_TOKEN || ''
+      const defaultModel = env.ANTHROPIC_MODEL || ''
+      const seenModels = new Map()
+      for (const [k, v] of Object.entries(env)) {
+        if (typeof v !== 'string') continue
+        const tierMatch = k.match(/^ANTHROPIC_DEFAULT_(\w+)(?:_MODEL_NAME)?$/)
+        if (tierMatch) {
+          const key = v.trim()
+          if (key && !seenModels.has(key)) {
+            seenModels.set(key, {
+              name: key.replace(/\[.*?\]/g, '').trim(),
+              model: key,
+              fromEnv: k,
+            })
+          }
+        }
+        if (k === 'ANTHROPIC_MODEL' && typeof v === 'string' && v.trim()) {
+          const val = v.trim()
+          if (!seenModels.has(val)) {
+            let displayName = val.replace(/\[.*?\]/g, '').trim()
+            for (const [nk, nv] of Object.entries(env)) {
+              if (nk.endsWith('_MODEL_NAME') && nv === val) {
+                displayName = (nv + '').replace(/\[.*?\]/g, '').trim()
+                break
+              }
+            }
+            seenModels.set(val, { name: displayName, model: val, fromEnv: 'ANTHROPIC_MODEL' })
+          }
+        }
+      }
+      return { baseUrl, authToken, defaultModel, models: Array.from(seenModels.values()) }
+    } catch (err) {
+      console.warn('[claude-env] 读取 settings.json 失败:', err)
+      return { baseUrl: '', authToken: '', defaultModel: '', models: [] }
+    }
+  }
+
+  /** 读取 claude 原生配置并返回，附带文件修改时间 */
+  ipcMain.handle('settings:claude-env-config', async () => {
+    const config = getClaudeEnvConfig()
+    let mtime = ''
+    try { if (fs.existsSync(CLAUDE_SETTINGS_PATH)) mtime = fs.statSync(CLAUDE_SETTINGS_PATH).mtime.toISOString() } catch {}
+    return { ...config, mtime }
+  })
+
+  /** 将 claude 原生配置同步到 Claude Space 的模型列表 */
+  ipcMain.handle('settings:sync-from-claude-env', async () => {
+    const claudeConfig = getClaudeEnvConfig()
+    if (!claudeConfig.baseUrl || !claudeConfig.authToken) {
+      return { success: false, error: 'claude 配置中缺少 baseUrl 或 authToken' }
+    }
+    const raw = loadSettings() || { version: 1, activeModelId: null, models: [], autoApproval: false, sshServers: [], deployTargets: [], ides: [] }
+    const existingIds = new Set(raw.models.map(m => m.id))
+    const newModels = []
+    for (const m of claudeConfig.models) {
+      const suggestedId = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+      if (existingIds.has(suggestedId)) continue
+      // Claude 专属模型：不设 apiKey，让子进程继承 ~/.claude/settings.json 的 env
+      newModels.push({
+        id: suggestedId, name: m.name || m.model, provider: 'Custom',
+        apiKey: '', baseUrl: '', model: m.model,
+        apiKeySource: 'env',
+      })
+    }
+    if (newModels.length === 0) {
+      // 没有新模型，但仍检查是否需要迁移 activeModelId
+      return { success: true, added: 0, models: [], migrated: migrateActiveModel(raw, claudeConfig) }
+    }
+    raw.models.push(...newModels)
+    // 同步后自动迁移 activeModelId 到匹配的 claude 原生模型
+    const migrated = migrateActiveModel(raw, claudeConfig)
+    saveSettings(raw)
+    return { success: true, added: newModels.length, models: newModels.map(m => ({ id: m.id, name: m.name, model: m.model })), migrated }
+  })
+
+/**
+ * 自动迁移 activeModelId：从旧模型（env-default/model-mqkrk21t）切换到匹配的 claude 原生模型
+ * 返回是否发生了迁移
+ */
+function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: string; models: Array<{ name: string; model: string }> }): boolean {
+  if (!raw?.activeModelId) return false
+  const activeModel = raw.models.find(m => m.id === raw.activeModelId)
+  if (!activeModel) return false
+
+  // 如果已经是 claude- 前缀的模型，不需要迁移
+  if (activeModel.id.startsWith('claude-')) return false
+
+  // 获取 claude 原生配置
+  const cfg = claudeConfig || getClaudeEnvConfig()
+  if (!cfg.defaultModel && cfg.models.length === 0) return false
+
+  const defaultModelStr = cfg.defaultModel || cfg.models[0]?.model
+  if (!defaultModelStr) return false
+
+  // 在 models 中找匹配的 claude- 模型
+  const targetId = 'claude-' + defaultModelStr.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+  const target = raw.models.find(m => m.id === targetId)
+  if (!target) return false
+
+  raw.activeModelId = target.id
+  saveSettings(raw)
+  console.log('[claude-env] 自动迁移 activeModelId:', raw.activeModelId, '→', target.id, target.name)
+  return true
+}
+
+/** 初始化 claude settings.json 文件监视 */
+let _claudeSettingsWatcher: fs.FSWatcher | null = null
+function initClaudeSettingsWatcher() {
+  const CLAUDE_SETTINGS_PATH_2 = path.join(os.homedir(), '.claude', 'settings.json')
+  try {
+    if (!fs.existsSync(CLAUDE_SETTINGS_PATH_2)) { console.log('[claude-env] settings.json 不存在，跳过文件监视'); return }
+    _claudeSettingsWatcher = fs.watch(CLAUDE_SETTINGS_PATH_2, (eventType) => {
+      if (eventType === 'change') {
+        setTimeout(() => {
+          const config = getClaudeEnvConfig()
+          let mtime = ''
+          try { mtime = fs.statSync(CLAUDE_SETTINGS_PATH_2).mtime.toISOString() } catch {}
+          // 后台自动同步：补充缺失的 claude 模型 + 迁移 activeModelId
+          try {
+            const raw = loadSettings()
+            if (raw) {
+              const existingIds = new Set(raw.models.map(m => m.id))
+              let changed = false
+              for (const m of config.models) {
+                const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+                if (!existingIds.has(sid)) {
+                  raw.models.push({ id: sid, name: m.name || m.model, provider: 'Custom', apiKey: '', baseUrl: '', model: m.model, apiKeySource: 'env' })
+                  existingIds.add(sid)
+                  changed = true
+                }
+              }
+              // 迁移后通知前端刷新
+              let migrated = false
+              if (changed) { saveSettings(raw); migrated = true }
+              if (migrateActiveModel(raw, config)) migrated = true
+              if (migrated) {
+                // 通知前端重新加载 settings
+                const freshSettings = loadSettings()
+                for (const w of windows) {
+                  try { if (!w.isDestroyed()) w.webContents.send('settings:migrated', freshSettings ? { activeModelId: freshSettings.activeModelId } : null) } catch {}
+                }
+              }
+            }
+          } catch (_e) { /* 非关键，不影响前端通知 */ }
+          for (const w of windows) {
+            try { if (!w.isDestroyed()) w.webContents.send('claude-env:changed', { ...config, mtime }) } catch {}
+          }
+        }, 500)
+      }
+    })
+  } catch (err) {
+    console.warn('[claude-env] 文件监视启动失败:', err)
+  }
+}
 
   // 文件操作
   ipcMain.handle('file:read', async (_event, filePath: string) => {
@@ -1117,20 +1340,20 @@ function registerIPC(): void {
   ipcMain.handle('settings:load', async () => {
     const raw = loadSettings()
     if (!raw) {
-      // 首次使用：从环境变量生成默认配置
-      const envModel: ModelConfigSafe = {
-        id: 'env-default',
-        name: process.env.ANTHROPIC_MODEL || '默认模型',
-        provider: 'Claude',
-        apiKeyHint: process.env.ANTHROPIC_API_KEY ? '来自环境变量' : '未设置',
-        baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-        apiKeySource: 'env',
+      // 首次使用：无持久化配置，生成空占位（不再读环境变量）
+      const placeholderModel: ModelConfigSafe = {
+        id: 'placeholder',
+        name: '未配置 — 请在设置中添加模型',
+        provider: 'Custom',
+        apiKeyHint: '未设置',
+        baseUrl: '',
+        model: '',
+        apiKeySource: 'user',
       }
       const defaultSettings: AppSettingsSafe = {
         version: 1,
-        activeModelId: 'env-default',
-        models: [envModel],
+        activeModelId: null,
+        models: [placeholderModel],
         autoApproval: false,
         sshServers: [],
         deployTargets: [],
@@ -1142,12 +1365,12 @@ function registerIPC(): void {
       // 同时写入文件
       saveSettings({
         version: 1,
-        activeModelId: 'env-default',
+        activeModelId: null,
         models: [{
-          id: 'env-default', name: envModel.name, provider: 'Claude',
-          apiKey: process.env.ANTHROPIC_API_KEY || '',
-          baseUrl: envModel.baseUrl, model: envModel.model,
-          apiKeySource: 'env',
+          id: 'placeholder', name: placeholderModel.name, provider: 'Custom',
+          apiKey: '',
+          baseUrl: '', model: '',
+          apiKeySource: 'user',
         }],
         autoApproval: false,
         sshServers: [],
@@ -1163,13 +1386,32 @@ function registerIPC(): void {
     }
     // 同步工作空间到内存
     syncWorkspaceRootFromSettings(raw)
+    // 自动补充 claude 原生模型（确保 claude-* 模型存在）
+    try {
+      const claudeCfg = getClaudeEnvConfig()
+      if (claudeCfg.baseUrl && claudeCfg.models.length > 0) {
+        const existingIds = new Set(raw.models.map(m => m.id))
+        let modelsAdded = false
+        for (const m of claudeCfg.models) {
+          const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+          if (!existingIds.has(sid)) {
+            raw.models.push({ id: sid, name: m.name || m.model, provider: 'Custom', apiKey: '', baseUrl: '', model: m.model, apiKeySource: 'env' as const })
+            existingIds.add(sid)
+            modelsAdded = true
+          }
+        }
+        if (modelsAdded) saveSettings(raw)
+      }
+    } catch (_e) { /* 非关键 */ }
+    // 自动迁移 activeModelId（将旧模型指向匹配的 claude 原生模型）
+    try { migrateActiveModel(raw) } catch (_e) { /* 非关键 */ }
     // 返回脱敏版本
     return {
       version: raw.version || 1,
       activeModelId: raw.activeModelId,
       models: raw.models.map(m => ({
         id: m.id, name: m.name, provider: m.provider,
-        apiKeyHint: m.apiKeySource === 'env' ? '来自环境变量' : maskApiKey(m.apiKey),
+        apiKeyHint: m.apiKeySource === 'env' ? (m.apiKey ? '来自环境变量' : '来自 ~/.claude/settings.json') : maskApiKey(m.apiKey),
         baseUrl: m.baseUrl, model: m.model,
         apiKeySource: m.apiKeySource || 'user',
       })),
@@ -1188,6 +1430,8 @@ function registerIPC(): void {
       })),
       deployTargets: raw.deployTargets || [],
       workspaces: raw.workspaces || [],
+      // IDE 配置：合并用户配置与默认预设，用户配置覆盖同名预设
+      ides: mergeIdeConfigs(raw.ides || []),
     } as AppSettingsSafe
   })
 
@@ -1236,6 +1480,8 @@ function registerIPC(): void {
         // 工作空间由专用 IPC (workspace:add/remove/set-active) 管理并实时持久化
         // settings.workspaces 来自前端 state 可能过时，优先使用文件中的最新值
         workspaces: existing?.workspaces || settings.workspaces || [],
+        // IDE 配置直接持久化用户提交的部分
+        ides: settings.ides || [],
       })
       return { success: true }
     })
@@ -1248,7 +1494,7 @@ function registerIPC(): void {
     if (!m) return null
     return {
       id: m.id, name: m.name, provider: m.provider,
-      apiKeyHint: m.apiKeySource === 'env' ? '来自环境变量' : maskApiKey(m.apiKey),
+      apiKeyHint: m.apiKeySource === 'env' ? (m.apiKey ? '来自环境变量' : '来自 ~/.claude/settings.json') : maskApiKey(m.apiKey),
       baseUrl: m.baseUrl, model: m.model, apiKeySource: m.apiKeySource,
     } as ModelConfigSafe
   })
@@ -1613,6 +1859,377 @@ function registerIPC(): void {
   
   ipcMain.handle('console:get-log-history', async () => { return { success: true, lines: [...logBuffer] } })
 
+
+  // ── 技能管理 ────────────────────────────────────────
+  const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+
+  function getSkillManifest(filePath: string, includeContent?: boolean): any {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8')
+      const m = raw.match(/^---\n([\s\S]*?)\n---/)
+      if (!m) return null
+      const fm: Record<string, string> = {}
+      for (const line of m[1].split('\n')) {
+        const sep = line.indexOf(': ')
+        if (sep > 0) fm[line.slice(0, sep).trim()] = line.slice(sep + 2).trim()
+      }
+      const manifest: any = {
+        name: fm.name || '',
+        description: fm.description || '',
+        version: fm.version || '1.0.0',
+        author: fm.author || 'unknown',
+        category: fm.category || 'general',
+        tags: fm.tags || '',
+        icon: fm.icon || '📦',
+        level: fm.level || 'global',
+        enabled: fm.enabled !== 'false',
+        created: fm.created || '',
+        updated: fm.updated || '',
+        fileName: path.basename(filePath),
+        filePath,
+      }
+      if (includeContent) manifest.content = raw
+      return manifest
+    } catch { return null }
+  }
+
+  ipcMain.handle('skill:list', async () => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) return { success: true, skills: [] }
+      const skills: any[] = []
+      for (const f of fs.readdirSync(SKILLS_DIR)) {
+        if (!f.endsWith('.md')) continue
+        const m = getSkillManifest(path.join(SKILLS_DIR, f))
+        if (m) skills.push(m)
+      }
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      return { success: true, skills }
+    } catch (e: any) { return { success: false, skills: [], error: e.message } }
+  })
+
+  ipcMain.handle('skill:read', async (_e: any, name: string) => {
+    try {
+      const fp = path.join(SKILLS_DIR, name + '.md')
+      if (!fs.existsSync(fp)) return { success: false, content: '', error: 'Skill not found' }
+      return { success: true, content: fs.readFileSync(fp, 'utf-8') }
+    } catch (e: any) { return { success: false, content: '', error: e.message } }
+  })
+
+  ipcMain.handle('skill:install', async (_e: any, opts: { name: string; content: string }) => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      fs.writeFileSync(path.join(SKILLS_DIR, opts.name + '.md'), opts.content, 'utf-8')
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:install-batch', async (_e: any, opts: { skills: Array<{ name: string; content: string }> }) => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      let count = 0
+      const errors: Array<{ name: string; error: string }> = []
+      for (const s of opts.skills) {
+        try {
+          fs.writeFileSync(path.join(SKILLS_DIR, safeSkillName(s.name) + '.md'), s.content, 'utf-8')
+          count++
+        } catch (e: any) { errors.push({ name: s.name, error: e.message }) }
+      }
+      return { success: errors.length === 0, count, errors: errors.length > 0 ? errors : undefined }
+    } catch (e: any) { return { success: false, count: 0, error: e.message } }
+  })
+
+  ipcMain.handle('skill:uninstall', async (_e: any, name: string) => {
+    try {
+      const fp = path.join(SKILLS_DIR, name + '.md')
+      if (fs.existsSync(fp)) fs.unlinkSync(fp)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 内置技能列表（打包在 assets/skills/）───────────────
+  const BUILTIN_SKILL_ITEMS = [
+    { id: 'code-review', name: '代码审查', description: '全面的代码审查检查清单', version: '1.0.0', author: 'Claude Space', category: 'code-review', icon: '🔍', tags: ['code-review','审查'], downloads: 999, rating: 4.5, source: 'builtin' },
+    { id: 'security-audit', name: '安全审计', description: '基于 OWASP Top 10 的安全扫描与审计', version: '1.0.0', author: 'Claude Space', category: 'security', icon: '🛡️', tags: ['security','owasp'], downloads: 998, rating: 4.8, source: 'builtin' },
+    { id: 'api-design', name: 'API 设计', description: 'RESTful API 设计与审查标准', version: '1.0.0', author: 'Claude Space', category: 'api-design', icon: '🔌', tags: ['api','rest'], downloads: 997, rating: 4.6, source: 'builtin' },
+    { id: 'ts-expert', name: 'TypeScript 专家', description: 'TypeScript 类型安全和最佳实践', version: '1.0.0', author: 'Claude Space', category: 'code-review', icon: '🔷', tags: ['typescript'], downloads: 996, rating: 4.7, source: 'builtin' },
+    { id: 'test-writer', name: '测试编写', description: '自动生成单元测试和集成测试', version: '1.0.0', author: 'Claude Space', category: 'testing', icon: '🧪', tags: ['测试'], downloads: 995, rating: 4.4, source: 'builtin' },
+    { id: 'git-manager', name: 'Git 工作流', description: 'Git 操作与工作流管理助手', version: '1.0.0', author: 'Claude Space', category: 'git', icon: '📦', tags: ['git'], downloads: 994, rating: 4.3, source: 'builtin' },
+    { id: 'doc-generator', name: '文档生成', description: '自动生成项目文档和 API 文档', version: '1.0.0', author: 'Claude Space', category: 'documentation', icon: '📝', tags: ['文档'], downloads: 993, rating: 4.5, source: 'builtin' },
+    { id: 'perf-audit', name: '性能审计', description: '代码性能分析与优化建议', version: '1.0.0', author: 'Claude Space', category: 'performance', icon: '⚡', tags: ['性能'], downloads: 992, rating: 4.6, source: 'builtin' },
+    { id: 'conventions-check', name: '规范检查', description: '代码风格和项目规范一致性检查', version: '1.0.0', author: 'Claude Space', category: 'conventions', icon: '📏', tags: ['规范'], downloads: 991, rating: 4.2, source: 'builtin' },
+    { id: 'db-designer', name: '数据库设计', description: '数据库表结构设计与优化建议', version: '1.0.0', author: 'Claude Space', category: 'api-design', icon: '🗄️', tags: ['数据库'], downloads: 990, rating: 4.4, source: 'builtin' },
+  ]
+
+  ipcMain.handle('skill:marketplace-list', async () => {
+    try {
+      return { success: true, items: BUILTIN_SKILL_ITEMS }
+    } catch (e: any) { return { success: false, items: [], error: e.message } }
+  })
+
+
+  // ── 技能市场配置 ──────────────────────────────────
+  const MARKET_CONFIG_FILE = path.join(os.homedir(), '.claude', 'skill-market-config.json')
+
+  interface MarketSource {
+    name: string; url: string; enabled: boolean; autoScan: boolean
+  }
+
+  const DEFAULT_MARKETPLACES: MarketSource[] = [
+    { name: 'Claude 官方技能', url: 'https://github.com/anthropics/skills.git', enabled: true, autoScan: true },
+    { name: 'Claude 官方插件', url: 'https://github.com/anthropics/claude-plugins-official.git', enabled: true, autoScan: true },
+    { name: '社区插件', url: 'https://github.com/anthropics/claude-plugins-community.git', enabled: true, autoScan: true },
+  ]
+
+  function loadMarketConfig() {
+    try {
+      if (fs.existsSync(MARKET_CONFIG_FILE)) {
+        const cfg = JSON.parse(fs.readFileSync(MARKET_CONFIG_FILE, 'utf-8'))
+        // Migrate legacy format { gitUrl: string } → { marketplaces }
+        if (cfg.gitUrl && !cfg.marketplaces) {
+          cfg.marketplaces = [
+            ...DEFAULT_MARKETPLACES,
+            ...(cfg.gitUrl ? [{ name: '自定义市场', url: cfg.gitUrl, enabled: true, autoScan: false }] : []),
+          ]
+          delete cfg.gitUrl
+          saveMarketConfig(cfg)
+        }
+        return cfg
+      }
+    } catch {}
+    return { marketplaces: [...DEFAULT_MARKETPLACES], localPaths: [] }
+  }
+
+  function saveMarketConfig(cfg: { marketplaces?: MarketSource[]; localPaths?: string[]; gitUrl?: string }) { fs.writeFileSync(MARKET_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8') }
+
+  ipcMain.handle('skill:get-market-config', async () => ({ success: true, config: loadMarketConfig() }))
+
+  ipcMain.handle('skill:save-market-config', async (_e, cfg) => {
+    try { saveMarketConfig(cfg); return { success: true } } catch (e) { return { success: false, error: e.message } }
+  })
+
+  // ── 市场源管理 ──────────────────────────────────
+  const MARKET_REPOS_DIR = path.join(os.homedir(), '.claude', 'skill-repos')
+
+  function ensureDir(d: string) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }) }
+
+  ipcMain.handle('skill:marketplace-scan', async () => {
+    try {
+      const cfg = loadMarketConfig()
+      const sources = (cfg.marketplaces || []).filter((s: MarketSource) => s.enabled && s.autoScan)
+      const allSkills: any[] = []
+      ensureDir(MARKET_REPOS_DIR)
+      for (const src of sources) {
+        const repoHash = Buffer.from(src.url).toString('base64url').slice(0, 32)
+        const repoDir = path.join(MARKET_REPOS_DIR, repoHash)
+        // Clone or pull
+        await new Promise<void>((resolve, reject) => {
+          if (fs.existsSync(repoDir)) {
+            const p = spawn('git', ['-C', repoDir, 'pull', '--ff-only'], { timeout: 30000 })
+            p.on('close', (code) => code === 0 ? resolve() : reject(new Error('git pull failed')))
+            p.on('error', reject)
+          } else {
+            const p = spawn('git', ['clone', '--depth=1', src.url, repoDir], { timeout: 60000 })
+            p.on('close', (code) => code === 0 ? resolve() : reject(new Error('git clone failed')))
+            p.on('error', reject)
+          }
+        })
+        // Scan for skills
+        const scanned = scanDirForSkills(repoDir, src.name)
+        for (const s of scanned) { s.sourceName = src.name; s.sourceUrl = src.url }
+        allSkills.push(...scanned)
+      }
+      allSkills.sort((a, b) => a.name.localeCompare(b.name))
+      return { success: true, skills: allSkills }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:marketplace-source-add', async (_e, src: MarketSource) => {
+    try {
+      const cfg = loadMarketConfig()
+      if (!cfg.marketplaces) cfg.marketplaces = []
+      if (cfg.marketplaces.find((s: MarketSource) => s.url === src.url)) return { success: false, error: '该市场已存在' }
+      cfg.marketplaces.push(src)
+      saveMarketConfig(cfg)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:marketplace-source-remove', async (_e, url: string) => {
+    try {
+      const cfg = loadMarketConfig()
+      cfg.marketplaces = (cfg.marketplaces || []).filter((s: MarketSource) => s.url !== url)
+      saveMarketConfig(cfg)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:marketplace-source-update', async (_e, url: string, updates: Partial<MarketSource>) => {
+    try {
+      const cfg = loadMarketConfig()
+      const src = (cfg.marketplaces || []).find((s: MarketSource) => s.url === url)
+      if (!src) return { success: false, error: '未找到该市场' }
+      Object.assign(src, updates)
+      saveMarketConfig(cfg)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  function scanDirForSkills(dir: string, sourceName: string): any[] {
+    const results: any[] = []
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, f)
+        if (fs.statSync(fullPath).isDirectory()) {
+          // Check for SKILL.md inside (Claude Code format)
+          const skillMd = path.join(fullPath, 'SKILL.md')
+          if (fs.existsSync(skillMd)) {
+            const m = getSkillManifest(skillMd, true)
+            if (m) { m.fileName = f; results.push(m) }
+          }
+          // Also scan flat .md files
+          for (const sf of fs.readdirSync(fullPath)) {
+            if (sf.endsWith('.md') && sf !== 'SKILL.md') {
+              const m = getSkillManifest(path.join(fullPath, sf), true)
+              if (m) results.push(m)
+            }
+          }
+        } else if (f.endsWith('.md')) {
+          const m = getSkillManifest(fullPath, true)
+          if (m) results.push(m)
+        }
+      }
+    } catch { /* skip dirs with errors */ }
+    return results
+  }
+
+  // Deeper recursive scan for nested plugin repos (plugins/name/skills/name/SKILL.md)
+  function deepScanDirForSkills(dir: string, sourceName: string): any[] {
+    const results: any[] = []
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, f)
+        try {
+          if (fs.statSync(fullPath).isDirectory()) {
+            const skillMd = path.join(fullPath, 'SKILL.md')
+            const hasDirectSkill = fs.existsSync(skillMd)
+            if (hasDirectSkill) {
+              const m = getSkillManifest(skillMd, true)
+              if (m) { m.fileName = path.relative(dir, fullPath); results.push(m) }
+            }
+            // Check flat .md files in this dir
+            for (const sf of fs.readdirSync(fullPath)) {
+              if (sf.endsWith('.md') && sf !== 'SKILL.md') {
+                const m = getSkillManifest(path.join(fullPath, sf), true)
+                if (m) results.push(m)
+              }
+            }
+            // Recurse deeper if no SKILL.md found at this level
+            if (!hasDirectSkill) {
+              const deeper = deepScanDirForSkills(fullPath, sourceName)
+              results.push(...deeper)
+            }
+          }
+        } catch { /* skip individual entries */ }
+      }
+    } catch { /* skip dirs */ }
+    return results
+  }
+
+  // Use deep scan for marketplace repos, shallow scan for local files
+  function scanDirForSkills(dir: string, sourceName: string): any[] {
+    const isLocalFile = sourceName === '本地文件'
+    return isLocalFile ? shallowScanDirForSkills(dir, sourceName) : deepScanDirForSkills(dir, sourceName)
+  }
+
+  function shallowScanDirForSkills(dir: string, sourceName: string): any[] {
+    const results: any[] = []
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, f)
+        try {
+          if (fs.statSync(fullPath).isDirectory()) {
+            const skillMd = path.join(fullPath, 'SKILL.md')
+            if (fs.existsSync(skillMd)) {
+              const m = getSkillManifest(skillMd, true)
+              if (m) { m.fileName = f; results.push(m) }
+            }
+            for (const sf of fs.readdirSync(fullPath)) {
+              if (sf.endsWith('.md') && sf !== 'SKILL.md') {
+                const m = getSkillManifest(path.join(fullPath, sf), true)
+                if (m) results.push(m)
+              }
+            }
+          } else if (f.endsWith('.md')) {
+            const m = getSkillManifest(fullPath, true)
+            if (m) results.push(m)
+          }
+        } catch { /* skip individual entries */ }
+      }
+    } catch { /* skip dirs */ }
+    return results
+  }
+
+  
+  ipcMain.handle('skill:load-from-local-dir', async (_e, dir: string) => {
+    try {
+      if (!dir || !fs.existsSync(dir)) return { success: false, error: 'not found' }
+      const skills = deepScanDirForSkills(dir, '本地文件')
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      return { success: true, skills }
+    } catch (e) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:load-from-local', async () => {
+    try {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+      if (result.canceled || !result.filePaths[0]) return { success: false, error: 'cancelled' }
+      const dir = result.filePaths[0]
+      if (!fs.existsSync(dir)) return { success: false, error: 'not found' }
+      // Recursive scan: traverse subdirectories for SKILL.md + .md files
+      const skills = deepScanDirForSkills(dir, '本地文件')
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      // Still remember the dir for future reloads
+      const cfg = loadMarketConfig()
+      if (!cfg.localPaths.includes(dir)) cfg.localPaths.push(dir)
+      saveMarketConfig(cfg)
+      return { success: true, skills }
+    } catch (e) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:load-from-git', async (_e, gitUrl) => {
+    return new Promise((resolve) => {
+      try {
+        if (!gitUrl) { resolve({ success: false, error: 'no url' }); return }
+        const td = path.join(os.homedir(), '.claude', 'skill-repos', Date.now().toString(36))
+        const gitProc = spawn('git', ['clone', '--depth=1', gitUrl, td], { timeout: 60000 })
+        let stderr = ''
+        gitProc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+        gitProc.on('close', (code) => {
+          try {
+            if (code !== 0) { resolve({ success: false, error: stderr || 'Git clone failed' }); return }
+            if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+            let count = 0
+            for (const f of fs.readdirSync(td)) { if (f.endsWith('.md')) { fs.copyFileSync(path.join(td, f), path.join(SKILLS_DIR, f)); count++ } }
+            const cfg = loadMarketConfig()
+            cfg.gitUrl = gitUrl
+            saveMarketConfig(cfg)
+            resolve({ success: true, count })
+          } catch (e: any) { resolve({ success: false, error: e.message }) }
+        })
+        gitProc.on('error', (err) => { resolve({ success: false, error: err.message }) })
+      } catch (e: any) { resolve({ success: false, error: e.message }) }
+    })
+  })
+
+  ipcMain.handle('skill:marketplace-install', async (_e: any, item: { id: string }) => {
+    try {
+      const skillFile = path.join(__dirname, '..', 'assets', 'skills', item.id + '.md')
+      if (!fs.existsSync(skillFile)) return { success: false, error: 'Skill not found in bundle' }
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      fs.copyFileSync(skillFile, path.join(SKILLS_DIR, item.id + '.md'))
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
   // ── 开发进程管理 ────────────────────────────────────
   let devProcess: any = null
 
@@ -1652,7 +2269,7 @@ function registerIPC(): void {
       } else {
         win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { consoleWindow: '1' } })
       }
-      win.on('closed', () => { const idx = windows.indexOf(win); if (idx >= 0) windows.splice(idx, 1)(w => w !== win) })
+      win.on('closed', () => { const idx = windows.indexOf(win); if (idx >= 0) windows.splice(idx, 1) })
       windows.push(win)
       return { success: true }
     } catch (e: any) { return { success: false, error: e.message } }
@@ -1724,26 +2341,11 @@ function registerIPC(): void {
       }
     }
 
-    // 读取模型配置
-    let apiKey: string | undefined = process.env.ANTHROPIC_API_KEY
-    let baseUrl: string | undefined = process.env.ANTHROPIC_BASE_URL
-    let model: string | undefined = process.env.ANTHROPIC_MODEL
-
-    const raw = loadSettings()
-    if (raw?.activeModelId) {
-      const cfg = raw.models.find(m => m.id === raw.activeModelId)
-      if (cfg) {
-        apiKey = cfg.apiKey || apiKey
-        baseUrl = cfg.baseUrl || baseUrl
-        model = cfg.model || model
-      }
-    }
-
+    // 终端模式 Claude 完全由 ~/.claude/settings.json 控制，不传入模型配置
     const proc = new TerminalProcess({
       cwd: opts.cwd,
       sessionId: validSessionId,
       claudePath,
-      model, apiKey, baseUrl,
       cols: opts.cols || 120,
       rows: opts.rows || 40,
       permissionMode: opts.autoApproval ? 'auto' : 'manual',
@@ -2013,7 +2615,70 @@ function registerIPC(): void {
   ipcMain.handle('win:is-maximized', (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
   })
-  ipcMain.handle('app:workspace-root', async () => getActiveWorkspaceRoot())
+    ipcMain.handle('app:workspace-root', async () => getActiveWorkspaceRoot())
+
+  // ── 项目技能管理 ──────────────────────────────────
+  const PROJECT_SKILLS_FILE = '.claude/project-skills.json'
+
+  function getProjectSkillsPath(): string {
+    return path.join(getActiveWorkspaceRoot(), PROJECT_SKILLS_FILE)
+  }
+
+  function loadProjectSkills(): string[] {
+    try {
+      const fp = getProjectSkillsPath()
+      if (fs.existsSync(fp)) return JSON.parse(fs.readFileSync(fp, 'utf-8'))
+    } catch {}
+    return []
+  }
+
+  function saveProjectSkills(skills: string[]) {
+    const fp = getProjectSkillsPath()
+    const dir = path.dirname(fp)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(fp, JSON.stringify(skills, null, 2), 'utf-8')
+  }
+
+  ipcMain.handle('skill:list-project', async () => {
+    try { return { success: true, skills: loadProjectSkills() } } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:install-to-project', async (_e, skillName: string) => {
+    try {
+      const list = loadProjectSkills()
+      if (!list.includes(skillName)) { list.push(skillName); saveProjectSkills(list) }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:remove-from-project', async (_e, skillName: string) => {
+    try {
+      const list = loadProjectSkills()
+      const idx = list.indexOf(skillName)
+      if (idx >= 0) { list.splice(idx, 1); saveProjectSkills(list) }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:clear-project', async () => {
+    try { saveProjectSkills([]); return { success: true } } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 自动化工坊：循环任务 ────────────────────────────
+  const LOOPS_FILE = path.join(os.homedir(), '.claude', 'loops.json')
+  function loadLoops(): any[] { try { if (fs.existsSync(LOOPS_FILE)) return JSON.parse(fs.readFileSync(LOOPS_FILE, 'utf-8')) } catch {} return [] }
+  function saveLoops(loops: any[]) { const dir = path.dirname(LOOPS_FILE); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(LOOPS_FILE, JSON.stringify(loops, null, 2), 'utf-8') }
+  ipcMain.handle('loop:list', async () => { try { return { success: true, loops: loadLoops() } } catch (e: any) { return { success: false, error: e.message } } })
+  ipcMain.handle('loop:create', async (_e, opts: { name: string; prompt: string; interval: string }) => { try { const loops = loadLoops(); const loop = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: opts.name, prompt: opts.prompt, interval: opts.interval || '10m', status: 'idle', lastRun: null, createdAt: new Date().toISOString() }; loops.push(loop); saveLoops(loops); return { success: true, loop } } catch (e: any) { return { success: false, error: e.message } } })
+  ipcMain.handle('loop:delete', async (_e, id: string) => { try { const loops = loadLoops(); saveLoops(loops.filter((l: any) => l.id !== id)); return { success: true } } catch (e: any) { return { success: false, error: e.message } } })
+  ipcMain.handle('loop:run-now', async (_e, id: string) => { try { const loops = loadLoops(); const loop = loops.find((l: any) => l.id === id); if (!loop) return { success: false, error: 'not found' }; loop.status = 'running'; loop.lastRun = new Date().toISOString(); saveLoops(loops); return { success: true } } catch (e: any) { return { success: false, error: e.message } } })
+
+  // ── 工作流执行 ────────────────────────────────────
+  const WFRUNS_FILE = path.join(os.homedir(), '.claude', 'workflow-runs.json')
+  function loadRuns(): any[] { try { if (fs.existsSync(WFRUNS_FILE)) return JSON.parse(fs.readFileSync(WFRUNS_FILE, 'utf-8')) } catch {} return [] }
+  function saveRuns(runs: any[]) { const dir = path.dirname(WFRUNS_FILE); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(WFRUNS_FILE, JSON.stringify(runs, null, 2), 'utf-8') }
+  ipcMain.handle('workflow:list-runs', async () => { try { return { success: true, runs: loadRuns() } } catch (e: any) { return { success: false, error: e.message } } })
+  ipcMain.handle('workflow:run', async (_e, opts: { templateId: string; name: string }) => { try { const run = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), templateId: opts.templateId, name: opts.name, status: 'queued', startedAt: new Date().toISOString(), completedAt: null, result: null }; const runs = loadRuns(); runs.push(run); saveRuns(runs); return { success: true, run } } catch (e: any) { return { success: false, error: e.message } } })
 
   // ── 工作空间管理 IPC ──────────────────────────────
   ipcMain.handle('workspace:list', async () => {
@@ -2084,6 +2749,10 @@ app.whenReady().then(() => {
   applyMenu()
   registerIPC()
   createWindow()
+  // 等窗口就绪后再启动 claude settings.json 监视
+  setTimeout(() => {
+    try { initClaudeSettingsWatcher() } catch (e) { console.warn('initClaudeSettingsWatcher failed:', e) }
+  }, 3000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

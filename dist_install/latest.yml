@@ -1,0 +1,8 @@
+version: 1.2.0
+files:
+  - url: claude-space-1.2.0-x64.exe
+    sha512: W8IfzIyOmKV02TICTdYTvCEjmxUa649c1OPqqfWYBA4OYpbYvivr+eNIsiDjU2mepN92kewK8i06qIC0J1JHTA==
+    size: 84664311
+path: claude-space-1.2.0-x64.exe
+sha512: W8IfzIyOmKV02TICTdYTvCEjmxUa649c1OPqqfWYBA4OYpbYvivr+eNIsiDjU2mepN92kewK8i06qIC0J1JHTA==
+releaseDate: 2026-07-01T15:47:20.644Z

@@ -1,5 +1,6 @@
 import type { AppSettingsSafe, ModelConfigSafe } from './settings'
 import type { ConnectionHealth, CliDetectionResult, ApiTestResult } from './connection'
+import type { SkillScanResult, MarketSource } from './skill'
 
 export interface ElectronAPI {
   // Claude session
@@ -42,6 +43,9 @@ export interface ElectronAPI {
   scanProjects: (rootPath?: string) => Promise<any[]>
   newProject: (name?: string) => Promise<{ canceled: boolean; path?: string; name?: string; error?: string }>
   openProjectFolder: (projectPath: string) => Promise<void>
+  openInVscode: (projectPath: string) => Promise<{ success: boolean; error?: string }>
+  openInIdea: (projectPath: string) => Promise<{ success: boolean; error?: string }>
+  openInIde: (opts: { ideId: string; projectPath: string }) => Promise<{ success: boolean; error?: string }>
   openProjectInNewWindow: (projectPath: string) => Promise<{ success: boolean }>
   scanDirectory: (dirPath: string) => Promise<any[]>
   scanProjectFiles: (dirPath: string) => Promise<any[]>
@@ -137,6 +141,42 @@ export interface ElectronAPI {
   onConsoleLogLine: (callback: (line: string) => void) => () => void
   getConsoleLogHistory: () => Promise<{ success: boolean; lines: string[]; error?: string }>
 
+  // Skill management
+  skillList: () => Promise<{ success: boolean; skills: any[]; error?: string }>
+  skillRead: (name: string) => Promise<{ success: boolean; content: string; error?: string }>
+  skillInstall: (opts: { name: string; content: string }) => Promise<{ success: boolean; error?: string }>
+  skillUninstall: (name: string) => Promise<{ success: boolean; error?: string }>
+  skillMarketplaceList: () => Promise<{ success: boolean; items: any[]; error?: string }>
+  skillGetMarketConfig: () => Promise<{ success: boolean; config: { marketplaces?: MarketSource[]; localPaths?: string[] } }>
+  skillSaveMarketConfig: (cfg: any) => Promise<{ success: boolean; error?: string }>
+  skillLoadFromLocal: () => Promise<{ success: boolean; skills?: SkillScanResult[]; error?: string }>
+  skillLoadFromLocalDir: (dir: string) => Promise<{ success: boolean; skills?: SkillScanResult[]; error?: string }>
+  skillLoadFromGit: (gitUrl: string) => Promise<{ success: boolean; count?: number; error?: string }>
+  skillInstallBatch: (opts: { skills: Array<{ name: string; content: string }> }) => Promise<{ success: boolean; count?: number; errors?: Array<{ name: string; error: string }>; error?: string }>
+  skillMarketplaceScan: () => Promise<{ success: boolean; skills?: SkillScanResult[]; error?: string }>
+  skillMarketplaceSourceAdd: (src: MarketSource) => Promise<{ success: boolean; error?: string }>
+  skillMarketplaceSourceRemove: (url: string) => Promise<{ success: boolean; error?: string }>
+  skillMarketplaceSourceUpdate: (url: string, updates: Partial<MarketSource>) => Promise<{ success: boolean; error?: string }>
+
+    skillMarketplaceInstall: (item: { id: string }) => Promise<{ success: boolean; error?: string }>
+
+  // Project skills
+  skillListProject: () => Promise<{ success: boolean; skills?: string[]; error?: string }>
+  skillInstallToProject: (skillName: string) => Promise<{ success: boolean; error?: string }>
+  skillRemoveFromProject: (skillName: string) => Promise<{ success: boolean; error?: string }>
+  skillClearProject: () => Promise<{ success: boolean; error?: string }>
+
+  // Automation workshop
+  loopList: () => Promise<{ success: boolean; loops?: any[]; error?: string }>
+  loopCreate: (opts: { name: string; prompt: string; interval: string }) => Promise<{ success: boolean; loop?: any; error?: string }>
+  loopDelete: (id: string) => Promise<{ success: boolean; error?: string }>
+  loopRunNow: (id: string) => Promise<{ success: boolean; error?: string }>
+  workflowListRuns: () => Promise<{ success: boolean; runs?: any[]; error?: string }>
+  workflowRun: (opts: { templateId: string; name: string }) => Promise<{ success: boolean; run?: any; error?: string }>
+  onLoopStatus: (callback: (data: any) => void) => () => void
+  onWorkflowLog: (callback: (data: any) => void) => () => void
+  onWorkflowStatus: (callback: (data: any) => void) => () => void
+
   // Terminal management
   terminalStart: (opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) => Promise<{ success: boolean }>
   terminalRestart: () => Promise<{ success: boolean }>
@@ -177,6 +217,12 @@ export interface ElectronAPI {
   workspaceAdd: (opts: { name: string; path: string }) => Promise<{ success: boolean; workspace?: { id: string; name: string; path: string; isActive: boolean; createdAt: string }; error?: string }>
   workspaceRemove: (workspaceId: string) => Promise<{ success: boolean; error?: string }>
   workspaceSetActive: (workspaceId: string) => Promise<{ success: boolean; path?: string; error?: string }>
+
+  // ── Claude native env config ──────────────────────────────
+  claudeEnvConfig: () => Promise<{ baseUrl: string; authToken: string; defaultModel: string; models: Array<{ name: string; model: string; fromEnv: string }>; mtime: string }>
+  syncFromClaudeEnv: () => Promise<{ success: boolean; added?: number; models?: Array<{ id: string; name: string; model: string }>; error?: string }>
+  onClaudeEnvChanged: (callback: (config: { baseUrl: string; authToken: string; defaultModel: string; models: Array<{ name: string; model: string; fromEnv: string }>; mtime: string }) => void) => () => void
+  onSettingsMigrated: (callback: (data: { activeModelId: string | null }) => void) => () => void
 }
 
 declare global {

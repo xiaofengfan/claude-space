@@ -33,6 +33,15 @@ export interface ModelConfigSafe {
   apiKeySource: 'env' | 'user'
 }
 
+/** IDE 工具配置 */
+export interface IdeConfig {
+  id: string
+  name: string
+  executablePath: string    // e.g. "C:\Program Files\Microsoft VS Code\Code.exe"
+  args?: string             // 附加参数，支持 {projectPath} 占位，默认 "{projectPath}"
+  icon?: string             // 显示图标
+}
+
 /** 完整应用设置（存储在 JSON 文件中） */
 export interface AppSettings {
   version: number
@@ -44,6 +53,7 @@ export interface AppSettings {
   sshServers: import('./ssh').SshServerConfig[]       // SSH 服务器配置（明文密钥—永不出主进程）
   deployTargets: import('./ssh').DeployTarget[]        // 部署目标配置
   workspaces?: WorkspaceConfig[]                       // 工作空间列表
+  ides?: IdeConfig[]                                    // IDE 工具配置
 }
 
 /** 脱敏后的应用设置（发送到渲染进程） */
@@ -57,4 +67,5 @@ export interface AppSettingsSafe {
   sshServers: import('./ssh').SshServerConfigSafe[]    // 脱敏后的 SSH 配置
   deployTargets: import('./ssh').DeployTarget[]         // 部署目标（无敏感信息）
   workspaces?: WorkspaceConfig[]                        // 工作空间列表
+  ides?: IdeConfig[]                                     // IDE 工具配置
 }

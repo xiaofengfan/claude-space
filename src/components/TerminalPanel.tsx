@@ -25,8 +25,8 @@ interface TerminalState {
 }
 
 const DARK_THEME = {
-  background: '#1a1a2e', foreground: '#e0e0e0', cursor: '#00ff88',
-  cursorAccent: '#1a1a2e', selectionBackground: '#ffffff25',
+  background: '#0d0d0d', foreground: '#e0e0e0', cursor: '#00ff88',
+  cursorAccent: '#0d0d0d', selectionBackground: '#ffffff25',
   black: '#2a2a4a', red: '#e05555', green: '#4caf50',
   yellow: '#e89030', blue: '#6c8cff', magenta: '#b05090',
   cyan: '#3a9cc0', white: '#ccc',

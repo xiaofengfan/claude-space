@@ -2,6 +2,10 @@ node_modules/
 dist/
 dist-electron/
 release/
+release_build/
+dist_install/*.exe
+dist_install/*.exe.blockmap
+dist_install/win-unpacked/
 *.log
 .env
 test-screenshots/

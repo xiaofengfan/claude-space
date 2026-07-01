@@ -118,6 +118,9 @@ const electronAPI = {
   newProject: (name?: string) => ipcRenderer.invoke('project:new', name),
 
   openProjectFolder: (projectPath: string) => ipcRenderer.invoke('project:open-folder', projectPath),
+  openInVscode: (projectPath: string) => ipcRenderer.invoke('project:open-in-vscode', projectPath),
+  openInIdea: (projectPath: string) => ipcRenderer.invoke('project:open-in-idea', projectPath),
+  openInIde: (opts: { ideId: string; projectPath: string }) => ipcRenderer.invoke('project:open-in-ide', opts),
 
   openProjectInNewWindow: (projectPath: string) => ipcRenderer.invoke('project:open-in-new-window', projectPath),
 
@@ -226,6 +229,40 @@ const electronAPI = {
   knowledgeCreate: (opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => ipcRenderer.invoke('knowledge:create', opts),
   knowledgeDelete: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('knowledge:delete', opts),
 
+  // ── 技能管理 ────────────────────────────────────────────
+  skillList: () => ipcRenderer.invoke('skill:list'),
+  skillRead: (name: string) => ipcRenderer.invoke('skill:read', name),
+  skillInstall: (opts: { name: string; content: string }) => ipcRenderer.invoke('skill:install', opts),
+  skillUninstall: (name: string) => ipcRenderer.invoke('skill:uninstall', name),
+  skillMarketplaceList: () => ipcRenderer.invoke('skill:marketplace-list'),
+  skillGetMarketConfig: () => ipcRenderer.invoke("skill:get-market-config"),
+  skillSaveMarketConfig: (cfg: any) => ipcRenderer.invoke("skill:save-market-config", cfg),
+  skillLoadFromLocal: () => ipcRenderer.invoke("skill:load-from-local"),
+  skillLoadFromLocalDir: (dir: string) => ipcRenderer.invoke('skill:load-from-local-dir', dir),
+  skillLoadFromGit: (gitUrl: string) => ipcRenderer.invoke("skill:load-from-git", gitUrl),
+  skillInstallBatch: (opts: { skills: Array<{ name: string; content: string }> }) => ipcRenderer.invoke("skill:install-batch", opts),
+  skillMarketplaceScan: () => ipcRenderer.invoke("skill:marketplace-scan"),
+  skillMarketplaceSourceAdd: (src: { name: string; url: string; enabled: boolean; autoScan: boolean }) => ipcRenderer.invoke("skill:marketplace-source-add", src),
+  skillMarketplaceSourceRemove: (url: string) => ipcRenderer.invoke("skill:marketplace-source-remove", url),
+  skillMarketplaceSourceUpdate: (url: string, updates: { enabled?: boolean; autoScan?: boolean }) => ipcRenderer.invoke("skill:marketplace-source-update", url, updates),
+
+    skillMarketplaceInstall: (item: { id: string }) => ipcRenderer.invoke('skill:marketplace-install', item),
+
+  // ── 项目技能 ──────────────────────────────────────────
+  skillListProject: () => ipcRenderer.invoke('skill:list-project'),
+  skillInstallToProject: (skillName: string) => ipcRenderer.invoke('skill:install-to-project', skillName),
+  skillRemoveFromProject: (skillName: string) => ipcRenderer.invoke('skill:remove-from-project', skillName),
+  skillClearProject: () => ipcRenderer.invoke('skill:clear-project'),
+  loopList: () => ipcRenderer.invoke('loop:list'),
+  loopCreate: (opts: { name: string; prompt: string; interval: string }) => ipcRenderer.invoke('loop:create', opts),
+  loopDelete: (id: string) => ipcRenderer.invoke('loop:delete', id),
+  loopRunNow: (id: string) => ipcRenderer.invoke('loop:run-now', id),
+  workflowListRuns: () => ipcRenderer.invoke('workflow:list-runs'),
+  workflowRun: (opts: { templateId: string; name: string }) => ipcRenderer.invoke('workflow:run', opts),
+  onLoopStatus: (callback: (data: any) => void) => { const f = (_e: any, d: any) => callback(d); ipcRenderer.on('loop:status', f); return () => ipcRenderer.removeListener('loop:status', f) },
+  onWorkflowLog: (callback: (data: any) => void) => { const f = (_e: any, d: any) => callback(d); ipcRenderer.on('workflow:log', f); return () => ipcRenderer.removeListener('workflow:log', f) },
+  onWorkflowStatus: (callback: (data: any) => void) => { const f = (_e: any, d: any) => callback(d); ipcRenderer.on('workflow:status', f); return () => ipcRenderer.removeListener('workflow:status', f) },
+
   // ── 开发控制台 ────────────────────────────────────────────
   openConsoleWindow: () => ipcRenderer.invoke('console:open-window'),
   devStart: (opts: { command: string; name: string }) => ipcRenderer.invoke('dev:start', opts),
@@ -333,6 +370,19 @@ const electronAPI = {
   workspaceAdd: (opts: { name: string; path: string }) => ipcRenderer.invoke('workspace:add', opts),
   workspaceRemove: (workspaceId: string) => ipcRenderer.invoke('workspace:remove', workspaceId),
   workspaceSetActive: (workspaceId: string) => ipcRenderer.invoke('workspace:set-active', workspaceId),
+  // ── Claude 原生配置同步 ──────────────────────────
+  claudeEnvConfig: () => ipcRenderer.invoke('settings:claude-env-config'),
+  syncFromClaudeEnv: () => ipcRenderer.invoke('settings:sync-from-claude-env'),
+  onClaudeEnvChanged: (callback: (config: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('claude-env:changed', handler)
+    return () => ipcRenderer.removeListener('claude-env:changed', handler)
+  },
+  onSettingsMigrated: (callback: (data: { activeModelId: string | null }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('settings:migrated', handler)
+    return () => ipcRenderer.removeListener('settings:migrated', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

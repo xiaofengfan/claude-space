@@ -32,7 +32,7 @@ export function RemoteTerminalPanel({ sshStatus, visible, theme }: Props) {
       fontSize: 14,
       fontFamily: 'Consolas, "Courier New", monospace',
       theme: {
-        background: isDark ? '#0d1117' : '#ffffff',
+        background: isDark ? '#0d0d0d' : '#ffffff',
         foreground: isDark ? '#c9d1d9' : '#24292f',
         cursor: isDark ? '#58a6ff' : '#0969da',
         selectionBackground: isDark ? '#264f78' : '#afcdff',

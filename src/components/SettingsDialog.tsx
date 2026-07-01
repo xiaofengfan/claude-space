@@ -1,6 +1,15 @@
 import { useState, useEffect } from 'react'
-import type { AppSettingsSafe, ModelProvider, ModelConfigSafe } from '../types/settings'
+import type { AppSettingsSafe, ModelProvider, ModelConfigSafe, IdeConfig } from '../types/settings'
 import { SshSettingsSection } from './SshSettingsSection'
+
+// ── Claude 原生配置来源类型 ─────────────────────────────────
+interface ClaudeEnvModel {
+  name: string; model: string; fromEnv: string
+}
+interface ClaudeEnvConfig {
+  baseUrl: string; authToken: string; defaultModel: string
+  models: ClaudeEnvModel[]; mtime: string
+}
 
 const PROVIDER_DEFAULTS: Record<ModelProvider, string> = {
   Claude: 'https://api.anthropic.com',
@@ -16,12 +25,13 @@ const PROVIDER_MODELS: Record<ModelProvider, string> = {
   Custom: '',
 }
 
-type SettingsTab = 'models' | 'workspace' | 'ssh' | 'general'
+type SettingsTab = 'models' | 'workspace' | 'ssh' | 'general' | 'ides'
 
 const TABS: { key: SettingsTab; icon: string; label: string }[] = [
   { key: 'models', icon: '🤖', label: '模型' },
   { key: 'workspace', icon: '📁', label: '工作空间' },
   { key: 'ssh', icon: '🔌', label: 'SSH' },
+  { key: 'ides', icon: '🛠️', label: 'IDE' },
   { key: 'general', icon: '⚙️', label: '通用' },
 ]
 
@@ -66,10 +76,58 @@ export function SettingsDialog({
   const [newWsPath, setNewWsPath] = useState('')
   const [wsError, setWsError] = useState('')
 
+  // ── IDE state ──
+  const [ides, setIdes] = useState<IdeConfig[]>([])
+  const [editingIde, setEditingIde] = useState<IdeConfig | null>(null)
+  const [isAddingIde, setIsAddingIde] = useState(false)
+
+  // ── Claude 原生配置来源 ──
+  const [claudeEnv, setClaudeEnv] = useState<ClaudeEnvConfig | null>(null)
+  const [envSyncing, setEnvSyncing] = useState(false)
+  const [envSyncResult, setEnvSyncResult] = useState<{ success: boolean; msg: string } | null>(null)
+  const [envChanged, setEnvChanged] = useState(false)  // 检测到文件变更
+
   useEffect(() => {
     window.electronAPI.getWorkspaceRoot().then(setWorkspaceRoot).catch(() => {})
     window.electronAPI.workspaceList().then(list => { if (list?.length) setWorkspaces(list) }).catch(() => {})
+    if (settings?.ides) setIdes(settings.ides)
+
+    // 读取 claude 原生配置
+    window.electronAPI.claudeEnvConfig?.().then((cfg: ClaudeEnvConfig) => {
+      setClaudeEnv(cfg)
+      // 检查是否有可同步的新模型
+      if (cfg.models.length > 0 && settings?.models) {
+        const existingIds = new Set(settings.models.map(m => m.id))
+        const hasNew = cfg.models.some(m => {
+          const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+          return !existingIds.has(sid)
+        })
+        if (hasNew) setEnvChanged(true)
+      }
+    }).catch(() => {})
+  }, [settings])
+
+  // 监听 claude settings.json 文件变更
+  useEffect(() => {
+    const unsub = window.electronAPI.onClaudeEnvChanged?.((cfg: ClaudeEnvConfig) => {
+      setClaudeEnv(cfg)
+      setEnvChanged(true)
+    })
+    return () => unsub?.()
   }, [])
+
+  // 监听模型迁移事件（后台自动同步后主动刷新）
+  useEffect(() => {
+    const unsub = window.electronAPI.onSettingsMigrated?.((data) => {
+      if (data.activeModelId && settings && data.activeModelId !== settings.activeModelId) {
+        // 刷新 settings
+        window.electronAPI.loadSettings().then(fresh => {
+          onSettingsChange(fresh)
+        }).catch(() => {})
+      }
+    })
+    return () => unsub?.()
+  }, [settings, onSettingsChange])
 
   // ── Workspace handlers ──
   async function handleAddWorkspace() {
@@ -107,6 +165,42 @@ export function SettingsDialog({
     } catch { /* 非关键 */ }
   }
 
+  // ── IDE handlers ──
+  const IDES_PRESET_ICONS: Record<string, string> = {
+    vscode: '💻', idea: '🧩', cursor: '🖥️', windsurf: '🌊',
+  }
+
+  function startEditIde(ide: IdeConfig) {
+    setEditingIde({ ...ide }); setIsAddingIde(false)
+  }
+  function startAddIde() {
+    setEditingIde({ id: 'ide-' + Date.now().toString(36), name: '', executablePath: '', args: '{projectPath}', icon: '🛠️' })
+    setIsAddingIde(true)
+  }
+  function cancelEditIde() { setEditingIde(null); setIsAddingIde(false) }
+
+  function handleSaveIde() {
+    if (!editingIde || !settings) return
+    if (!editingIde.name.trim() || !editingIde.executablePath.trim()) { alert('请填写名称和执行路径'); return }
+    let newIdes: IdeConfig[]
+    if (isAddingIde) {
+      newIdes = [...ides, { ...editingIde, name: editingIde.name.trim(), executablePath: editingIde.executablePath.trim() }]
+    } else {
+      newIdes = ides.map(i => i.id === editingIde.id ? { ...editingIde, name: editingIde.name.trim(), executablePath: editingIde.executablePath.trim() } : i)
+    }
+    setIdes(newIdes)
+    onSettingsChange({ ...settings, ides: newIdes })
+    cancelEditIde()
+  }
+
+  function handleDeleteIde(id: string) {
+    if (!settings) return
+    if (!confirm('删除此 IDE 配置？')) return
+    const newIdes = ides.filter(i => i.id !== id)
+    setIdes(newIdes)
+    onSettingsChange({ ...settings, ides: newIdes })
+  }
+
   // ── Model handlers ──
   const models = settings?.models || []
 
@@ -142,6 +236,27 @@ export function SettingsDialog({
   function handleSetActive(modelId: string) {
     if (!settings) return
     onSettingsChange({ ...settings, activeModelId: modelId })
+  }
+
+  // ── Claude 原生配置同步 ──
+  async function handleSyncFromClaudeEnv() {
+    if (!window.electronAPI.syncFromClaudeEnv) return
+    setEnvSyncing(true)
+    setEnvSyncResult(null)
+    try {
+      const res = await window.electronAPI.syncFromClaudeEnv()
+      setEnvSyncResult({ success: res.success, msg: res.success ? `✅ 已同步 ${res.added} 个新模型` : `⚠️ ${res.error}` })
+      if (res.success) {
+        setEnvChanged(false)
+        // 刷新 settings
+        const fresh = await window.electronAPI.loadSettings()
+        onSettingsChange(fresh)
+      }
+    } catch (err: any) {
+      setEnvSyncResult({ success: false, msg: `❌ 同步失败: ${err.message}` })
+    }
+    setEnvSyncing(false)
+    setTimeout(() => setEnvSyncResult(null), 5000)
   }
 
   function handleProviderChange(provider: ModelProvider) {
@@ -188,6 +303,75 @@ export function SettingsDialog({
         <div className="settings-body">
           {activeTab === 'models' && (
             <div className="settings-tab-content">
+              {/* ── Claude 原生配置来源区块 ── */}
+              {claudeEnv && claudeEnv.baseUrl && (
+                <div className="setting-section" style={{
+                  border: '1px solid #444',
+                  borderRadius: 8,
+                  padding: 16,
+                  marginBottom: 16,
+                  background: 'rgba(255, 255, 255, 0.03)',
+                }}>
+                  <div className="setting-section-header" style={{ marginBottom: 10 }}>
+                    <h3>📋 Claude 原生配置来源</h3>
+                    <span style={{ fontSize: 11, color: '#666' }}>
+                      来自 ~/.claude/settings.json
+                      {envChanged && <span style={{ color: '#ffa500', marginLeft: 8 }}>🔄 检测到更新</span>}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#bbb', marginBottom: 10, lineHeight: 1.8 }}>
+                    <div>🔗 端点: <code style={{ color: '#7ec8e3' }}>{claudeEnv.baseUrl}</code></div>
+                    <div>
+                      🔑 Token:{' '}
+                      {claudeEnv.authToken
+                        ? <code style={{ color: '#8bc34a' }}>{claudeEnv.authToken.slice(0, 8)}****{claudeEnv.authToken.slice(-4)} (已配置)</code>
+                        : <span style={{ color: '#e05555' }}>未配置</span>}
+                    </div>
+                    <div style={{ marginTop: 6, color: '#888', fontSize: 11 }}>
+                      默认模型: <span style={{ color: '#ccc' }}>{claudeEnv.defaultModel || '无'}</span>
+                      {claudeEnv.models.length > 0 && ` · ${claudeEnv.models.length} 个可用模型`}
+                    </div>
+                  </div>
+                  {claudeEnv.models.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                      {claudeEnv.models.map((m, i) => (
+                        <span key={i} style={{
+                          fontSize: 11, padding: '2px 8px', borderRadius: 4,
+                          background: m.model === claudeEnv.defaultModel ? '#2d5a2d' : '#333',
+                          color: m.model === claudeEnv.defaultModel ? '#8bc34a' : '#ccc',
+                        }}>
+                          {m.name}
+                          {m.model === claudeEnv.defaultModel && ' 📌'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {envChanged && (
+                      <div style={{ fontSize: 11, color: '#ffa500' }}>
+                        ⚡ settings.json 有变动
+                      </div>
+                    )}
+                    <button
+                      className="btn-primary"
+                      onClick={handleSyncFromClaudeEnv}
+                      disabled={envSyncing}
+                      style={{ fontSize: 12, padding: '6px 14px' }}
+                    >
+                      {envSyncing ? '⏳ 同步中...' : '🔄 同步到模型列表'}
+                    </button>
+                    {envSyncResult && (
+                      <span style={{
+                        fontSize: 12, marginLeft: 8,
+                        color: envSyncResult.success ? '#8bc34a' : '#e05555',
+                      }}>
+                        {envSyncResult.msg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="setting-section">
                 <div className="setting-section-header">
                   <h3>模型配置</h3>
@@ -304,6 +488,81 @@ export function SettingsDialog({
                 servers={settings?.sshServers || []}
                 onServersChange={(sshServers) => { if (settings) onSettingsChange({ ...settings, sshServers: sshServers as any }) }}
               />
+            </div>
+          )}
+
+          {activeTab === 'ides' && (
+            <div className="settings-tab-content">
+              <div className="setting-section">
+                <div className="setting-section-header">
+                  <h3>🛠️ IDE 工具配置</h3>
+                  {!editingIde && (
+                    <button className="btn-add-model" onClick={startAddIde}>+ 添加 IDE</button>
+                  )}
+                </div>
+                <p className="setting-hint" style={{ marginBottom: 16, fontSize: 11, color: '#888' }}>
+                  配置项目中可用的 IDE 工具，支持 VS Code、IntelliJ IDEA、Cursor 等。
+                  使用 <code style={{ background: '#2a2a3e', padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>{'{projectPath}'}</code> 占位符传入项目路径。
+                </p>
+
+                {ides.length === 0 && !editingIde && (
+                  <div className="empty-hint" style={{ padding: 24, textAlign: 'center' }}>
+                    <div style={{ fontSize: 28, marginBottom: 8 }}>🛠️</div>
+                    <div style={{ fontSize: 13, color: '#888' }}>暂未配置 IDE</div>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>点击「+ 添加 IDE」开始配置</div>
+                  </div>
+                )}
+
+                {ides.map(ide => (
+                  <div key={ide.id} className="model-card">
+                    <div className="model-card-info">
+                      <div className="model-card-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>{ide.icon || '🛠️'}</span>
+                        <span>{ide.name}</span>
+                      </div>
+                      <div className="model-card-detail" style={{ fontFamily: 'monospace', fontSize: 10 }}>
+                        {ide.executablePath}
+                      </div>
+                      <div className="model-card-detail" style={{ fontSize: 10, color: '#666' }}>
+                        参数: {ide.args || '{projectPath}'}
+                      </div>
+                    </div>
+                    <div className="model-card-actions">
+                      <button className="icon-btn" onClick={() => startEditIde(ide)} title="编辑">✏️</button>
+                      <button className="icon-btn" onClick={() => handleDeleteIde(ide.id)} title="删除" style={{ color: '#e05555' }}>🗑</button>
+                    </div>
+                  </div>
+                ))}
+
+                {editingIde && (
+                  <div className="model-form" style={{ marginTop: 16 }}>
+                    <h4 style={{ fontSize: 13, marginBottom: 12, color: '#ccc' }}>
+                      {isAddingIde ? '添加 IDE' : `编辑: ${editingIde.name || editingIde.id}`}
+                    </h4>
+                    <div className="model-form-field">
+                      <label>名称</label>
+                      <input className="model-form-input" value={editingIde.name} onChange={e => setEditingIde({ ...editingIde, name: e.target.value })} placeholder="例如: VS Code" />
+                    </div>
+                    <div className="model-form-field">
+                      <label>可执行路径</label>
+                      <input className="model-form-input" value={editingIde.executablePath} onChange={e => setEditingIde({ ...editingIde, executablePath: e.target.value })} placeholder="例如: C:\Program Files\VS Code\Code.exe 或 code" />
+                    </div>
+                    <div className="model-form-field">
+                      <label>图标 (Emoji)</label>
+                      <input className="model-form-input" value={editingIde.icon || ''} onChange={e => setEditingIde({ ...editingIde, icon: e.target.value })} placeholder="💻" style={{ fontSize: 18, width: 60 }} />
+                    </div>
+                    <div className="model-form-field">
+                      <label>启动参数</label>
+                      <input className="model-form-input" value={editingIde.args || ''} onChange={e => setEditingIde({ ...editingIde, args: e.target.value })} placeholder="{projectPath}" />
+                      <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>使用 {'{projectPath}'} 占位项目路径，默认 {'{projectPath}'}</div>
+                    </div>
+                    <div className="model-form-actions">
+                      <button className="btn-cancel" onClick={cancelEditIde}>取消</button>
+                      <button className="btn-primary" onClick={handleSaveIde}>{isAddingIde ? '添加' : '保存'}</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

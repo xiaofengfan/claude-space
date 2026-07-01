@@ -32,6 +32,8 @@ import { AssistantPanel } from './components/AssistantPanel'
 import { ContentRulesPanel } from './components/ContentRulesPanel'
 import { MemoryPanel } from './components/MemoryPanel'
 import { KnowledgeDialog } from './components/KnowledgeDialog'
+import { SkillPanel } from './components/SkillPanel'
+import { AutomationPanel } from './components/AutomationPanel'
 import { ConsolePanel } from './components/ConsolePanel'
 import { ActivityBar, VIEW_LABELS } from './components/ActivityBar'
 import { useSplitter } from './hooks/useSplitter'
@@ -145,7 +147,7 @@ export default function App() {
   const [theme, setThemeState] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem('claude-space-theme') as 'dark' | 'light') || 'dark'
   )
-  const [leftView, setLeftView] = useState<'files' | 'sessions' | 'rules' | 'memory' | 'git'>('files')
+  const [leftView, setLeftView] = useState<'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'automation'>('files')
   const [rightView, setRightView] = useState<'tasks' | 'office' | 'connection' | 'plan' | 'assistant' | 'ssh' | 'remote-files' | 'deploy'>('tasks')
   const [showSettings, setShowSettings] = useState(false)
   const [showProjectManager, setShowProjectManager] = useState(false)
@@ -1275,15 +1277,15 @@ export default function App() {
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'git')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onConsoleClick={() => setShowConsole(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
+          <ProjectNav project={activeProject} leftView={leftView} theme={theme} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'automation')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onConsoleClick={() => setShowConsole(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
             await handleWorkspaceSwitch(workspaceId)
-          }} />
+          }} onOpenSettings={() => setShowSettings(true)} />
           <div className="app-body">
             {/* VS Code 风格左侧栏: ActivityBar + SideBar */}
             <div style={{ display: 'flex', flexShrink: 0 }}>
               <ActivityBar activeView={leftView} onViewChange={(v) => {
                 if (v === 'sessions') loadSessions(activeProject.path)
-                setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'git')
+                setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'automation')
               }} />
               <aside className="sidebar left-sidebar" style={{ width: Math.max(leftSplitter.size - 48, 132) }}>
                 <div className="sidebar-header">{VIEW_LABELS[leftView] || ''}</div>
@@ -1300,6 +1302,12 @@ export default function App() {
                   )}
                   {leftView === 'rules' && (
                     <ContentRulesPanel activeProjectPath={activeProject?.path} theme={theme} onOpenFile={handleOpenFile} />
+                  )}
+                  {leftView === 'skills' && (
+                    <SkillPanel theme={theme} />
+                  )}
+                  {leftView === 'automation' && (
+                    <AutomationPanel theme={theme} activeProjectPath={activeProject?.path} />
                   )}
                   {leftView === 'memory' && (
                     <MemoryPanel theme={theme} activeProjectPath={activeProject?.path} />

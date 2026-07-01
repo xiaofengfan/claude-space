@@ -991,11 +991,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .mode-switch-btn:hover { color:#ccc; border-color:var(--border-light); }
 .mode-switch-btn.active { background:var(--border); color:#fff; border-color:var(--accent); }
 .mode-switch-hint { font-size:10px; color:#555; }
-.terminal-container { background:var(--bg-base); flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.terminal-container { background:var(--bg-elevated); flex:1; overflow:hidden; display:flex; flex-direction:column; }
 .terminal-container .xterm { height:100%; padding:4px; }
-.terminal-container .xterm-viewport { scrollbar-width:thin; scrollbar-color:#555 var(--bg-base); }
+.terminal-container .xterm-viewport { scrollbar-width:thin; scrollbar-color:#555 var(--bg-elevated); }
 .terminal-container .xterm-viewport::-webkit-scrollbar { width:8px; }
-.terminal-container .xterm-viewport::-webkit-scrollbar-track { background:var(--bg-base); }
+.terminal-container .xterm-viewport::-webkit-scrollbar-track { background:var(--bg-elevated); }
 .terminal-container .xterm-viewport::-webkit-scrollbar-thumb { background:#555; border-radius:4px; }
 .terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover { background:#888; }
 
@@ -1972,12 +1972,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .empty-hint{font-size:12px;color:#484f58;text-align:center;padding:16px}
 
 /* ── Remote Terminal ────────────────────────────── */
-.terminal-header{display:flex;align-items:center;gap:12px;padding:8px 12px;background:#161b22;border-bottom:1px solid #30363d;font-size:13px;color:#e6edf3}
+.terminal-header{display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--bg-surface);border-bottom:1px solid var(--border);font-size:13px;color:var(--accent-strong)}
 .terminal-status{font-size:11px;color:#8b949e}
 .terminal-actions{margin-left:auto;display:flex;gap:6px}
 .terminal-actions .btn-primary{padding:4px 12px;font-size:12px;border-radius:4px;border:1px solid #1f6feb;background:#1f6feb;color:#fff;cursor:pointer}
 .terminal-actions .btn-secondary{padding:4px 12px;font-size:12px;border-radius:4px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;cursor:pointer}
-.terminal-container{background:#0d1117}
+.terminal-container{background:var(--bg-elevated)}
 
 /* ── Icon Button ────────────────────────────────── */
 .icon-btn{background:none;border:1px solid var(--border);color:var(--accent-text);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:12px;transition:all .12s}
@@ -2269,3 +2269,91 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .console-bottom-drag{height:4px;cursor:row-resize;flex-shrink:0;background:transparent;transition:background .15s;z-index:20}
 .console-bottom-drag:hover{background:var(--accent)}
 [data-theme="light"] .console-bottom-drag:hover{background:#ccc}
+
+/* ── Skill Marketplace ──────────────────────────── */
+.sk-mkt-toolbar{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sk-mkt-search{width:100%;padding:5px 8px;font-size:12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--accent-strong);outline:none;box-sizing:border-box}
+.sk-mkt-cats{display:flex;gap:4px;flex-wrap:wrap}
+.sk-mkt-cat{padding:2px 8px;font-size:10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--accent-text);cursor:pointer;transition:all .12s}
+.sk-mkt-cat:hover{background:var(--border);color:var(--accent-strong)}
+.sk-mkt-cat.active{background:var(--accent);color:var(--accent-strong);border-color:var(--accent-border)}
+.sk-mkt-grid{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px}
+.sk-mkt-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-surface);transition:border-color .12s}
+.sk-mkt-card:hover{border-color:var(--accent-border)}
+.sk-mkt-card-icon{font-size:28px;flex-shrink:0}
+.sk-mkt-card-body{flex:1;min-width:0}
+.sk-mkt-card-name{font-size:13px;font-weight:600;color:var(--accent-strong)}
+.sk-mkt-card-desc{font-size:11px;color:var(--accent-text);margin-top:2px;line-height:1.4}
+.sk-mkt-card-meta{font-size:9px;color:var(--accent-text);margin-top:4px;opacity:.7}
+
+/* ── Skill Marketplace Settings ──────────────── */
+.sk-mkt-settings{flex:1;overflow-y:auto;padding:16px}
+
+/* ── Skill Scan Selection Dialog ──────────────── */
+.sk-select-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+.sk-select-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-surface);cursor:pointer;transition:border-color .12s,background .12s}
+.sk-select-item:hover{border-color:var(--accent-border)}
+.sk-select-item.selected{background:rgba(var(--accent-rgb),0.1);border-color:var(--accent-border)}
+.sk-select-checkbox{flex-shrink:0;cursor:pointer;accent-color:var(--accent)}
+
+/* ── Skill Marketplace Source List ────────────── */
+.sk-mkt-source-list{flex:1;overflow-y:auto;padding:0 16px 8px;display:flex;flex-direction:column;gap:6px}
+.sk-mkt-source-item{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-surface)}
+.sk-mkt-source-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sk-mkt-source-name{font-size:12px;font-weight:600;color:var(--accent-strong)}
+.sk-mkt-source-url{font-size:10px;color:var(--accent-text);opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sk-mkt-source-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sk-mkt-toggle{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--accent-text);cursor:pointer}
+.sk-mkt-toggle input[type="checkbox"]{accent-color:var(--accent);cursor:pointer}
+
+/* ── Skill Marketplace Tabs ───────────────────── */
+.sk-mkt-tab{padding:6px 12px;font-size:12px;border:1px solid var(--border);background:transparent;color:var(--accent-text);cursor:pointer;transition:all .12s;border-radius:0}
+.sk-mkt-tab:first-child{border-radius:4px 0 0 4px}
+.sk-mkt-tab:last-child{border-radius:0 4px 4px 0}
+.sk-mkt-tab.active{background:var(--accent);color:var(--accent-strong);border-color:var(--accent-border)}
+.sk-mkt-tab:hover:not(.active){background:var(--border)}
+
+/* ── Local File Tab ───────────────────────────── */
+.sk-mkt-local-tab{flex:1;display:flex;flex-direction:column;padding:16px;overflow-y:auto}
+.sk-mkt-local-results{flex:1;display:flex;flex-direction:column;margin-top:16px;border-top:1px solid var(--border);padding-top:12px;min-height:200px}
+.sk-mkt-results-list{flex:1;overflow-y:auto;padding:4px 0;display:flex;flex-direction:column;gap:4px}
+
+/* ── Market Config Panel (collapsible) ─────────── */
+.sk-mkt-config-panel{border-top:1px solid var(--border);background:var(--bg-surface);padding:8px 12px;overflow-y:auto;max-height:240px;flex-shrink:0}
+.sk-mkt-config-header{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+
+/* ── Source badge on skill cards ──────────────── */
+.sk-mkt-source-badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;background:var(--accent);color:var(--accent-strong);margin-left:4px;vertical-align:middle;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis}
+
+/* ── Stats Sidebar ──────────────────────────── */
+.sk-mkt-stats{width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;padding:16px 12px;border-right:1px solid var(--border);overflow-y:auto}
+.sk-mkt-stat-item{display:flex;flex-direction:column;align-items:center;padding:12px 8px;border-radius:8px;background:var(--bg-surface)}
+.sk-mkt-stat-num{font-size:24px;font-weight:700;color:var(--accent-strong)}
+.sk-mkt-stat-label{font-size:10px;color:var(--accent-text);margin-top:3px}
+.sk-mkt-stat-divider{height:1px;background:var(--border);margin:8px 0}
+.sk-mkt-stat-source{display:flex;justify-content:space-between;align-items:center;padding:5px 6px;font-size:11px;border-radius:4px}
+.sk-mkt-stat-source:hover{background:var(--bg-surface)}
+.sk-mkt-stat-source-name{color:var(--accent-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.sk-mkt-stat-source-count{color:var(--accent-strong);font-weight:600;margin-left:6px;font-size:13px}
+
+/* ── Grid fix ────────────────────────────────── */
+.sk-mkt-grid{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:0}
+
+/* ── Slide Panel ────────────────────────────── */
+.sk-mkt-slide-panel{width:380px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--bg-surface);overflow:hidden}
+.sk-mkt-slide-header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.sk-mkt-slide-icon{font-size:32px;flex-shrink:0}
+.sk-mkt-slide-title{font-size:15px;font-weight:600;color:var(--accent-strong)}
+.sk-mkt-slide-body{flex:1;overflow-y:auto;padding:16px}
+.sk-mkt-slide-section{margin-bottom:14px}
+.sk-mkt-slide-label{font-size:10px;color:var(--accent-text);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.sk-mkt-slide-value{font-size:13px;color:var(--accent-strong)}
+.sk-mkt-slide-footer{padding:14px 16px;border-top:1px solid var(--border)}
+
+/* ── Card selected state ────────────────────── */
+.sk-mkt-card.selected{border-color:var(--accent-border);background:rgba(var(--accent-rgb),0.08)}
+.sk-mkt-card{cursor:pointer}
+
+/* ── Source Filter Select ────────────────────── */
+.sk-mkt-source-select{font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);color:var(--accent-strong);outline:none;cursor:pointer;flex-shrink:0}
+.sk-mkt-source-select:focus{border-color:var(--accent-border)}

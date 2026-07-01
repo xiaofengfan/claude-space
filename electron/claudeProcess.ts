@@ -72,9 +72,14 @@ export class ClaudeProcess extends EventEmitter {
     }
 
     const env: Record<string, string> = { ...(process.env as Record<string, string>) }
-    if (this.options.apiKey) env.ANTHROPIC_API_KEY = this.options.apiKey
-    if (this.options.baseUrl) env.ANTHROPIC_BASE_URL = this.options.baseUrl
-    if (this.options.model) env.ANTHROPIC_MODEL = this.options.model
+    // 不再主动设置 ANTHROPIC_* 环境变量，让子进程继承自身的 ~/.claude/settings.json
+    // AI 助手场景需要独立 apiKey 时，由 options 传入
+    if (this.options.apiKey) {
+      env.ANTHROPIC_API_KEY = this.options.apiKey
+      // 如果 baseUrl/model 有值也一并传入；未设置时子进程从 settings 的 env 段读取
+      if (this.options.baseUrl) env.ANTHROPIC_BASE_URL = this.options.baseUrl
+      if (this.options.model) env.ANTHROPIC_MODEL = this.options.model
+    }
     env.CLAUDE_CODE_NO_COLOR = '1'
 
     this._errorMsg = ''

@@ -1,6 +1,6 @@
 {
   "name": "claude-space",
-  "version": "1.1.7",
+  "version": "1.2.0",
   "description": "Claude Space — AI 驱动的项目开发工作台，支持多模型、实时任务追踪、审批管理",
   "private": true,
   "main": "dist-electron/main.js",

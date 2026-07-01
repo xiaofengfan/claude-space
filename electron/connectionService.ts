@@ -270,12 +270,12 @@ export async function runHealthCheck(
 
 // ── 环境变量信息 ──────────────────────────────────────────
 
-/** 获取当前环境变量中 AI 相关配置概览（脱敏） */
+/** 获取当前环境信息（不再包含 API 相关变量 — 模型配置仅从 settings.json 读取） */
 export function getEnvConfig() {
   return {
-    hasApiKey: !!process.env.ANTHROPIC_API_KEY || !!process.env.ANTHROPIC_AUTH_TOKEN,
-    baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-    model: process.env.ANTHROPIC_MODEL || '(默认)',
+    hasApiKey: false,
+    baseUrl: '',
+    model: '(settings.json)',
     claudeCodeNoColor: process.env.CLAUDE_CODE_NO_COLOR === '1',
     platform: process.platform,
     nodeVersion: process.version,
