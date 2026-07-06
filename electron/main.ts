@@ -24,7 +24,9 @@ import { TerminalProcess } from './terminalProcess'
 import { SshService } from './sshService'
 import type { SshServerConfig, DeployTarget } from './sshService'
 import { SshTerminalProcess } from './sshTerminalProcess'
-import { encodeClaudePath, decodeClaudePath, maskApiKey, readJsonlSafe, enqueueFileWrite, getWorkspaceRoot, withFileLock } from './utils'
+import { encodeClaudePath, decodeClaudePath, maskApiKey, readJsonlSafe, enqueueFileWrite, getWorkspaceRoot, withFileLock, resolveClaudePath } from './utils'
+import { LoopScheduler } from './loopScheduler'
+import { WorkflowEngine } from './workflowEngine'
 
 // ── 全局状态 ────────────────────────────────────────────
 
@@ -55,7 +57,11 @@ function unregisterTerminalWindow(windowId: number): void {
 
 function broadcastTerminalEvent(sessionId: string, channel: string, ...args: any[]): void {
   const winIds = terminalWindowBindings.get(sessionId)
-  if (!winIds) return
+  if (!winIds || winIds.size === 0) {
+    // 安全兜底：未注册 → 广播到所有窗口
+    for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, ...args) } catch {} }
+    return
+  }
   for (const winId of winIds) {
     try {
       const win = BrowserWindow.fromId(winId)
@@ -72,6 +78,13 @@ const windows: BrowserWindow[] = []  // 所有窗口追踪
 
 // Inject settings loader into AgentPool for per-agent model resolution
 agentPool.setSettingsLoader(() => loadSettings())
+
+// ── Loop / Workflow 引擎 ────────────────────────────────
+const broadcast = (channel: string, ...args: any[]) => {
+  for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, ...args) } catch {} }
+}
+const loopScheduler = new LoopScheduler(broadcast, () => getActiveWorkspaceRoot())
+const workflowEngine = new WorkflowEngine(broadcast, () => getActiveWorkspaceRoot())
 
 // ── 工作空间管理（多空间支持）──────────────────────
 export interface WorkspaceConfig {
@@ -1050,76 +1063,190 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
   saveSettings(raw)
   console.log('[claude-env] 自动迁移 activeModelId:', raw.activeModelId, '→', target.id, target.name)
   return true
-}
-
-/** 初始化 claude settings.json 文件监视 */
-let _claudeSettingsWatcher: fs.FSWatcher | null = null
-function initClaudeSettingsWatcher() {
-  const CLAUDE_SETTINGS_PATH_2 = path.join(os.homedir(), '.claude', 'settings.json')
-  try {
-    if (!fs.existsSync(CLAUDE_SETTINGS_PATH_2)) { console.log('[claude-env] settings.json 不存在，跳过文件监视'); return }
-    _claudeSettingsWatcher = fs.watch(CLAUDE_SETTINGS_PATH_2, (eventType) => {
-      if (eventType === 'change') {
-        setTimeout(() => {
-          const config = getClaudeEnvConfig()
-          let mtime = ''
-          try { mtime = fs.statSync(CLAUDE_SETTINGS_PATH_2).mtime.toISOString() } catch {}
-          // 后台自动同步：补充缺失的 claude 模型 + 迁移 activeModelId
-          try {
-            const raw = loadSettings()
-            if (raw) {
-              const existingIds = new Set(raw.models.map(m => m.id))
-              let changed = false
-              for (const m of config.models) {
-                const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
-                if (!existingIds.has(sid)) {
-                  raw.models.push({ id: sid, name: m.name || m.model, provider: 'Custom', apiKey: '', baseUrl: '', model: m.model, apiKeySource: 'env' })
-                  existingIds.add(sid)
-                  changed = true
-                }
-              }
-              // 迁移后通知前端刷新
-              let migrated = false
-              if (changed) { saveSettings(raw); migrated = true }
-              if (migrateActiveModel(raw, config)) migrated = true
-              if (migrated) {
-                // 通知前端重新加载 settings
-                const freshSettings = loadSettings()
-                for (const w of windows) {
-                  try { if (!w.isDestroyed()) w.webContents.send('settings:migrated', freshSettings ? { activeModelId: freshSettings.activeModelId } : null) } catch {}
-                }
-              }
-            }
-          } catch (_e) { /* 非关键，不影响前端通知 */ }
-          for (const w of windows) {
-            try { if (!w.isDestroyed()) w.webContents.send('claude-env:changed', { ...config, mtime }) } catch {}
-          }
-        }, 500)
-      }
-    })
-  } catch (err) {
-    console.warn('[claude-env] 文件监视启动失败:', err)
   }
-}
 
-  // 文件操作
-  ipcMain.handle('file:read', async (_event, filePath: string) => {
+  // ── 工作空间管理 ───────────────────────────────────────
+  /** workspace:list 工作空间列表 */
+  ipcMain.handle('workspace:list', async () => _workspaces)
+
+  /** workspace:add 添加工作空间 */
+  ipcMain.handle('workspace:add', async (_event, opts: { name: string; path: string }) => {
+    if (_workspaces.find(w => w.path === opts.path)) {
+      return { success: false, error: '工作空间路径已存在' }
+    }
+    const ws: WorkspaceConfig = {
+      id: 'ws_' + Date.now().toString(36),
+      name: opts.name,
+      path: opts.path,
+      isActive: _workspaces.length === 0,
+      createdAt: new Date().toISOString(),
+    }
+    _workspaces.push(ws)
+    const settings = loadSettings() || { version: 1, activeModelId: null, models: [], autoApproval: false, sshServers: [], deployTargets: [], ides: [] }
+    settings.workspaces = _workspaces
+    saveSettings(settings)
+    return { success: true, workspace: ws }
+  })
+
+  /** workspace:remove 移除工作空间 */
+  ipcMain.handle('workspace:remove', async (_event, workspaceId: string) => {
+    _workspaces = _workspaces.filter(w => w.id !== workspaceId)
+    const settings = loadSettings() || { version: 1, activeModelId: null, models: [], autoApproval: false, sshServers: [], deployTargets: [], ides: [] }
+    settings.workspaces = _workspaces
+    saveSettings(settings)
+    return { success: true }
+  })
+
+  /** workspace:set-active 设置活跃工作空间 */
+  ipcMain.handle('workspace:set-active', async (_event, workspaceId: string) => {
+    _workspaces = _workspaces.map(w => ({ ...w, isActive: w.id === workspaceId }))
+    const active = _workspaces.find(w => w.isActive)
+    if (active) _workspaceRoot = active.path
+    const settings = loadSettings() || { version: 1, activeModelId: null, models: [], autoApproval: false, sshServers: [], deployTargets: [], ides: [] }
+    settings.workspaces = _workspaces
+    saveSettings(settings)
+    return { success: true }
+  })
+
+  // ── 应用基础 ─────────────────────────────────────────
+  /** app:workspace-root 获取活跃工作空间根目录 */
+  ipcMain.handle('app:workspace-root', async () => getActiveWorkspaceRoot())
+
+  // ── 设置管理 ─────────────────────────────────────────
+  /** settings:load 加载设置 */
+  ipcMain.handle('settings:load', async () => loadSettings())
+
+  /** settings:save 保存设置 */
+  ipcMain.handle('settings:save', async (_event, settings: AppSettings) => {
+    syncWorkspaceRootFromSettings(settings)
+    saveSettings(settings)
+    return { success: true }
+  })
+
+  // ── 任务管理 ─────────────────────────────────────────
+  /** task:load 加载任务 */
+  ipcMain.handle('task:load', async () => loadTasks())
+
+  /** task:save 保存任务 */
+  ipcMain.handle('task:save', async (_event, tasks: any[]) => {
+    saveTasks(tasks)
+    return { success: true }
+  })
+
+  // ── 团队管理 ─────────────────────────────────────────
+  const TEAM_FILE = path.join(os.homedir(), '.claude', 'claude-space-team.json')
+
+  ipcMain.handle('team:load', async () => {
     try {
-      const buf = fs.readFileSync(filePath)
-      const sample = buf.length > 0 ? buf.slice(0, Math.min(buf.length, 8192)) : Buffer.alloc(0)
-      const isBinary = sample.includes(0x00) || isBinaryExtension(filePath)
-      let content = ''
-      if (!isBinary) {
-        try { content = buf.toString('utf-8') } catch { content = '' }
+      if (fs.existsSync(TEAM_FILE)) {
+        return JSON.parse(fs.readFileSync(TEAM_FILE, 'utf-8'))
       }
-      return { success: true, content, size: buf.length, isBinary }
+    } catch (_e) { /* silent */ }
+    return []
+  })
+
+  ipcMain.handle('team:save', async (_event, team: any[]) => {
+    try {
+      const dir = path.dirname(TEAM_FILE)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const tmp = TEAM_FILE + '.tmp'
+      fs.writeFileSync(tmp, JSON.stringify(team, null, 2), 'utf-8')
+      fs.renameSync(tmp, TEAM_FILE)
+      return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
   })
 
+  // ── 会话管理（扩展） ───────────────────────────────────
+  /** session:list 列出项目会话 */
+  ipcMain.handle('session:list', async (_event, projectPath?: string) => listSessions(projectPath))
+
+  /** session:list-all 列出所有会话 */
+  ipcMain.handle('session:list-all', async () => listSessions())
+
+  /** session:transcript 读取会话 JSONL 历史 */
+  ipcMain.handle('session:transcript', async (_event, sessionId: string) => {
+    try {
+      // 扫描所有项目目录查找匹配 sessionId 的 JSONL
+      const projectsDir = path.join(CLAUDE_HOME, 'projects')
+      if (!fs.existsSync(projectsDir)) return { events: [] }
+      for (const encoded of fs.readdirSync(projectsDir)) {
+        const sessionDir = path.join(projectsDir, encoded)
+        if (!fs.statSync(sessionDir).isDirectory()) continue
+        const sessionFile = path.join(sessionDir, sessionId + '.jsonl')
+        if (fs.existsSync(sessionFile)) {
+          const content = fs.readFileSync(sessionFile, 'utf-8')
+          const events = content.split('\n').filter(l => l.trim()).map(l => JSON.parse(l))
+          return { sessionId, events, projectPath: decodeClaudePath(encoded) }
+        }
+      }
+    } catch (_e) { /* silent */ }
+    return { events: [] }
+  })
+
+  /** session:recent 获取项目最近会话 */
+  ipcMain.handle('session:recent', async (_event, projectPath: string) => {
+    try {
+      const sessions = listSessions(projectPath)
+      if (sessions.length === 0) return null
+      const recent = sessions[0]
+      // 读取 JSONL 前 200 条消息
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const sessionFile = path.join(CLAUDE_HOME, 'projects', encodedPath, recent.sessionId + '.jsonl')
+      if (fs.existsSync(sessionFile)) {
+        const content = fs.readFileSync(sessionFile, 'utf-8')
+        const allEvents = content.split('\n').filter(l => l.trim()).map(l => JSON.parse(l))
+        return { sessionId: recent.sessionId, messages: allEvents.slice(-200) }
+      }
+    } catch (_e) { /* silent */ }
+    return null
+  })
+
+  /** session:extract-tasks 从会话 JSONL 提取任务事件 */
+  ipcMain.handle('session:extract-tasks', async (_event, projectPath: string) => {
+    const tasks: any[] = []
+    try {
+      const sessions = listSessions(projectPath)
+      for (const s of sessions.slice(0, 20)) { // 最多扫描最近 20 个会话
+        const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+        const sessionFile = path.join(CLAUDE_HOME, 'projects', encodedPath, s.sessionId + '.jsonl')
+        if (!fs.existsSync(sessionFile)) continue
+        const content = fs.readFileSync(sessionFile, 'utf-8')
+        const lines = content.split('\n').filter(l => l.trim())
+        for (const line of lines) {
+          try {
+            const evt = JSON.parse(line)
+            if (evt.type === 'tool_use' && evt.name === 'TaskCreate' && evt.input?.subject) {
+              tasks.push({ sessionId: s.sessionId, ...evt.input, timestamp: evt.timestamp || s.modifiedAt })
+            }
+          } catch { /* skip malformed lines */ }
+        }
+      }
+    } catch (_e) { /* silent */ }
+    return tasks
+  })
+
+  // ── 文件操作 ───────────────────────────────────────────
+  /** file:read 读取文件 */
+  ipcMain.handle('file:read', async (_event, filePath: string) => {
+    try {
+      const stat = fs.statSync(filePath)
+      if (isBinaryExtension(filePath)) {
+        return { success: false, error: '二进制文件无法预览', isBinary: true, size: stat.size }
+      }
+      const content = fs.readFileSync(filePath, 'utf-8')
+      return { success: true, content, size: stat.size, isBinary: false }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  /** file:write 写入文件 */
   ipcMain.handle('file:write', async (_event, opts: { filePath: string; content: string }) => {
     try {
+      const dir = path.dirname(opts.filePath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(opts.filePath, opts.content, 'utf-8')
       return { success: true }
     } catch (err: any) {
@@ -1127,1613 +1254,930 @@ function initClaudeSettingsWatcher() {
     }
   })
 
-  // ── 图片临时存储 ──────────────────────────────────────
-  ipcMain.handle('image:save-temp', async (_event, opts: {
-    projectPath: string; images: Array<{ base64: string; mediaType: string }>
-  }) => {
-    const saved: string[] = []
-    try {
-      const tempDir = path.join(opts.projectPath, '.claude-temp-images')
-      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
-      for (const img of opts.images) {
-        const ext = img.mediaType === 'image/png' ? '.png' : img.mediaType === 'image/jpeg' ? '.jpg' : img.mediaType === 'image/gif' ? '.gif' : img.mediaType === 'image/webp' ? '.webp' : '.png'
-        const fileName = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}${ext}`
-        const filePath = path.join(tempDir, fileName)
-        fs.writeFileSync(filePath, Buffer.from(img.base64, 'base64'))
-        saved.push(filePath)
-      }
-    } catch (err: any) {
-      return { success: false, error: err.message, paths: saved }
-    }
-    return { success: true, paths: saved }
-  })
-
+  /** file:create 创建文件 */
   ipcMain.handle('file:create', async (_event, opts: { dirPath: string; fileName: string; content?: string }) => {
     try {
+      if (!fs.existsSync(opts.dirPath)) fs.mkdirSync(opts.dirPath, { recursive: true })
       const filePath = path.join(opts.dirPath, opts.fileName)
-      // ensure the directory exists
-      const dir = path.dirname(filePath)
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true })
-      }
       fs.writeFileSync(filePath, opts.content || '', 'utf-8')
-      return { success: true, filePath }
+      return { success: true, path: filePath }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
   })
 
+  /** file:delete 删除文件 */
   ipcMain.handle('file:delete', async (_event, filePath: string) => {
     try {
-      if (!fs.existsSync(filePath)) {
-        return { success: false, error: '文件不存在' }
+      if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath)
+        if (stat.isDirectory()) {
+          fs.rmSync(filePath, { recursive: true, force: true })
+        } else {
+          fs.unlinkSync(filePath)
+        }
       }
-      // Safety: prevent deleting critical system directories
-      const normalized = path.normalize(filePath)
-      const homedir = path.normalize(os.homedir())
-      if (normalized === homedir || normalized === path.normalize(process.cwd())) {
-        return { success: false, error: '不允许删除此路径' }
-      }
-      // Prevent deleting directories (only allow file deletion)
-      const stat = fs.statSync(filePath)
-      if (stat.isDirectory()) {
-        return { success: false, error: '不允许删除目录' }
-      }
-      fs.unlinkSync(filePath)
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
   })
 
-  ipcMain.handle('file:open-in-new-window', async (_event, opts: {
-    filePath: string; fileName: string; projectPath?: string
-  }) => {
+  /** file:open-in-new-window 在独立窗口中打开文件 */
+  ipcMain.handle('file:open-in-new-window', async (_event, opts: { filePath: string; fileName: string; projectPath?: string }) => {
     createFileViewerWindow(opts.filePath, opts.fileName, opts.projectPath)
     return { success: true }
   })
 
+  /** file:open-dialog 打开文件选择对话框 */
   ipcMain.handle('file:open-dialog', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
-      filters: [{ name: '所有文件', extensions: ['*'] }],
+      filters: [
+        { name: '所有文件', extensions: ['*'] },
+        { name: '代码文件', extensions: ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'c', 'cpp', 'h', 'rs', 'go', 'rb', 'php'] },
+        { name: 'Markdown', extensions: ['md', 'mdx'] },
+        { name: '配置文件', extensions: ['json', 'yaml', 'yml', 'toml', 'ini', 'env'] },
+      ],
     })
-    if (result.canceled) return { canceled: true }
+    if (result.canceled || !result.filePaths[0]) return { canceled: true }
     return { canceled: false, filePath: result.filePaths[0] }
   })
 
+  /** dialog:open-directory 选择目录对话框 */
   ipcMain.handle('dialog:open-directory', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-    })
-    if (result.canceled) return { canceled: true }
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    if (result.canceled || !result.filePaths[0]) return { canceled: true }
     return { canceled: false, dirPath: result.filePaths[0] }
   })
 
-  // 会话管理
-  ipcMain.handle('session:list', async (_event, projectPath?: string) => {
-    return listSessions(projectPath)
-  })
-
-  ipcMain.handle('session:list-all', async () => {
-    return listSessions()
-  })
-
-  ipcMain.handle('session:recent', async (_event, projectPath: string) => {
-    const sessions = listSessions(projectPath)
-    if (sessions.length === 0) return null
-    // 取最近一条会话
-    const recent = sessions[0]
+  /** image:save-temp 保存图片到项目临时目录 */
+  ipcMain.handle('image:save-temp', async (_event, opts: { projectPath: string; images: Array<{ base64: string; mediaType: string }> }) => {
+    const paths: string[] = []
     try {
-      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
-      const jsonlFile = path.join(CLAUDE_HOME, 'projects', encodedPath, `${recent.sessionId}.jsonl`)
-      if (fs.existsSync(jsonlFile)) {
-        const events = readJsonlSafe(jsonlFile)
-        const msgs: any[] = []
-        for (const ev of events) {
-          if (ev.type === 'user' || (ev.type === 'assistant' && ev.message?.content)) {
-            msgs.push(ev)
-          }
-        }
-        return {
-          sessionId: recent.sessionId,
-          modifiedAt: recent.modifiedAt,
-          messages: msgs.slice(-10), // 最近10条
-        }
+      const tempDir = path.join(opts.projectPath, '.claude-space', 'temp-images')
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+      for (const img of opts.images) {
+        const ext = img.mediaType === 'image/png' ? '.png' : img.mediaType === 'image/jpeg' ? '.jpg' : img.mediaType === 'image/gif' ? '.gif' : '.png'
+        const fileName = `paste_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`
+        fs.writeFileSync(path.join(tempDir, fileName), Buffer.from(img.base64, 'base64'))
+        paths.push(path.join(tempDir, fileName))
       }
-    } catch (_e) { /* silent */ }
-    return null
-  })
-
-  ipcMain.handle('session:transcript', async (_event, sessionId: string) => {
-    // 搜索所有项目目录找到对应 session
-    const projectsDir = path.join(CLAUDE_HOME, 'projects')
-    if (!fs.existsSync(projectsDir)) return { events: [] }
-
-    for (const encoded of fs.readdirSync(projectsDir)) {
-      const jsonlFile = path.join(projectsDir, encoded, `${sessionId}.jsonl`)
-      if (fs.existsSync(jsonlFile)) {
-        const events = readJsonlSafe(jsonlFile)
-        return { events }
-      }
+    } catch (err: any) {
+      return { success: false, error: err.message, paths }
     }
-    return { events: [] }
+    return { success: true, paths }
   })
 
-  // Extract historical tasks from session JSONL files
-  ipcMain.handle('session:extract-tasks', async (_event, projectPath: string) => {
-    const tasks: any[] = []
-    try {
-      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
-      const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
-      if (!fs.existsSync(sessionDir)) return tasks
-
-      const jsonlFiles = fs.readdirSync(sessionDir)
-        .filter(f => f.endsWith('.jsonl'))
-        .sort((a, b) => {
-          const statA = fs.statSync(path.join(sessionDir, a))
-          const statB = fs.statSync(path.join(sessionDir, b))
-          return statB.mtime.getTime() - statA.mtime.getTime()
-        })
-
-      const seenIds = new Set<string>()
-      for (const file of jsonlFiles.slice(0, 5)) { // Last 5 sessions
-        const events = readJsonlSafe(path.join(sessionDir, file))
-        for (const ev of events) {
-          if (ev.type !== 'assistant' || !ev.message?.content) continue
-            for (const block of ev.message.content) {
-              if (block.type !== 'tool_use') continue
-              const toolId = block.id
-              if (seenIds.has(toolId)) continue
-              seenIds.add(toolId)
-
-              if (block.name === 'TaskCreate') {
-                tasks.push({
-                  title: block.input?.subject || block.input?.title || '历史任务',
-                  description: (block.input?.description || '').slice(0, 200),
-                  status: 'done' as const,
-                  category: 'task' as const,
-                  toolCallId: toolId,
-                  agentType: block.input?.agentType,
-                  createdAt: new Date(ev.uuid ? Date.now() - 86400000 : Date.now()).toISOString(),
-                  updatedAt: new Date().toISOString(),
-                })
-              }
-              if (block.name === 'TaskUpdate') {
-                // Find and update existing task
-                const targetId = block.input?.taskId
-                const existing = tasks.find(t => t.toolCallId === targetId)
-                if (existing) {
-                  const statusMap: Record<string, string> = {
-                    in_progress: 'in_progress', completed: 'done', done: 'done',
-                  }
-                  existing.status = statusMap[block.input?.status] || existing.status
-                  existing.updatedAt = new Date().toISOString()
-                }
-              }
-            }
-        }
-      }
-    } catch (err) { console.error('提取历史任务失败:', err) }
-    return tasks.slice(0, 50) // Max 50 historical tasks
+  // ── 窗口控制 ───────────────────────────────────────────
+  /** win:minimize 最小化窗口 */
+  ipcMain.handle('win:minimize', async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+  /** win:maximize 最大化/还原窗口 */
+  ipcMain.handle('win:maximize', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win?.isMaximized()) win.unmaximize()
+    else win?.maximize()
+  })
+  /** win:close 关闭窗口 */
+  ipcMain.handle('win:close', async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+  /** win:is-maximized 判断窗口是否最大化 */
+  ipcMain.handle('win:is-maximized', async (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false
   })
 
-  // Team management
-  ipcMain.handle('team:load', async () => {
-    const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
-    try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) } catch (_e) { /* silent */ }
-    return null
-  })
-  ipcMain.handle('team:save', async (_event, team: any[]) => {
-    const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
-    enqueueFileWrite(file, () => {
-      const dir = path.dirname(file)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      const tmp = file + '.tmp'
-      fs.writeFileSync(tmp, JSON.stringify(team, null, 2), 'utf-8')
-      fs.renameSync(tmp, file)
-    })
-    return { success: true }
-  })
+  // ── 连接管理 ─────────────────────────────────────────
+  /** connection:check-cli 检测 Claude CLI */
+  ipcMain.handle('connection:check-cli', async () => detectCli())
 
-  // 设置管理 — 返回脱敏版本
-  ipcMain.handle('settings:load', async () => {
-    const raw = loadSettings()
-    if (!raw) {
-      // 首次使用：无持久化配置，生成空占位（不再读环境变量）
-      const placeholderModel: ModelConfigSafe = {
-        id: 'placeholder',
-        name: '未配置 — 请在设置中添加模型',
-        provider: 'Custom',
-        apiKeyHint: '未设置',
-        baseUrl: '',
-        model: '',
-        apiKeySource: 'user',
-      }
-      const defaultSettings: AppSettingsSafe = {
-        version: 1,
-        activeModelId: null,
-        models: [placeholderModel],
-        autoApproval: false,
-        sshServers: [],
-        deployTargets: [],
-        workspaces: [{
-          id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
-          createdAt: new Date().toISOString(),
-        }],
-      }
-      // 同时写入文件
-      saveSettings({
-        version: 1,
-        activeModelId: null,
-        models: [{
-          id: 'placeholder', name: placeholderModel.name, provider: 'Custom',
-          apiKey: '',
-          baseUrl: '', model: '',
-          apiKeySource: 'user',
-        }],
-        autoApproval: false,
-        sshServers: [],
-        deployTargets: [],
-        workspaces: [{
-          id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
-          createdAt: new Date().toISOString(),
-        }],
-      })
-      // 首次加载：同步默认工作空间到内存
-      _workspaces = [{ id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true, createdAt: new Date().toISOString() }]
-      return defaultSettings
-    }
-    // 同步工作空间到内存
-    syncWorkspaceRootFromSettings(raw)
-    // 自动补充 claude 原生模型（确保 claude-* 模型存在）
-    try {
-      const claudeCfg = getClaudeEnvConfig()
-      if (claudeCfg.baseUrl && claudeCfg.models.length > 0) {
-        const existingIds = new Set(raw.models.map(m => m.id))
-        let modelsAdded = false
-        for (const m of claudeCfg.models) {
-          const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
-          if (!existingIds.has(sid)) {
-            raw.models.push({ id: sid, name: m.name || m.model, provider: 'Custom', apiKey: '', baseUrl: '', model: m.model, apiKeySource: 'env' as const })
-            existingIds.add(sid)
-            modelsAdded = true
-          }
-        }
-        if (modelsAdded) saveSettings(raw)
-      }
-    } catch (_e) { /* 非关键 */ }
-    // 自动迁移 activeModelId（将旧模型指向匹配的 claude 原生模型）
-    try { migrateActiveModel(raw) } catch (_e) { /* 非关键 */ }
-    // 返回脱敏版本
-    return {
-      version: raw.version || 1,
-      activeModelId: raw.activeModelId,
-      models: raw.models.map(m => ({
-        id: m.id, name: m.name, provider: m.provider,
-        apiKeyHint: m.apiKeySource === 'env' ? (m.apiKey ? '来自环境变量' : '来自 ~/.claude/settings.json') : maskApiKey(m.apiKey),
-        baseUrl: m.baseUrl, model: m.model,
-        apiKeySource: m.apiKeySource || 'user',
-      })),
-      autoApproval: raw.autoApproval ?? false,
-      sshServers: (raw.sshServers || []).map(s => ({
-        id: s.id, name: s.name,
-        host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
-        port: s.port || 22,
-        username: s.username, authMethod: s.authMethod,
-        passwordHint: s.password ? '****' : '未设置',
-        privateKeyPath: s.privateKeyPath || '',
-        privateKeyHint: s.privateKeyContent ? '已配置 (内联密钥)' : (s.privateKeyPath ? `已配置 (${path.basename(s.privateKeyPath)})` : '未设置'),
-        fingerprint: s.fingerprint,
-        createdAt: s.createdAt || new Date().toISOString(),
-        updatedAt: s.updatedAt || new Date().toISOString(),
-      })),
-      deployTargets: raw.deployTargets || [],
-      workspaces: raw.workspaces || [],
-      // IDE 配置：合并用户配置与默认预设，用户配置覆盖同名预设
-      ides: mergeIdeConfigs(raw.ides || []),
-    } as AppSettingsSafe
-  })
-
-  ipcMain.handle('settings:save', async (_event, settings: AppSettingsSafe) => {
-    // 整个读-改-写周期持有文件锁，防止并发保存覆盖
-    return withFileLock(SETTINGS_FILE, () => {
-      const existing = loadSettings()
-      const existingModels = existing?.models || []
-
-      const models: ModelConfig[] = settings.models.map(m => {
-        const existingModel = existingModels.find(em => em.id === m.id)
-        const apiKey = (m as any).apiKey
-          ? (m as any).apiKey
-          : (existingModel?.apiKey || '')
-        return {
-          id: m.id, name: m.name, provider: m.provider as ModelConfig['provider'],
-          apiKey, baseUrl: m.baseUrl, model: m.model,
-          apiKeySource: (apiKey && apiKey !== existingModel?.apiKey) ? 'user' as const : m.apiKeySource,
-        }
-      })
-
-      const existingServers = existing?.sshServers || []
-      const mergedSshServers: SshServerConfig[] = (settings.sshServers || []).map((s: any) => {
-        const existing = existingServers.find((es: any) => es.id === s.id)
-        return {
-          id: s.id, name: s.name,
-          host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
-          port: s.port || 22,
-          username: s.username, authMethod: s.authMethod,
-          password: s.newPassword || existing?.password || '',
-          privateKeyPath: s.privateKeyPath || existing?.privateKeyPath || '',
-          privateKeyContent: s.newPrivateKeyContent || existing?.privateKeyContent || '',
-          fingerprint: s.fingerprint || existing?.fingerprint || undefined,
-          createdAt: s.createdAt || existing?.createdAt || new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }
-      })
-
-      saveSettings({
-        version: settings.version || 1,
-        activeModelId: settings.activeModelId,
-        models,
-        autoApproval: settings.autoApproval ?? false,
-        sshServers: mergedSshServers,
-        deployTargets: settings.deployTargets || [],
-        // 工作空间由专用 IPC (workspace:add/remove/set-active) 管理并实时持久化
-        // settings.workspaces 来自前端 state 可能过时，优先使用文件中的最新值
-        workspaces: existing?.workspaces || settings.workspaces || [],
-        // IDE 配置直接持久化用户提交的部分
-        ides: settings.ides || [],
-      })
-      return { success: true }
-    })
-  })
-
-  ipcMain.handle('settings:get-model', async (_event, modelId: string) => {
-    const raw = loadSettings()
-    if (!raw) return null
-    const m = raw.models.find(m => m.id === modelId)
-    if (!m) return null
-    return {
-      id: m.id, name: m.name, provider: m.provider,
-      apiKeyHint: m.apiKeySource === 'env' ? (m.apiKey ? '来自环境变量' : '来自 ~/.claude/settings.json') : maskApiKey(m.apiKey),
-      baseUrl: m.baseUrl, model: m.model, apiKeySource: m.apiKeySource,
-    } as ModelConfigSafe
-  })
-
-  // 任务管理
-  // ── 任务防抖：高频 tool_use 事件不立即写盘 ──
-  let taskSaveTimer: ReturnType<typeof setTimeout> | null = null
-  let latestTasks: any[] | null = null
-
-  ipcMain.handle('task:load', async () => loadTasks())
-  ipcMain.handle('task:save', async (_event, tasks: any[]) => {
-    latestTasks = tasks
-    if (taskSaveTimer) return { success: true } // 已有待处理的保存，跳过
-    taskSaveTimer = setTimeout(() => {
-      taskSaveTimer = null
-      if (latestTasks) {
-        saveTasks(latestTasks)
-        latestTasks = null
-      }
-    }, 200) // 200ms 窗口内合并多次保存
-    return { success: true }
-  })
-
-  // ── 连接管理 ────────────────────────────────────────────
-
-  ipcMain.handle('connection:check-cli', async () => {
-    return detectCli()
-  })
-
-  ipcMain.handle('connection:test-api', async (_event, opts: {
-    baseUrl: string; apiKey: string; timeoutMs?: number
-  }) => {
+  /** connection:test-api 测试 API 端点 */
+  ipcMain.handle('connection:test-api', async (_event, opts: { baseUrl: string; apiKey: string; timeoutMs?: number }) => {
     return testApiEndpoint(opts.baseUrl, opts.apiKey, opts.timeoutMs || 10000)
   })
 
-  ipcMain.handle('connection:health-check', async (_event, opts: {
-    modelId: string; modelName: string; provider: string;
-    apiKey: string; baseUrl: string; model: string;
-  }) => {
-    const activeSessionId = claudeProcess?.sessionId
-    return runHealthCheck(opts, activeSessionId)
+  /** connection:health-check 综合健康检查 */
+  ipcMain.handle('connection:health-check', async (_event, opts: { modelId: string; modelName: string; provider: string; apiKey: string; baseUrl: string; model: string }) => {
+    return runHealthCheck({
+      id: opts.modelId, name: opts.modelName, provider: opts.provider,
+      apiKey: opts.apiKey, baseUrl: opts.baseUrl, model: opts.model,
+    }, claudeProcess?.sessionId)
   })
 
-  ipcMain.handle('connection:env-config', async () => {
-    return getEnvConfig()
+  /** connection:env-config 环境变量信息 */
+  ipcMain.handle('connection:env-config', async () => getEnvConfig())
+
+  // ── 审批日志 ─────────────────────────────────────────
+  const APPROVAL_LOG_FILE = path.join(os.homedir(), '.claude', 'claude-space-approvals.jsonl')
+
+  ipcMain.handle('approval:log', async (_event, entry: any) => {
+    try {
+      const dir = path.dirname(APPROVAL_LOG_FILE)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.appendFileSync(APPROVAL_LOG_FILE, JSON.stringify(entry) + '\n', 'utf-8')
+      return { success: true }
+    } catch (_e) { return { success: false } }
   })
 
-  // 审批日志
-  const APPROVAL_LOG = path.join(os.homedir(), '.claude', 'claude-space-approval-log.jsonl')
-  ipcMain.handle('approval:log', async (_event, entry: {
-    timestamp: string; question: string; optionChosen: string; auto: boolean; modelId?: string
-  }) => {
-    const dir = path.dirname(APPROVAL_LOG)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    fs.appendFileSync(APPROVAL_LOG, JSON.stringify(entry) + '\n', 'utf-8')
-    return { success: true }
-  })
   ipcMain.handle('approval:history', async () => {
     try {
-      if (!fs.existsSync(APPROVAL_LOG)) return []
-      const lines = fs.readFileSync(APPROVAL_LOG, 'utf-8').split('\n').filter(Boolean)
-      return lines.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean).slice(-100)
-    } catch (e) {
-      console.warn('[approval:history] 读取审批日志失败:', e)
-      return []
-    }
+      if (!fs.existsSync(APPROVAL_LOG_FILE)) return []
+      const content = fs.readFileSync(APPROVAL_LOG_FILE, 'utf-8')
+      return content.split('\n').filter(l => l.trim()).map(l => JSON.parse(l)).reverse().slice(0, 200)
+    } catch (_e) { return [] }
   })
 
-  // ── Git 操作 ────────────────────────────────────────────
-
-  function runGit(projectPath: string, args: string[], retried?: boolean): Promise<{ success: boolean; output: string; error?: string }> {
-    return new Promise((resolve) => {
-      let out = '', err = ''
-      const child = spawn('git', args, { cwd: projectPath, windowsHide: true, timeout: 30000 })
-      child.stdout?.on('data', (d: Buffer) => { out += d.toString() })
-      child.stderr?.on('data', (d: Buffer) => { err += d.toString() })
+  // ── Git 操作 ─────────────────────────────────────────
+  function execGit(cwd: string, args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('git', args, { cwd, shell: true, windowsHide: true, timeout: 30000 })
+      let stdout = '', stderr = ''
+      child.stdout.on('data', (d: Buffer) => stdout += d.toString())
+      child.stderr.on('data', (d: Buffer) => stderr += d.toString())
       child.on('close', (code) => {
-        const output = out.trim()
-        const error = err.trim() || undefined
-        // 自动清理 index.lock 后重试一次
-        if (code !== 0 && error?.includes('index.lock') && !retried) {
-          const lockFile = path.join(projectPath, '.git', 'index.lock')
-          try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile) } catch { /* ignore */ }
-          resolve(runGit(projectPath, args, true))
-          return
-        }
-        resolve({ success: code === 0, output, error })
+        if (code === 0) resolve(stdout.trim())
+        else reject(new Error(stderr.trim() || `git exit code ${code}`))
       })
-      child.on('error', (e) => resolve({ success: false, output: '', error: e.message }))
+      child.on('error', (e) => reject(e))
     })
   }
 
-  ipcMain.handle('git:init', async (_e, projectPath: string) => {
-    // Check if git repo already exists
+  ipcMain.handle('git:init', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['init']) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:status', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['status', '--porcelain']) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:log', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['log', '--oneline', '-30']) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:branch', async (_event, projectPath: string) => {
     try {
-      if (fs.existsSync(path.join(projectPath, '.git'))) return { success: true, output: 'Already a git repository' }
-    } catch (_e) { /* silent */ }
-    return runGit(projectPath, ['init'])
+      const branches = await execGit(projectPath, ['branch', '-a'])
+      const current = await execGit(projectPath, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')
+      return { success: true, output: branches, current }
+    } catch (err: any) { return { success: false, error: err.message } }
   })
-  ipcMain.handle('git:status', async (_e, projectPath: string) => runGit(projectPath, ['status', '--porcelain', '--branch']))
-  ipcMain.handle('git:log', async (_e, projectPath: string) => runGit(projectPath, ['log', '--oneline', '-20']))
-  ipcMain.handle('git:branch', async (_e, projectPath: string) => runGit(projectPath, ['branch', '-a']))
-  ipcMain.handle('git:pull', async (_e, projectPath: string) => runGit(projectPath, ['pull']))
-  ipcMain.handle('git:push', async (_e, projectPath: string) => runGit(projectPath, ['push']))
-  ipcMain.handle('git:commit', async (_e, opts: { projectPath: string; message: string }) => runGit(opts.projectPath, ['commit', '-am', opts.message]))
-  ipcMain.handle('git:add', async (_e, opts: { projectPath: string; files: string[] }) => runGit(opts.projectPath, ['add', ...opts.files]))
-  ipcMain.handle('git:config', async (_e, projectPath: string) => {
-    const cfg = await runGit(projectPath, ['config', '--list'])
-    if (cfg.success) {
-      const parsed: Record<string, string> = {}
-      cfg.output.split('\n').forEach(line => {
-        const [k, ...v] = line.split('=')
-        if (k) parsed[k.trim()] = v.join('=').trim()
-      })
-      return { success: true, config: parsed }
-    }
-    return cfg
+  ipcMain.handle('git:pull', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['pull']) } }
+    catch (err: any) { return { success: false, error: err.message } }
   })
-  ipcMain.handle('git:config-set', async (_e, opts: { projectPath: string; key: string; value: string }) =>
-    runGit(opts.projectPath, ['config', opts.key, opts.value]))
-  ipcMain.handle('git:remote', async (_e, projectPath: string) => runGit(projectPath, ['remote', '-v']))
-  ipcMain.handle('git:remote-set', async (_e, opts: { projectPath: string; name: string; url: string }) =>
-    runGit(opts.projectPath, ['remote', 'add', opts.name, opts.url]))
-  ipcMain.handle('git:log-detail', async (_e, projectPath: string) =>
-    runGit(projectPath, ['log', '--format=%H|%ai|%an|%s', '-50']))
-  ipcMain.handle('git:show-commit', async (_e, opts: { projectPath: string; hash: string }) =>
-    runGit(opts.projectPath, ['log', '--format=╔HASH╗%H╔AUTHOR╗%an╔DATE╗%ai╔MSG╗%B╔DIFF╗', '-1', '--stat', opts.hash]))
-  ipcMain.handle('git:diff', async (_e, opts: { projectPath: string; file?: string }) =>
-    runGit(opts.projectPath, opts.file ? ['diff', opts.file] : ['diff', '--stat']))
-  ipcMain.handle('git:show', async (_e, opts: { projectPath: string; file: string }) =>
-    runGit(opts.projectPath, ['show', 'HEAD:' + opts.file]))
-  ipcMain.handle('git:diff-staged', async (_e, projectPath: string) =>
-    runGit(projectPath, ['diff', '--staged', '--stat']))
-  ipcMain.handle('git:remote-info', async (_e, projectPath: string) => {
-    const [remoteV, branchesR] = await Promise.all([
-      runGit(projectPath, ['remote', '-v']),
-      runGit(projectPath, ['branch', '-r']),
-    ])
-    return { success: remoteV.success || branchesR.success, output: remoteV.output, branches: branchesR.output, error: remoteV.error || branchesR.error }
+  ipcMain.handle('git:push', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['push']) } }
+    catch (err: any) { return { success: false, error: err.message } }
   })
-  ipcMain.handle('git:remote-log', async (_e, opts: { projectPath: string; remoteBranch?: string }) =>
-    runGit(opts.projectPath, ['log', '--oneline', '-15', '--remotes']))
-  ipcMain.handle('git:fetch', async (_e, projectPath: string) =>
-    runGit(projectPath, ['fetch', '--all', '--quiet']))
-
-  // ── 记忆管理（项目隔离：{projectPath}/.claude/memory/）───
-
-  function getMemoryDir(projectPath: string): string {
-    const encoded = encodeClaudePath(projectPath)
-    return path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
-  }
-
-  ipcMain.handle('memory:list', async (_e, projectPath: string) => {
+  ipcMain.handle('git:commit', async (_event, opts: { projectPath: string; message: string }) => {
     try {
-      const memDir = getMemoryDir(projectPath)
-      const indexPath = path.join(memDir, 'MEMORY.md')
-      if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
-      const indexContent = fs.readFileSync(indexPath, 'utf-8')
-      const entries: { name: string; description: string; fileName: string; type?: string; mtime?: string }[] = []
-      const linkRegex = /-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/
-      for (const line of indexContent.split('\n')) {
-        const m = line.match(linkRegex)
-        if (m) {
-          const fileName = m[2].trim()
-          const description = m[3].trim()
-          let type = ''
-          let mtime = ''
-          try {
-            const filePath = path.join(memDir, fileName)
-            if (fs.existsSync(filePath)) {
-              const stat = fs.statSync(filePath)
-              mtime = stat.mtime.toISOString()
-              const raw = fs.readFileSync(filePath, 'utf-8')
-              const typeMatch = raw.match(/^\s*type:\s*(\S+)/m)
-              if (typeMatch) type = typeMatch[1]
-            }
-          } catch { /* ignore */ }
-          entries.push({ name: m[1].trim(), description, fileName, type: type || undefined, mtime: mtime || undefined })
-        }
+      await execGit(opts.projectPath, ['add', '-A'])
+      const data = await execGit(opts.projectPath, ['commit', '-m', opts.message])
+      return { success: true, output: data }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:add', async (_event, opts: { projectPath: string; files: string[] }) => {
+    try { return { success: true, output: await execGit(opts.projectPath, ['add', ...opts.files]) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:config', async (_event, projectPath: string) => {
+    try {
+      const raw = await execGit(projectPath, ['config', '--list'])
+      const config: Record<string, string> = {}
+      for (const line of raw.split('\n')) {
+        const eq = line.indexOf('=')
+        if (eq > 0) config[line.slice(0, eq)] = line.slice(eq + 1)
       }
-      // Sort by mtime descending (newest first)
-      entries.sort((a, b) => {
-        if (!a.mtime) return 1
-        if (!b.mtime) return -1
-        return b.mtime.localeCompare(a.mtime)
-      })
-      return { success: true, entries }
-    } catch (e: any) {
-      return { success: false, entries: [], error: e.message }
-    }
+      return { success: true, config }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:config-set', async (_event, opts: { projectPath: string; key: string; value: string }) => {
+    try { return { success: true, output: await execGit(opts.projectPath, ['config', opts.key, opts.value]) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:remote', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['remote', '-v']) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:remote-set', async (_event, opts: { projectPath: string; name: string; url: string }) => {
+    try { return { success: true, output: await execGit(opts.projectPath, ['remote', 'add', opts.name, opts.url]) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:fetch', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['fetch', '--all']) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:log-detail', async (_event, projectPath: string) => {
+    try {
+      const log = await execGit(projectPath, ['log', '--oneline', '--graph', '-30', '--all'])
+      return { success: true, output: log }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:show-commit', async (_event, opts: { projectPath: string; hash: string }) => {
+    try {
+      const data = await execGit(opts.projectPath, ['show', '--stat', '--format=fuller', opts.hash])
+      return { success: true, output: data }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:diff', async (_event, opts: { projectPath: string; file?: string }) => {
+    try {
+      const args = ['diff', '--no-color']
+      if (opts.file) args.push('--', opts.file)
+      return { success: true, output: await execGit(opts.projectPath, args) }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:show', async (_event, opts: { projectPath: string; file: string }) => {
+    try { return { success: true, output: await execGit(opts.projectPath, ['show', 'HEAD:' + opts.file]) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:diff-staged', async (_event, projectPath: string) => {
+    try { return { success: true, output: await execGit(projectPath, ['diff', '--cached', '--no-color']) } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:remote-info', async (_event, projectPath: string) => {
+    try {
+      const output = await execGit(projectPath, ['remote', 'show', 'origin']).catch(() => '无远程仓库')
+      let branches = ''
+      try { branches = await execGit(projectPath, ['branch', '-r']) } catch {}
+      return { success: true, output, branches }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('git:remote-log', async (_event, opts: { projectPath: string; remoteBranch?: string }) => {
+    try {
+      const ref = opts.remoteBranch || 'origin/main'
+      const data = await execGit(opts.projectPath, ['log', '--oneline', '-20', ref]).catch(() => '无法获取远程日志')
+      return { success: true, output: data }
+    } catch (err: any) { return { success: false, error: err.message } }
   })
 
-  ipcMain.handle('memory:read', async (_e, opts: { projectPath: string; fileName: string }) => {
+  // ── 终端管理 ─────────────────────────────────────────
+  /** terminal:start 启动终端 */
+  ipcMain.handle('terminal:start', async (event, opts: { cwd?: string; sessionId?: string; cols?: number; rows?: number; autoApproval?: boolean }) => {
     try {
-      const memDir = getMemoryDir(opts.projectPath)
-      const filePath = path.join(memDir, opts.fileName)
-      if (!fs.existsSync(filePath)) return { success: false, content: '', error: '文件不存在' }
-      const content = fs.readFileSync(filePath, 'utf-8')
-      return { success: true, content }
-    } catch (e: any) {
-      return { success: false, content: '', error: e.message }
-    }
-  })
+      const sessionId = opts.sessionId || 'default'
 
-  ipcMain.handle('memory:write', async (_e, opts: { projectPath: string; fileName: string; content: string }) => {
-    try {
-      const memDir = getMemoryDir(opts.projectPath)
-      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
-      const filePath = path.join(memDir, opts.fileName)
-      fs.writeFileSync(filePath, opts.content, 'utf-8')
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
+      // 注册调用窗口——确保终端事件能广播到正确的渲染进程
+      const senderWin = BrowserWindow.fromWebContents(event.sender)
+      if (senderWin) registerTerminalWindow(sessionId, senderWin.id)
 
-  ipcMain.handle('memory:create', async (_e, opts: {
-    projectPath: string; fileName: string; name: string; description: string; type: string; content: string
-  }) => {
-    try {
-      const memDir = getMemoryDir(opts.projectPath)
-      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
-      const sessionId = 'manual_' + Date.now().toString(36)
-      const slug = opts.name.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '') || 'untitled'
-      const fullContent = `---\nname: ${slug}\ndescription: ${opts.description}\nmetadata:\n  type: ${opts.type}\n  originSessionId: ${sessionId}\n---\n\n${opts.content}`
-      const filePath = path.join(memDir, opts.fileName)
-      fs.writeFileSync(filePath, fullContent, 'utf-8')
-      const indexPath = path.join(memDir, 'MEMORY.md')
-      let indexContent = ''
-      if (fs.existsSync(indexPath)) indexContent = fs.readFileSync(indexPath, 'utf-8')
-      const newLine = `- [${opts.name}](${opts.fileName}) — ${opts.description}\n`
-      if (indexContent.trim()) {
-        const fmEnd = indexContent.indexOf('---\n', 4)
-        if (indexContent.startsWith('---') && fmEnd > 0) {
-          indexContent = indexContent.slice(0, fmEnd + 4) + '\n' + newLine + indexContent.slice(fmEnd + 4)
-        } else { indexContent += '\n' + newLine }
-      } else { indexContent = `# 记忆索引\n\n${newLine}` }
-      fs.writeFileSync(indexPath, indexContent, 'utf-8')
-      return { success: true, filePath }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('memory:auto-create', async (_e, opts: {
-    projectPath: string; title: string; content: string; type?: string
-  }) => {
-    try {
-      const memDir = getMemoryDir(opts.projectPath)
-      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
-      const timestamp = Date.now()
-      const fileName = `auto-${timestamp.toString(36)}.md`
-      const slug = opts.title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'auto-memory'
-      const desc = opts.title.length > 60 ? opts.title.slice(0, 60) + '...' : opts.title
-      const fullContent = `---\nname: ${slug}\ndescription: ${desc}\nmetadata:\n  type: ${opts.type || 'project'}\n  origin: auto-save\n  originSessionId: auto_${timestamp.toString(36)}\n---\n\n# ${opts.title}\n\n> 自动保存时间：${new Date().toLocaleString('zh-CN')}\n\n${opts.content}`
-      fs.writeFileSync(path.join(memDir, fileName), fullContent, 'utf-8')
-      // Update MEMORY.md index
-      const indexPath = path.join(memDir, 'MEMORY.md')
-      let indexContent = ''
-      if (fs.existsSync(indexPath)) indexContent = fs.readFileSync(indexPath, 'utf-8')
-      const newLine = `- [${opts.title}](${fileName}) — ${desc}\n`
-      if (indexContent.trim()) {
-        const fmEnd = indexContent.indexOf('---\n', 4)
-        if (indexContent.startsWith('---') && fmEnd > 0) {
-          indexContent = indexContent.slice(0, fmEnd + 4) + '\n' + newLine + indexContent.slice(fmEnd + 4)
-        } else { indexContent += '\n' + newLine }
-      } else { indexContent = `# 记忆索引\n\n${newLine}` }
-      fs.writeFileSync(indexPath, indexContent, 'utf-8')
-      return { success: true, fileName }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('memory:delete', async (_e, opts: { projectPath: string; fileName: string }) => {
-    try {
-      const memDir = getMemoryDir(opts.projectPath)
-      const filePath = path.join(memDir, opts.fileName)
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
-      const indexPath = path.join(memDir, 'MEMORY.md')
-      if (fs.existsSync(indexPath)) {
-        let indexContent = fs.readFileSync(indexPath, 'utf-8')
-        const escaped = opts.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        indexContent = indexContent.replace(new RegExp(`^- \\[.+?\\]\\(${escaped}\\) — .+$`, 'gm'), '').replace(/\n{3,}/g, '\n\n')
-        fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      let tp = terminalProcesses.get(sessionId)
+      // 如果终端的 cwd 变了，先 kill 再重建
+      if (tp && opts.cwd && (tp as any).cwd !== opts.cwd) {
+        tp.kill()
+        terminalProcesses.delete(sessionId)
+        tp = null
       }
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  // ── 知识管理（{projectPath}/.claude/knowledge/）───────
-  function getKnowledgeDir(projectPath: string): string {
-    return path.join(projectPath, '.claude', 'knowledge')
-  }
-
-  ipcMain.handle('knowledge:read', async (_e, opts: { projectPath: string; fileName: string }) => {
-    try {
-      const fp = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
-      if (!fs.existsSync(fp)) return { success: false, content: '', error: '文件不存在' }
-      return { success: true, content: fs.readFileSync(fp, 'utf-8') }
-    } catch (e: any) { return { success: false, content: '', error: e.message } }
-  })
-
-  ipcMain.handle('knowledge:list', async (_e, projectPath: string) => {
-    try {
-      const knDir = getKnowledgeDir(projectPath)
-      const indexPath = path.join(knDir, 'KNOWLEDGE.md')
-      if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
-      const content = fs.readFileSync(indexPath, 'utf-8')
-      const entries: any[] = []
-      for (const line of content.split('\n')) {
-        const m = line.match(/-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/)
-        if (m) {
-          const fileName = m[2].trim()
-          const filePath = path.join(knDir, fileName)
-          let type = 'general', tags = '', status = 'draft', mtime = '', sources = ''
-          try {
-            if (fs.existsSync(filePath)) {
-              const raw = fs.readFileSync(filePath, 'utf-8')
-              const st = fs.statSync(filePath); mtime = st.mtime.toISOString()
-              const t = raw.match(/^type:\s*(\S+)/m); if (t) type = t[1]
-              const tg = raw.match(/^tags:\s*(.+)/m); if (tg) tags = tg[1]
-              const s = raw.match(/^status:\s*(\S+)/m); if (s) status = s[1]
-              const src = raw.match(/^sources:\s*(.+)/m); if (src) sources = src[1]
-            }
-          } catch { /* ignore */ }
-          entries.push({ name: m[1].trim(), fileName, description: m[3].trim(), type, tags, status, mtime, sources })
-        }
-      }
-      entries.sort((a: any, b: any) => (b.mtime || '').localeCompare(a.mtime || ''))
-      return { success: true, entries }
-    } catch (e: any) { return { success: false, entries: [], error: e.message } }
-  })
-
-  ipcMain.handle('knowledge:create', async (_e, opts: {
-    projectPath: string; title: string; content: string; type: string; tags: string; sources?: string
-  }) => {
-    try {
-      const knDir = getKnowledgeDir(opts.projectPath)
-      if (!fs.existsSync(knDir)) fs.mkdirSync(knDir, { recursive: true })
-      const fileName = opts.title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) + '.md'
-      const now = new Date().toISOString().split('T')[0]
-      const fullContent = `---\ntitle: ${opts.title}\ntype: ${opts.type}\ntags: ${opts.tags}\nstatus: draft\ncreated: ${now}\nupdated: ${now}\nsources: ${opts.sources || ''}\n---\n\n${opts.content}`
-      fs.writeFileSync(path.join(knDir, fileName), fullContent, 'utf-8')
-      const indexPath = path.join(knDir, 'KNOWLEDGE.md')
-      let idx = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf-8') : '# 知识索引\n\n'
-      idx += `- [${opts.title}](${fileName}) — ${opts.type} | ${opts.tags}\n`
-      fs.writeFileSync(indexPath, idx, 'utf-8')
-      return { success: true, fileName }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('knowledge:delete', async (_e, opts: { projectPath: string; fileName: string }) => {
-    try {
-      const fp = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
-      if (fs.existsSync(fp)) fs.unlinkSync(fp)
-      const indexPath = path.join(getKnowledgeDir(opts.projectPath), 'KNOWLEDGE.md')
-      if (fs.existsSync(indexPath)) {
-        let c = fs.readFileSync(indexPath, 'utf-8')
-        const esc = opts.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        c = c.replace(new RegExp(`^- \\[.+?\\]\\(${esc}\\) — .+$`, 'gm'), '').replace(/\n{3,}/g, '\n\n')
-        fs.writeFileSync(indexPath, c, 'utf-8')
-      }
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  
-  ipcMain.handle('console:get-log-history', async () => { return { success: true, lines: [...logBuffer] } })
-
-
-  // ── 技能管理 ────────────────────────────────────────
-  const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
-
-  function getSkillManifest(filePath: string, includeContent?: boolean): any {
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8')
-      const m = raw.match(/^---\n([\s\S]*?)\n---/)
-      if (!m) return null
-      const fm: Record<string, string> = {}
-      for (const line of m[1].split('\n')) {
-        const sep = line.indexOf(': ')
-        if (sep > 0) fm[line.slice(0, sep).trim()] = line.slice(sep + 2).trim()
-      }
-      const manifest: any = {
-        name: fm.name || '',
-        description: fm.description || '',
-        version: fm.version || '1.0.0',
-        author: fm.author || 'unknown',
-        category: fm.category || 'general',
-        tags: fm.tags || '',
-        icon: fm.icon || '📦',
-        level: fm.level || 'global',
-        enabled: fm.enabled !== 'false',
-        created: fm.created || '',
-        updated: fm.updated || '',
-        fileName: path.basename(filePath),
-        filePath,
-      }
-      if (includeContent) manifest.content = raw
-      return manifest
-    } catch { return null }
-  }
-
-  ipcMain.handle('skill:list', async () => {
-    try {
-      if (!fs.existsSync(SKILLS_DIR)) return { success: true, skills: [] }
-      const skills: any[] = []
-      for (const f of fs.readdirSync(SKILLS_DIR)) {
-        if (!f.endsWith('.md')) continue
-        const m = getSkillManifest(path.join(SKILLS_DIR, f))
-        if (m) skills.push(m)
-      }
-      skills.sort((a, b) => a.name.localeCompare(b.name))
-      return { success: true, skills }
-    } catch (e: any) { return { success: false, skills: [], error: e.message } }
-  })
-
-  ipcMain.handle('skill:read', async (_e: any, name: string) => {
-    try {
-      const fp = path.join(SKILLS_DIR, name + '.md')
-      if (!fs.existsSync(fp)) return { success: false, content: '', error: 'Skill not found' }
-      return { success: true, content: fs.readFileSync(fp, 'utf-8') }
-    } catch (e: any) { return { success: false, content: '', error: e.message } }
-  })
-
-  ipcMain.handle('skill:install', async (_e: any, opts: { name: string; content: string }) => {
-    try {
-      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
-      fs.writeFileSync(path.join(SKILLS_DIR, opts.name + '.md'), opts.content, 'utf-8')
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('skill:install-batch', async (_e: any, opts: { skills: Array<{ name: string; content: string }> }) => {
-    try {
-      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
-      let count = 0
-      const errors: Array<{ name: string; error: string }> = []
-      for (const s of opts.skills) {
-        try {
-          fs.writeFileSync(path.join(SKILLS_DIR, safeSkillName(s.name) + '.md'), s.content, 'utf-8')
-          count++
-        } catch (e: any) { errors.push({ name: s.name, error: e.message }) }
-      }
-      return { success: errors.length === 0, count, errors: errors.length > 0 ? errors : undefined }
-    } catch (e: any) { return { success: false, count: 0, error: e.message } }
-  })
-
-  ipcMain.handle('skill:uninstall', async (_e: any, name: string) => {
-    try {
-      const fp = path.join(SKILLS_DIR, name + '.md')
-      if (fs.existsSync(fp)) fs.unlinkSync(fp)
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  // ── 内置技能列表（打包在 assets/skills/）───────────────
-  const BUILTIN_SKILL_ITEMS = [
-    { id: 'code-review', name: '代码审查', description: '全面的代码审查检查清单', version: '1.0.0', author: 'Claude Space', category: 'code-review', icon: '🔍', tags: ['code-review','审查'], downloads: 999, rating: 4.5, source: 'builtin' },
-    { id: 'security-audit', name: '安全审计', description: '基于 OWASP Top 10 的安全扫描与审计', version: '1.0.0', author: 'Claude Space', category: 'security', icon: '🛡️', tags: ['security','owasp'], downloads: 998, rating: 4.8, source: 'builtin' },
-    { id: 'api-design', name: 'API 设计', description: 'RESTful API 设计与审查标准', version: '1.0.0', author: 'Claude Space', category: 'api-design', icon: '🔌', tags: ['api','rest'], downloads: 997, rating: 4.6, source: 'builtin' },
-    { id: 'ts-expert', name: 'TypeScript 专家', description: 'TypeScript 类型安全和最佳实践', version: '1.0.0', author: 'Claude Space', category: 'code-review', icon: '🔷', tags: ['typescript'], downloads: 996, rating: 4.7, source: 'builtin' },
-    { id: 'test-writer', name: '测试编写', description: '自动生成单元测试和集成测试', version: '1.0.0', author: 'Claude Space', category: 'testing', icon: '🧪', tags: ['测试'], downloads: 995, rating: 4.4, source: 'builtin' },
-    { id: 'git-manager', name: 'Git 工作流', description: 'Git 操作与工作流管理助手', version: '1.0.0', author: 'Claude Space', category: 'git', icon: '📦', tags: ['git'], downloads: 994, rating: 4.3, source: 'builtin' },
-    { id: 'doc-generator', name: '文档生成', description: '自动生成项目文档和 API 文档', version: '1.0.0', author: 'Claude Space', category: 'documentation', icon: '📝', tags: ['文档'], downloads: 993, rating: 4.5, source: 'builtin' },
-    { id: 'perf-audit', name: '性能审计', description: '代码性能分析与优化建议', version: '1.0.0', author: 'Claude Space', category: 'performance', icon: '⚡', tags: ['性能'], downloads: 992, rating: 4.6, source: 'builtin' },
-    { id: 'conventions-check', name: '规范检查', description: '代码风格和项目规范一致性检查', version: '1.0.0', author: 'Claude Space', category: 'conventions', icon: '📏', tags: ['规范'], downloads: 991, rating: 4.2, source: 'builtin' },
-    { id: 'db-designer', name: '数据库设计', description: '数据库表结构设计与优化建议', version: '1.0.0', author: 'Claude Space', category: 'api-design', icon: '🗄️', tags: ['数据库'], downloads: 990, rating: 4.4, source: 'builtin' },
-  ]
-
-  ipcMain.handle('skill:marketplace-list', async () => {
-    try {
-      return { success: true, items: BUILTIN_SKILL_ITEMS }
-    } catch (e: any) { return { success: false, items: [], error: e.message } }
-  })
-
-
-  // ── 技能市场配置 ──────────────────────────────────
-  const MARKET_CONFIG_FILE = path.join(os.homedir(), '.claude', 'skill-market-config.json')
-
-  interface MarketSource {
-    name: string; url: string; enabled: boolean; autoScan: boolean
-  }
-
-  const DEFAULT_MARKETPLACES: MarketSource[] = [
-    { name: 'Claude 官方技能', url: 'https://github.com/anthropics/skills.git', enabled: true, autoScan: true },
-    { name: 'Claude 官方插件', url: 'https://github.com/anthropics/claude-plugins-official.git', enabled: true, autoScan: true },
-    { name: '社区插件', url: 'https://github.com/anthropics/claude-plugins-community.git', enabled: true, autoScan: true },
-  ]
-
-  function loadMarketConfig() {
-    try {
-      if (fs.existsSync(MARKET_CONFIG_FILE)) {
-        const cfg = JSON.parse(fs.readFileSync(MARKET_CONFIG_FILE, 'utf-8'))
-        // Migrate legacy format { gitUrl: string } → { marketplaces }
-        if (cfg.gitUrl && !cfg.marketplaces) {
-          cfg.marketplaces = [
-            ...DEFAULT_MARKETPLACES,
-            ...(cfg.gitUrl ? [{ name: '自定义市场', url: cfg.gitUrl, enabled: true, autoScan: false }] : []),
-          ]
-          delete cfg.gitUrl
-          saveMarketConfig(cfg)
-        }
-        return cfg
-      }
-    } catch {}
-    return { marketplaces: [...DEFAULT_MARKETPLACES], localPaths: [] }
-  }
-
-  function saveMarketConfig(cfg: { marketplaces?: MarketSource[]; localPaths?: string[]; gitUrl?: string }) { fs.writeFileSync(MARKET_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8') }
-
-  ipcMain.handle('skill:get-market-config', async () => ({ success: true, config: loadMarketConfig() }))
-
-  ipcMain.handle('skill:save-market-config', async (_e, cfg) => {
-    try { saveMarketConfig(cfg); return { success: true } } catch (e) { return { success: false, error: e.message } }
-  })
-
-  // ── 市场源管理 ──────────────────────────────────
-  const MARKET_REPOS_DIR = path.join(os.homedir(), '.claude', 'skill-repos')
-
-  function ensureDir(d: string) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }) }
-
-  ipcMain.handle('skill:marketplace-scan', async () => {
-    try {
-      const cfg = loadMarketConfig()
-      const sources = (cfg.marketplaces || []).filter((s: MarketSource) => s.enabled && s.autoScan)
-      const allSkills: any[] = []
-      ensureDir(MARKET_REPOS_DIR)
-      for (const src of sources) {
-        const repoHash = Buffer.from(src.url).toString('base64url').slice(0, 32)
-        const repoDir = path.join(MARKET_REPOS_DIR, repoHash)
-        // Clone or pull
-        await new Promise<void>((resolve, reject) => {
-          if (fs.existsSync(repoDir)) {
-            const p = spawn('git', ['-C', repoDir, 'pull', '--ff-only'], { timeout: 30000 })
-            p.on('close', (code) => code === 0 ? resolve() : reject(new Error('git pull failed')))
-            p.on('error', reject)
-          } else {
-            const p = spawn('git', ['clone', '--depth=1', src.url, repoDir], { timeout: 60000 })
-            p.on('close', (code) => code === 0 ? resolve() : reject(new Error('git clone failed')))
-            p.on('error', reject)
-          }
+      if (!tp) {
+        tp = new TerminalProcess({
+          cwd: opts.cwd,
+          sessionId: opts.sessionId,
+          cols: opts.cols || 120,
+          rows: opts.rows || 40,
+          permissionMode: opts.autoApproval ? 'auto' : 'manual',
         })
-        // Scan for skills
-        const scanned = scanDirForSkills(repoDir, src.name)
-        for (const s of scanned) { s.sourceName = src.name; s.sourceUrl = src.url }
-        allSkills.push(...scanned)
-      }
-      allSkills.sort((a, b) => a.name.localeCompare(b.name))
-      return { success: true, skills: allSkills }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('skill:marketplace-source-add', async (_e, src: MarketSource) => {
-    try {
-      const cfg = loadMarketConfig()
-      if (!cfg.marketplaces) cfg.marketplaces = []
-      if (cfg.marketplaces.find((s: MarketSource) => s.url === src.url)) return { success: false, error: '该市场已存在' }
-      cfg.marketplaces.push(src)
-      saveMarketConfig(cfg)
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('skill:marketplace-source-remove', async (_e, url: string) => {
-    try {
-      const cfg = loadMarketConfig()
-      cfg.marketplaces = (cfg.marketplaces || []).filter((s: MarketSource) => s.url !== url)
-      saveMarketConfig(cfg)
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('skill:marketplace-source-update', async (_e, url: string, updates: Partial<MarketSource>) => {
-    try {
-      const cfg = loadMarketConfig()
-      const src = (cfg.marketplaces || []).find((s: MarketSource) => s.url === url)
-      if (!src) return { success: false, error: '未找到该市场' }
-      Object.assign(src, updates)
-      saveMarketConfig(cfg)
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  function scanDirForSkills(dir: string, sourceName: string): any[] {
-    const results: any[] = []
-    try {
-      for (const f of fs.readdirSync(dir)) {
-        const fullPath = path.join(dir, f)
-        if (fs.statSync(fullPath).isDirectory()) {
-          // Check for SKILL.md inside (Claude Code format)
-          const skillMd = path.join(fullPath, 'SKILL.md')
-          if (fs.existsSync(skillMd)) {
-            const m = getSkillManifest(skillMd, true)
-            if (m) { m.fileName = f; results.push(m) }
-          }
-          // Also scan flat .md files
-          for (const sf of fs.readdirSync(fullPath)) {
-            if (sf.endsWith('.md') && sf !== 'SKILL.md') {
-              const m = getSkillManifest(path.join(fullPath, sf), true)
-              if (m) results.push(m)
-            }
-          }
-        } else if (f.endsWith('.md')) {
-          const m = getSkillManifest(fullPath, true)
-          if (m) results.push(m)
+        terminalProcesses.set(sessionId, tp)
+        // Forward events
+        tp.on('terminal-data', (data: string) => {
+          broadcastTerminalEvent(sessionId, 'terminal:data', data)
+        })
+        tp.on('status', (status: any) => {
+          broadcastTerminalEvent(sessionId, 'terminal:status', status)
+        })
+        if (sessionId === 'default' || sessionId === (claudeProcess?.sessionId || '')) {
+          terminalProcess = tp
         }
       }
-    } catch { /* skip dirs with errors */ }
-    return results
-  }
-
-  // Deeper recursive scan for nested plugin repos (plugins/name/skills/name/SKILL.md)
-  function deepScanDirForSkills(dir: string, sourceName: string): any[] {
-    const results: any[] = []
-    try {
-      for (const f of fs.readdirSync(dir)) {
-        const fullPath = path.join(dir, f)
-        try {
-          if (fs.statSync(fullPath).isDirectory()) {
-            const skillMd = path.join(fullPath, 'SKILL.md')
-            const hasDirectSkill = fs.existsSync(skillMd)
-            if (hasDirectSkill) {
-              const m = getSkillManifest(skillMd, true)
-              if (m) { m.fileName = path.relative(dir, fullPath); results.push(m) }
-            }
-            // Check flat .md files in this dir
-            for (const sf of fs.readdirSync(fullPath)) {
-              if (sf.endsWith('.md') && sf !== 'SKILL.md') {
-                const m = getSkillManifest(path.join(fullPath, sf), true)
-                if (m) results.push(m)
-              }
-            }
-            // Recurse deeper if no SKILL.md found at this level
-            if (!hasDirectSkill) {
-              const deeper = deepScanDirForSkills(fullPath, sourceName)
-              results.push(...deeper)
-            }
-          }
-        } catch { /* skip individual entries */ }
-      }
-    } catch { /* skip dirs */ }
-    return results
-  }
-
-  // Use deep scan for marketplace repos, shallow scan for local files
-  function scanDirForSkills(dir: string, sourceName: string): any[] {
-    const isLocalFile = sourceName === '本地文件'
-    return isLocalFile ? shallowScanDirForSkills(dir, sourceName) : deepScanDirForSkills(dir, sourceName)
-  }
-
-  function shallowScanDirForSkills(dir: string, sourceName: string): any[] {
-    const results: any[] = []
-    try {
-      for (const f of fs.readdirSync(dir)) {
-        const fullPath = path.join(dir, f)
-        try {
-          if (fs.statSync(fullPath).isDirectory()) {
-            const skillMd = path.join(fullPath, 'SKILL.md')
-            if (fs.existsSync(skillMd)) {
-              const m = getSkillManifest(skillMd, true)
-              if (m) { m.fileName = f; results.push(m) }
-            }
-            for (const sf of fs.readdirSync(fullPath)) {
-              if (sf.endsWith('.md') && sf !== 'SKILL.md') {
-                const m = getSkillManifest(path.join(fullPath, sf), true)
-                if (m) results.push(m)
-              }
-            }
-          } else if (f.endsWith('.md')) {
-            const m = getSkillManifest(fullPath, true)
-            if (m) results.push(m)
-          }
-        } catch { /* skip individual entries */ }
-      }
-    } catch { /* skip dirs */ }
-    return results
-  }
-
-  
-  ipcMain.handle('skill:load-from-local-dir', async (_e, dir: string) => {
-    try {
-      if (!dir || !fs.existsSync(dir)) return { success: false, error: 'not found' }
-      const skills = deepScanDirForSkills(dir, '本地文件')
-      skills.sort((a, b) => a.name.localeCompare(b.name))
-      return { success: true, skills }
-    } catch (e) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('skill:load-from-local', async () => {
-    try {
-      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-      if (result.canceled || !result.filePaths[0]) return { success: false, error: 'cancelled' }
-      const dir = result.filePaths[0]
-      if (!fs.existsSync(dir)) return { success: false, error: 'not found' }
-      // Recursive scan: traverse subdirectories for SKILL.md + .md files
-      const skills = deepScanDirForSkills(dir, '本地文件')
-      skills.sort((a, b) => a.name.localeCompare(b.name))
-      // Still remember the dir for future reloads
-      const cfg = loadMarketConfig()
-      if (!cfg.localPaths.includes(dir)) cfg.localPaths.push(dir)
-      saveMarketConfig(cfg)
-      return { success: true, skills }
-    } catch (e) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('skill:load-from-git', async (_e, gitUrl) => {
-    return new Promise((resolve) => {
-      try {
-        if (!gitUrl) { resolve({ success: false, error: 'no url' }); return }
-        const td = path.join(os.homedir(), '.claude', 'skill-repos', Date.now().toString(36))
-        const gitProc = spawn('git', ['clone', '--depth=1', gitUrl, td], { timeout: 60000 })
-        let stderr = ''
-        gitProc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
-        gitProc.on('close', (code) => {
-          try {
-            if (code !== 0) { resolve({ success: false, error: stderr || 'Git clone failed' }); return }
-            if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
-            let count = 0
-            for (const f of fs.readdirSync(td)) { if (f.endsWith('.md')) { fs.copyFileSync(path.join(td, f), path.join(SKILLS_DIR, f)); count++ } }
-            const cfg = loadMarketConfig()
-            cfg.gitUrl = gitUrl
-            saveMarketConfig(cfg)
-            resolve({ success: true, count })
-          } catch (e: any) { resolve({ success: false, error: e.message }) }
-        })
-        gitProc.on('error', (err) => { resolve({ success: false, error: err.message }) })
-      } catch (e: any) { resolve({ success: false, error: e.message }) }
-    })
-  })
-
-  ipcMain.handle('skill:marketplace-install', async (_e: any, item: { id: string }) => {
-    try {
-      const skillFile = path.join(__dirname, '..', 'assets', 'skills', item.id + '.md')
-      if (!fs.existsSync(skillFile)) return { success: false, error: 'Skill not found in bundle' }
-      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
-      fs.copyFileSync(skillFile, path.join(SKILLS_DIR, item.id + '.md'))
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-  // ── 开发进程管理 ────────────────────────────────────
-  let devProcess: any = null
-
-  ipcMain.handle('dev:start', async (_e: any, opts: { command: string; name: string }) => {
-    if (devProcess) { try { devProcess.kill() } catch {}; devProcess = null }
-    try {
-      const { spawn } = require('child_process')
-      devProcess = spawn(opts.command, [], { shell: true, cwd: process.cwd(), env: { ...process.env } })
-      devProcess.stdout?.on('data', (d: Buffer) => { broadcastToAllWindows('dev:output', d.toString()) })
-      devProcess.stderr?.on('data', (d: Buffer) => { broadcastToAllWindows('dev:error', d.toString()) })
-      devProcess.on('exit', () => { devProcess = null; broadcastToAllWindows('dev:status', { running: false, name: opts.name }) })
-      broadcastToAllWindows('dev:status', { running: true, name: opts.name })
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  ipcMain.handle('dev:stop', async () => {
-    if (devProcess) { try { devProcess.kill() } catch {}; devProcess = null; return { success: true } }
-    return { success: false, error: 'No running process' }
-  })
-
-  function broadcastToAllWindows(channel: string, ...args: any[]) {
-    for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, ...args) } catch {} }
-  }
-
-  // ── 控制台窗口 ────────────────────────────────────
-  ipcMain.handle('console:open-window', async () => {
-    try {
-      const win = new BrowserWindow({
-        width: 1200, height: 700,
-        title: '开发者控制台',
-        backgroundColor: '#0d0d0d',
-        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }
-      })
-      if (process.env.VITE_DEV_SERVER_URL) {
-        win.loadURL(process.env.VITE_DEV_SERVER_URL + '?consoleWindow=1')
-      } else {
-        win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { consoleWindow: '1' } })
-      }
-      win.on('closed', () => { const idx = windows.indexOf(win); if (idx >= 0) windows.splice(idx, 1) })
-      windows.push(win)
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  // ── 终端管理（多窗口隔离）───────────────────────────
-
-  // 根据事件来源窗口查找对应终端（h: windowTerminals → terminalProcesses → terminalProcess）
-  function findTerminal(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): TerminalProcess | undefined {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (win) {
-      const sid = windowTerminals.get(win.id)
-      if (sid) {
-        const tp = terminalProcesses.get(sid)
-        if (tp) return tp
-      }
+      if (!tp.isRunning) tp.start()
+      return { success: true, sessionId }
+    } catch (err: any) {
+      return { success: false, error: err.message }
     }
-    return terminalProcess ?? undefined
-  }
-
-  ipcMain.handle('terminal:start', async (event, opts: {
-    cwd?: string; sessionId?: string; cols?: number; rows?: number;
-    autoApproval?: boolean;
-  }) => {
-    // 调试日志写到文件（打包版 GUI 无控制台输出）
-    fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'), `[${new Date().toISOString()}] terminal:start called sessionId=${opts.sessionId} cwd=${opts.cwd} autoApproval=${opts.autoApproval}\n`, 'utf-8')
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const winId = win?.id ?? 0
-    const sid = opts.sessionId || 'default'
-
-    // 记录窗口→会话映射（向后兼容）
-    if (winId) {
-      windowTerminals.set(winId, sid)
-      // 注册窗口为终端事件广播目标
-      registerTerminalWindow(sid, winId)
-    }
-
-    // 检查是否已有该会话的终端进程 → 复用
-    const existing = terminalProcesses.get(sid)
-    if (existing) {
-      terminalProcess = existing
-      // 发送当前状态到此窗口（后续事件通过 broadcastTerminalEvent 广播到所有绑定窗口）
-      const target = win ?? mainWindow
-      target?.webContents.send('terminal:status', {
-        running: existing.isRunning,
-        shellRunning: existing.isRunning,
-        claudeRunning: existing.isClaudeRunning,
-        connected: existing.isClaudeRunning,
-        sessionId: sid,
-        error: '',
-      })
-      return { success: true }
-    }
-
-    // 获取 claude 绝对路径
-    const cliInfo = await detectCli()
-    const claudePath = cliInfo.found ? cliInfo.path : undefined
-
-    // 校验 session 文件是否存在 — 不存在则放弃 resume，启动全新会话
-    const encodedPath = encodeClaudePath((opts.cwd || '').replace(/\\/g, '/'))
-    const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
-    let validSessionId: string | undefined = undefined
-    if (opts.sessionId) {
-      const jsonlFile = path.join(sessionDir, `${opts.sessionId}.jsonl`)
-      if (fs.existsSync(jsonlFile)) {
-        validSessionId = opts.sessionId
-      } else {
-        console.log(`[terminal:start] session file not found: ${jsonlFile}, starting fresh session`)
-      }
-    }
-
-    // 终端模式 Claude 完全由 ~/.claude/settings.json 控制，不传入模型配置
-    const proc = new TerminalProcess({
-      cwd: opts.cwd,
-      sessionId: validSessionId,
-      claudePath,
-      cols: opts.cols || 120,
-      rows: opts.rows || 40,
-      permissionMode: opts.autoApproval ? 'auto' : 'manual',
-    })
-
-    // 事件广播到所有绑定此终端的窗口（支持多窗口共享终端）
-    proc.on('terminal-data', (data: string) => {
-      broadcastTerminalEvent(sid, 'terminal:data', data); pushLog(data, 'terminal'); if (devProcess) pushLog(data, 'dev')
-    })
-    proc.on('event', (event: any) => {
-      if (event.type === 'assistant' || event.type === 'user') {
-        const boundWins = terminalWindowBindings.get(sid)
-        fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
-          `[${new Date().toISOString()}] main: broadcast event type=${event.type} sid=${sid?.slice(0,8)} boundWindows=${boundWins?.size || 0}\n`, 'utf-8')
-      }
-      broadcastTerminalEvent(sid, 'claude:event', event)
-    })
-    proc.on('status', (s: any) => {
-      broadcastTerminalEvent(sid, 'claude:status-update', s)
-      broadcastTerminalEvent(sid, 'terminal:status', s)
-      // 终端错误 → 转发到 Chat stderr 通道展示
-      if (s.error) {
-        broadcastTerminalEvent(sid, 'claude:stderr', `[终端] ${s.error}`)
-      }
-    })
-    proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
-      broadcastTerminalEvent(sid, 'claude:permission-prompt', prompt)
-    })
-
-    terminalProcess = proc
-    terminalProcesses.set(sid, proc)
-    proc.start()
-    return { success: true }
   })
 
-  ipcMain.handle('terminal:restart', async (event) => {
-    findTerminal(event)?.restart()
-    return { success: true }
-  })
-
-  ipcMain.on('terminal:input', (event, data: string) => {
-    const tp = findTerminal(event)
+  /** terminal:restart 重启终端 Claude */
+  ipcMain.handle('terminal:restart', async (_event, sessionId?: string) => {
+    const sid = sessionId || 'default'
+    const tp = terminalProcesses.get(sid)
     if (tp) {
-      fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
-        `[${new Date().toISOString()}] terminal:input write dataLen=${data.length} running=${tp.isRunning}\n`, 'utf-8')
-      tp.write(data)
-    } else {
-      fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
-        `[${new Date().toISOString()}] terminal:input NO TERMINAL FOUND\n`, 'utf-8')
-    }
-  })
-
-  ipcMain.on('terminal:resize', (event, opts: { cols: number; rows: number }) => {
-    findTerminal(event)?.resize(opts.cols, opts.rows)
-  })
-
-  ipcMain.handle('terminal:kill', async (event) => {
-    const tp = findTerminal(event)
-    if (tp) {
-      for (const [id, p] of terminalProcesses) {
-        if (p === tp) { terminalProcesses.delete(id); break }
-      }
       tp.kill()
-      if (terminalProcess === tp) terminalProcess = null
+      // 延迟启动让进程完全退出
+      await new Promise(r => setTimeout(r, 500))
+      tp.start()
     }
-    return { success: true }
+    return { success: !!tp }
   })
 
-  ipcMain.handle('terminal:set-permission-mode', async (event, mode: 'auto' | 'manual') => {
-    const tp = findTerminal(event)
+  /** terminal:kill 终止终端 */
+  ipcMain.handle('terminal:kill', async (_event, sessionId?: string) => {
+    const sid = sessionId || 'default'
+    const tp = terminalProcesses.get(sid)
     if (tp) {
-      tp.updatePermissionMode(mode)
-      return { success: true }
+      tp.kill()
+      terminalProcesses.delete(sid)
     }
-    // 也更新所有已注册终端进程
-    for (const [, proc] of terminalProcesses) {
-      proc.updatePermissionMode(mode)
+    if (sessionId === undefined || sessionId === 'default') {
+      terminalProcess = null
     }
     return { success: true }
   })
 
-  ipcMain.handle('terminal:status', async (event) => {
-    const tp = findTerminal(event)
+  /** terminal:status 获取终端状态 */
+  ipcMain.handle('terminal:status', async (_event, sessionId?: string) => {
+    const sid = sessionId || 'default'
+    const tp = terminalProcesses.get(sid)
+    if (!tp) return { running: false, claudeRunning: false, sessionId: sid }
     return {
-      running: tp?.isRunning || false,
-      claudeRunning: tp?.isClaudeRunning || false,
-      sessionId: tp?.sessionId || null,
-      error: tp?.lastError || '',
+      running: tp.isRunning,
+      claudeRunning: tp.isClaudeRunning,
+      sessionId: tp.sessionId || sid,
+      error: tp.lastError || '',
     }
   })
 
-  // ── SSH 远程管理 ──────────────────────────────────────
+  /** terminal:set-permission-mode 设置终端权限模式 */
+  ipcMain.handle('terminal:set-permission-mode', async (_event, mode: 'auto' | 'manual') => {
+    // 应用到所有终端
+    for (const [, tp] of terminalProcesses) {
+      (tp as any).options = { ...(tp as any).options, permissionMode: mode }
+    }
+    return { success: true }
+  })
+
+  // terminal:input / terminal:resize — 使用 ipcMain.on（fire-and-forget）
+  ipcMain.on('terminal:input', (_event, data: string) => {
+    const tp = terminalProcess || terminalProcesses.get('default')
+    if (tp && tp.isRunning && typeof (tp as any).write === 'function') {
+      (tp as any).write(data)
+    }
+  })
+
+  ipcMain.on('terminal:resize', (_event, opts: { cols: number; rows: number }) => {
+    const tp = terminalProcess || terminalProcesses.get('default')
+    if (tp && typeof (tp as any).resize === 'function') {
+      (tp as any).resize(opts.cols, opts.rows)
+    }
+  })
+
+  // ── SSH 操作 ─────────────────────────────────────────
 
   ipcMain.handle('ssh:connect', async (_event, serverId: string) => {
-    const raw = loadSettings()
-    const cfg = raw?.sshServers?.find(s => s.id === serverId)
-    if (!cfg) return { success: false, error: 'SSH 服务器配置未找到' }
-    // 清理主机地址：去掉 http:// https:// 和尾部斜杠
-    const cleanCfg = { ...cfg, host: cfg.host.replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim() }
-    return sshService.connect(cleanCfg)
+    const settings = loadSettings()
+    const config = settings?.sshServers?.find(s => s.id === serverId)
+    if (!config) return { success: false, error: 'SSH 服务器配置未找到' }
+    return sshService.connect(config)
   })
 
   ipcMain.handle('ssh:disconnect', async (_event, serverId: string) => {
     sshService.disconnect(serverId)
-    // 同时关闭该服务器的远程终端
-    const term = sshTerminals.get(serverId)
-    if (term) { term.kill(); sshTerminals.delete(serverId) }
-    if (activeSshTerminal && activeSshTerminal === term) activeSshTerminal = null
     return { success: true }
   })
 
-  ipcMain.handle('ssh:status', async () => {
-    if (activeSshTerminal) {
-      return {
-        serverId: activeSshTerminal['options']?.serverId || null,
-        status: activeSshTerminal.isConnected ? 'connected' : 'disconnected',
-        error: activeSshTerminal.lastError,
-        connectedAt: null,
-      }
-    }
-    return { serverId: null, status: 'disconnected', error: '', connectedAt: null }
-  })
+  ipcMain.handle('ssh:status', async () => sshService.getStatus())
 
   ipcMain.handle('ssh:test-connection', async (_event, config: any) => {
-    const testConfig: SshServerConfig = {
-      id: 'test-' + Date.now().toString(36),
-      name: config.name || 'Test',
-      host: (config.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
-      port: config.port || 22,
-      username: config.username,
-      authMethod: config.authMethod || 'password',
-      password: config.newPassword || config.password || '',
-      privateKeyPath: config.privateKeyPath || '',
-      privateKeyContent: config.newPrivateKeyContent || '',
-      fingerprint: config.fingerprint,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    try {
+      const result = await sshService.connect(config)
+      if (result.success) sshService.disconnect(config.id)
+      return result
+    } catch (err: any) {
+      return { success: false, error: err.message }
     }
-    return sshService.testConnection(testConfig)
   })
 
   ipcMain.handle('ssh:list-remote-files', async (_event, opts: { serverId: string; remotePath: string; maxDepth?: number }) => {
-    try {
-      const files = await sshService.listDirectory(opts.serverId, opts.remotePath, opts.maxDepth || 3)
-      return files
-    } catch (err: any) {
-      return []
-    }
+    return sshService.listRemoteFiles(opts.serverId, opts.remotePath, opts.maxDepth || 1)
   })
 
   ipcMain.handle('ssh:read-remote-file', async (_event, opts: { serverId: string; remotePath: string }) => {
-    return sshService.readFile(opts.serverId, opts.remotePath)
+    return sshService.readRemoteFile(opts.serverId, opts.remotePath)
   })
 
   ipcMain.handle('ssh:write-remote-file', async (_event, opts: { serverId: string; remotePath: string; content: string }) => {
-    return sshService.writeFile(opts.serverId, opts.remotePath, opts.content)
+    return sshService.writeRemoteFile(opts.serverId, opts.remotePath, opts.content)
   })
-
-  ipcMain.handle('ssh:exec-command', async (_event, opts: { serverId: string; command: string; timeoutMs?: number }) => {
-    return sshService.execCommand(opts.serverId, opts.command, opts.timeoutMs || 30000)
-  })
-
-  // ── 远程终端 ──
 
   ipcMain.handle('ssh:start-terminal', async (_event, opts: { serverId: string; cols?: number; rows?: number }) => {
-    // 先关闭旧终端
-    const existing = sshTerminals.get(opts.serverId)
-    if (existing) existing.kill()
-
-    console.log('[main] ssh:start-terminal serverId:', opts.serverId)
-    const term = new SshTerminalProcess({
-      serverId: opts.serverId,
-      sshService,
-      cols: opts.cols || 120,
-      rows: opts.rows || 40,
-    })
-
-    // 事件转发
-    term.on('terminal-data', (data: string) => {
-      if (term === activeSshTerminal) {
-        mainWindow?.webContents.send('ssh:terminal-data', data)
+    try {
+      const existing = sshTerminals.get(opts.serverId)
+      if (existing) {
+        existing.kill()
+        sshTerminals.delete(opts.serverId)
       }
-    })
-    term.on('status', (s: any) => {
-      console.log('[main] ssh-terminal status:', JSON.stringify(s))
-      if (term === activeSshTerminal) {
-        mainWindow?.webContents.send('ssh:terminal-status', s)
-      }
-    })
-
-    sshTerminals.set(opts.serverId, term)
-    activeSshTerminal = term
-    term.start()
-    return { success: true }
+      const term = new SshTerminalProcess(opts.serverId, sshService)
+      sshTerminals.set(opts.serverId, term)
+      activeSshTerminal = term
+      term.on('data', (data: string) => {
+        const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+        win?.webContents.send('ssh:terminal-data', data)
+      })
+      term.on('status', (status: any) => {
+        for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('ssh:terminal-status', status) } catch {} }
+      })
+      term.start(opts.cols || 120, opts.rows || 40)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
   })
 
-  ipcMain.on('ssh:terminal-input', (_event, data: string) => {
-    activeSshTerminal?.write(data)
-  })
-
-  ipcMain.on('ssh:terminal-resize', (_event, opts: { cols: number; rows: number }) => {
-    activeSshTerminal?.resize(opts.cols, opts.rows)
-  })
-
+  /** ssh:terminal-kill 终止远程终端 */
   ipcMain.handle('ssh:terminal-kill', async () => {
-    if (activeSshTerminal) {
-      const serverId = (activeSshTerminal as any).options?.serverId
-      activeSshTerminal.kill()
-      if (serverId) sshTerminals.delete(serverId)
-      activeSshTerminal = null
-    }
+    for (const [, term] of sshTerminals) term.kill()
+    sshTerminals.clear()
+    activeSshTerminal = null
     return { success: true }
   })
 
-  // ── 部署 ──
+  /** ssh:exec-command 在远程执行命令 */
+  ipcMain.handle('ssh:exec-command', async (_event, opts: { serverId: string; command: string; timeoutMs?: number }) => {
+    return sshService.execCommand(opts.serverId, opts.command, opts.timeoutMs)
+  })
 
+  /** ssh:deploy 部署项目 */
   ipcMain.handle('ssh:deploy', async (_event, opts: { projectPath: string; deployTargetId: string }) => {
-    const raw = loadSettings()
-    const target = raw?.deployTargets?.find(t => t.id === opts.deployTargetId)
-    if (!target) return { success: false, error: '部署目标配置未找到' }
-
-    // 检查 SSH 连接
-    const connStatus = sshService.getStatus(target.sshServerId)
-    if (!connStatus.connected) return { success: false, error: `未连接到 SSH 服务器，请先在 SSH 面板连接` }
-
-    // 执行部署前命令
-    for (const cmd of target.preDeployCommands) {
-      mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'pre-command', command: cmd })
-      try { await sshService.execCommand(target.sshServerId, cmd) } catch (_e) { /* silent */ }
-    }
-
-    // 上传文件
-    mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'upload', currentFile: '', progress: 0 })
-    const excludes = target.excludePatterns?.length ? target.excludePatterns : ['node_modules', '.git', '.env', 'dist']
-    const result = await sshService.uploadDirectory(
-      target.sshServerId, opts.projectPath, target.remotePath,
-      excludes, (msg: string) => {
-        mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'upload', currentFile: msg, progress: 0 })
-      }
-    )
-
-    if (!result.success) return { success: false, error: result.error, uploaded: result.uploaded }
-
-    // 执行部署后命令
-    for (const cmd of target.postDeployCommands) {
-      mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'post-command', command: cmd })
-      try { await sshService.execCommand(target.sshServerId, cmd) } catch (_e) { /* silent */ }
-    }
-
-    mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'completed', uploaded: result.uploaded })
-    return { success: true, uploaded: result.uploaded }
+    const settings = loadSettings()
+    const target = settings?.deployTargets?.find(d => d.id === opts.deployTargetId)
+    if (!target) return { success: false, error: '部署目标未找到' }
+    return sshService.deploy(opts.projectPath, target, (msg) => {
+      for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('ssh:deploy-status', msg) } catch {} }
+    })
   })
 
-  // 窗口控制 — 使用 event.sender 定位正确的窗口
-  ipcMain.handle('win:minimize', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.minimize()
-  })
-  ipcMain.handle('win:maximize', (event) => {
-    const w = BrowserWindow.fromWebContents(event.sender)
-    if (w?.isMaximized()) w.unmaximize()
-    else w?.maximize()
-  })
-  ipcMain.handle('win:close', (event) => {
-    const w = BrowserWindow.fromWebContents(event.sender)
-    w?.close()
-  })
-  ipcMain.handle('win:is-maximized', (event) => {
-    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
-  })
-    ipcMain.handle('app:workspace-root', async () => getActiveWorkspaceRoot())
-
-  // ── 项目技能管理 ──────────────────────────────────
-  const PROJECT_SKILLS_FILE = '.claude/project-skills.json'
-
-  function getProjectSkillsPath(): string {
-    return path.join(getActiveWorkspaceRoot(), PROJECT_SKILLS_FILE)
+  // ── 记忆管理（项目隔离）────────────────────────────────
+  function getMemoryDir(projectPath: string): string {
+    const encoded = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+    return path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
   }
 
-  function loadProjectSkills(): string[] {
+  ipcMain.handle('memory:list', async (_event, projectPath: string) => {
     try {
-      const fp = getProjectSkillsPath()
-      if (fs.existsSync(fp)) return JSON.parse(fs.readFileSync(fp, 'utf-8'))
-    } catch {}
+      const dir = getMemoryDir(projectPath)
+      if (!fs.existsSync(dir)) return { success: true, entries: [] }
+      const entries = fs.readdirSync(dir).filter(f => f.endsWith('.md')).map(f => {
+        const stat = fs.statSync(path.join(dir, f))
+        const entry: any = { fileName: f, name: f.replace(/\.md$/, ''), description: '', mtime: stat.mtime.toISOString() }
+        // 解析 frontmatter 获取 name/description/type
+        try {
+          const raw = fs.readFileSync(path.join(dir, f), 'utf-8')
+          const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/)
+          if (fmMatch) {
+            for (const line of fmMatch[1].split('\n')) {
+              const m = line.match(/^(\w+):\s*(.+)/)
+              if (m) { entry[m[1]] = m[2].trim() }
+            }
+          }
+        } catch {}
+        return entry
+      })
+      return { success: true, entries }
+    } catch (err: any) { return { success: false, error: err.message, entries: [] } }
+  })
+
+  ipcMain.handle('memory:read', async (_event, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const filePath = path.join(getMemoryDir(opts.projectPath), opts.fileName)
+      if (!fs.existsSync(filePath)) return { success: false, error: '文件不存在' }
+      const content = fs.readFileSync(filePath, 'utf-8')
+      return { success: true, content }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('memory:write', async (_event, opts: { projectPath: string; fileName: string; content: string }) => {
+    try {
+      const dir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, opts.fileName), opts.content, 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('memory:create', async (_event, opts: { projectPath: string; fileName: string; name: string; description: string; type: string; content: string }) => {
+    try {
+      const dir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const frontmatter = [
+        '---',
+        `name: ${opts.name}`,
+        `description: ${opts.description}`,
+        `type: ${opts.type}`,
+        '---',
+        '',
+      ].join('\n')
+      fs.writeFileSync(path.join(dir, opts.fileName), frontmatter + opts.content, 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('memory:delete', async (_event, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const filePath = path.join(getMemoryDir(opts.projectPath), opts.fileName)
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('memory:auto-create', async (_event, opts: { projectPath: string; title: string; content: string; type?: string }) => {
+    try {
+      const dir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const slug = title.toLowerCase().replace(/[^a-z0-9一-龥]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'memory'
+      const fileName = slug + '.md'
+      if (fs.existsSync(path.join(dir, fileName))) return { success: true, fileName } // 不覆盖
+      const frontmatter = [
+        '---',
+        `name: ${slug}`,
+        `description: ${title.slice(0, 80)}`,
+        `type: ${opts.type || 'auto'}`,
+        '---',
+        '',
+      ].join('\n')
+      fs.writeFileSync(path.join(dir, fileName), frontmatter + opts.content, 'utf-8')
+      return { success: true, fileName }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // ── 知识管理 ─────────────────────────────────────────
+  function getKnowledgeDir(projectPath: string): string {
+    const encoded = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+    return path.join(CLAUDE_HOME, 'projects', encoded, 'knowledge')
+  }
+
+  ipcMain.handle('knowledge:list', async (_event, projectPath: string) => {
+    try {
+      const dir = getKnowledgeDir(projectPath)
+      if (!fs.existsSync(dir)) return { success: true, entries: [] }
+      const entries = fs.readdirSync(dir).filter(f => f.endsWith('.md')).map(f => {
+        const stat = fs.statSync(path.join(dir, f))
+        const entry: any = { fileName: f, name: f.replace(/\.md$/, ''), description: '', type: '', tags: '', status: 'active', mtime: stat.mtime.toISOString(), sources: '' }
+        // 解析 frontmatter
+        try {
+          const raw = fs.readFileSync(path.join(dir, f), 'utf-8')
+          const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/)
+          if (fmMatch) {
+            for (const line of fmMatch[1].split('\n')) {
+              const m = line.match(/^(\w+):\s*(.+)/)
+              if (m) { entry[m[1]] = m[2].trim() }
+            }
+          }
+        } catch {}
+        return entry
+      })
+      return { success: true, entries }
+    } catch (err: any) { return { success: false, error: err.message, entries: [] } }
+  })
+
+  ipcMain.handle('knowledge:read', async (_event, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const filePath = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
+      if (!fs.existsSync(filePath)) return { success: false, error: '文件不存在' }
+      return { success: true, content: fs.readFileSync(filePath, 'utf-8') }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('knowledge:create', async (_event, opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => {
+    try {
+      const dir = getKnowledgeDir(opts.projectPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const slug = title.toLowerCase().replace(/[^a-z0-9一-龥]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'knowledge'
+      const fileName = slug + '.md'
+      const frontmatter = [
+        '---',
+        `title: ${title}`,
+        `type: ${opts.type}`,
+        `tags: ${opts.tags}`,
+        opts.sources ? `sources: ${opts.sources}` : '',
+        '---',
+        '',
+      ].join('\n')
+      fs.writeFileSync(path.join(dir, fileName), frontmatter + opts.content, 'utf-8')
+      return { success: true, fileName }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('knowledge:delete', async (_event, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const filePath = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // ── 技能管理 ─────────────────────────────────────────
+  const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+  const SKILLS_META_FILE = path.join(os.homedir(), '.claude', 'claude-space-skills.json')
+
+  function getInstalledSkills(): any[] {
+    try {
+      if (fs.existsSync(SKILLS_META_FILE)) {
+        return JSON.parse(fs.readFileSync(SKILLS_META_FILE, 'utf-8'))
+      }
+      // fallback: scan skills directory
+      if (fs.existsSync(SKILLS_DIR)) {
+        return fs.readdirSync(SKILLS_DIR).filter(f => f.endsWith('.md')).map(f => ({
+          name: f.replace(/\.md$/, ''), installedAt: fs.statSync(path.join(SKILLS_DIR, f)).mtime.toISOString(),
+        }))
+      }
+    } catch (_e) { /* silent */ }
     return []
   }
 
-  function saveProjectSkills(skills: string[]) {
-    const fp = getProjectSkillsPath()
-    const dir = path.dirname(fp)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(fp, JSON.stringify(skills, null, 2), 'utf-8')
+  function saveInstalledSkills(skills: any[]): void {
+    try {
+      const dir = path.dirname(SKILLS_META_FILE)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const tmp = SKILLS_META_FILE + '.tmp'
+      fs.writeFileSync(tmp, JSON.stringify(skills, null, 2), 'utf-8')
+      fs.renameSync(tmp, SKILLS_META_FILE)
+    } catch { /* silent */ }
   }
 
-  ipcMain.handle('skill:list-project', async () => {
-    try { return { success: true, skills: loadProjectSkills() } } catch (e: any) { return { success: false, error: e.message } }
-  })
+  ipcMain.handle('skill:list', async () => ({ success: true, skills: getInstalledSkills() }))
 
-  ipcMain.handle('skill:install-to-project', async (_e, skillName: string) => {
+  ipcMain.handle('skill:read', async (_event, name: string) => {
     try {
-      const list = loadProjectSkills()
-      if (!list.includes(skillName)) { list.push(skillName); saveProjectSkills(list) }
-      return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
+      const filePath = path.join(SKILLS_DIR, name + '.md')
+      if (!fs.existsSync(filePath)) return { success: false, error: '技能未找到' }
+      return { success: true, content: fs.readFileSync(filePath, 'utf-8') }
+    } catch (err: any) { return { success: false, error: err.message } }
   })
 
-  ipcMain.handle('skill:remove-from-project', async (_e, skillName: string) => {
+  ipcMain.handle('skill:install', async (_event, opts: { name: string; content: string }) => {
     try {
-      const list = loadProjectSkills()
-      const idx = list.indexOf(skillName)
-      if (idx >= 0) { list.splice(idx, 1); saveProjectSkills(list) }
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      fs.writeFileSync(path.join(SKILLS_DIR, opts.name + '.md'), opts.content, 'utf-8')
+      const skills = getInstalledSkills()
+      skills.push({ name: opts.name, installedAt: new Date().toISOString() })
+      saveInstalledSkills(skills)
       return { success: true }
-    } catch (e: any) { return { success: false, error: e.message } }
+    } catch (err: any) { return { success: false, error: err.message } }
   })
 
-  ipcMain.handle('skill:clear-project', async () => {
-    try { saveProjectSkills([]); return { success: true } } catch (e: any) { return { success: false, error: e.message } }
-  })
-
-  // ── 自动化工坊：循环任务 ────────────────────────────
-  const LOOPS_FILE = path.join(os.homedir(), '.claude', 'loops.json')
-  function loadLoops(): any[] { try { if (fs.existsSync(LOOPS_FILE)) return JSON.parse(fs.readFileSync(LOOPS_FILE, 'utf-8')) } catch {} return [] }
-  function saveLoops(loops: any[]) { const dir = path.dirname(LOOPS_FILE); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(LOOPS_FILE, JSON.stringify(loops, null, 2), 'utf-8') }
-  ipcMain.handle('loop:list', async () => { try { return { success: true, loops: loadLoops() } } catch (e: any) { return { success: false, error: e.message } } })
-  ipcMain.handle('loop:create', async (_e, opts: { name: string; prompt: string; interval: string }) => { try { const loops = loadLoops(); const loop = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: opts.name, prompt: opts.prompt, interval: opts.interval || '10m', status: 'idle', lastRun: null, createdAt: new Date().toISOString() }; loops.push(loop); saveLoops(loops); return { success: true, loop } } catch (e: any) { return { success: false, error: e.message } } })
-  ipcMain.handle('loop:delete', async (_e, id: string) => { try { const loops = loadLoops(); saveLoops(loops.filter((l: any) => l.id !== id)); return { success: true } } catch (e: any) { return { success: false, error: e.message } } })
-  ipcMain.handle('loop:run-now', async (_e, id: string) => { try { const loops = loadLoops(); const loop = loops.find((l: any) => l.id === id); if (!loop) return { success: false, error: 'not found' }; loop.status = 'running'; loop.lastRun = new Date().toISOString(); saveLoops(loops); return { success: true } } catch (e: any) { return { success: false, error: e.message } } })
-
-  // ── 工作流执行 ────────────────────────────────────
-  const WFRUNS_FILE = path.join(os.homedir(), '.claude', 'workflow-runs.json')
-  function loadRuns(): any[] { try { if (fs.existsSync(WFRUNS_FILE)) return JSON.parse(fs.readFileSync(WFRUNS_FILE, 'utf-8')) } catch {} return [] }
-  function saveRuns(runs: any[]) { const dir = path.dirname(WFRUNS_FILE); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(WFRUNS_FILE, JSON.stringify(runs, null, 2), 'utf-8') }
-  ipcMain.handle('workflow:list-runs', async () => { try { return { success: true, runs: loadRuns() } } catch (e: any) { return { success: false, error: e.message } } })
-  ipcMain.handle('workflow:run', async (_e, opts: { templateId: string; name: string }) => { try { const run = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), templateId: opts.templateId, name: opts.name, status: 'queued', startedAt: new Date().toISOString(), completedAt: null, result: null }; const runs = loadRuns(); runs.push(run); saveRuns(runs); return { success: true, run } } catch (e: any) { return { success: false, error: e.message } } })
-
-  // ── 工作空间管理 IPC ──────────────────────────────
-  ipcMain.handle('workspace:list', async () => {
-    // 首次调用且 _workspaces 为空时，自动创建默认空间并同步到内存
-    if (_workspaces.length === 0) {
-      _workspaces = [{
-        id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
-        createdAt: new Date().toISOString(),
-      }]
-      // 持久化默认空间，确保后续 settings:load 也能加载到
-      const existing = loadSettings()
-      if (!existing?.workspaces?.length) {
-        saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+  ipcMain.handle('skill:install-batch', async (_event, opts: { skills: Array<{ name: string; content: string }> }) => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      const installed = []
+      for (const s of opts.skills) {
+        fs.writeFileSync(path.join(SKILLS_DIR, s.name + '.md'), s.content, 'utf-8')
+        installed.push({ name: s.name, installedAt: new Date().toISOString() })
       }
-    }
-    return _workspaces
+      const skills = getInstalledSkills()
+      skills.push(...installed)
+      saveInstalledSkills(skills)
+      return { success: true, count: installed.length }
+    } catch (err: any) { return { success: false, error: err.message } }
   })
 
-  ipcMain.handle('workspace:add', async (_event, opts: { name: string; path: string }) => {
-    const id = 'ws_' + Date.now().toString(36)
-    const ws: WorkspaceConfig = { id, name: opts.name, path: opts.path, isActive: false, createdAt: new Date().toISOString() }
-    _workspaces.push(ws)
-    // 持久化到 settings
-    const existing = loadSettings()
-    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
-    return { success: true, workspace: ws }
+  ipcMain.handle('skill:uninstall', async (_event, name: string) => {
+    try {
+      const filePath = path.join(SKILLS_DIR, name + '.md')
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      const skills = getInstalledSkills().filter((s: any) => s.name !== name)
+      saveInstalledSkills(skills)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
   })
 
-  ipcMain.handle('workspace:remove', async (_event, workspaceId: string) => {
-    const idx = _workspaces.findIndex(w => w.id === workspaceId)
-    if (idx < 0) return { success: false, error: '工作空间不存在' }
-    const wasActive = _workspaces[idx].isActive
-    _workspaces.splice(idx, 1)
-    if (wasActive && _workspaces.length > 0) {
-      _workspaces[0].isActive = true
-      _workspaceRoot = _workspaces[0].path
-    } else if (_workspaces.length === 0) {
-      _workspaceRoot = getWorkspaceRoot()
-    }
-    const existing = loadSettings()
-    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+  ipcMain.handle('skill:marketplace-list', async () => {
+    return { success: true, items: [
+      { id: 'codes-review', name: 'Code Review', description: 'AI 代码审查', category: 'development', rating: 4.5 },
+      { id: 'deep-research', name: 'Deep Research', description: '深度研究分析', category: 'research', rating: 4.8 },
+      { id: 'security-review', name: 'Security Review', description: '安全审查', category: 'security', rating: 4.3 },
+    ]}
+  })
+
+  ipcMain.handle('skill:marketplace-install', async (_event, item: { id: string }) => {
+    return { success: false, error: '请从技能源安装' }
+  })
+
+  let _marketConfig = { sources: [], autoScan: false }
+  ipcMain.handle('skill:get-market-config', async () => _marketConfig)
+  ipcMain.handle('skill:save-market-config', async (_event, cfg: any) => {
+    _marketConfig = cfg
+    return { success: true }
+  })
+  ipcMain.handle('skill:load-from-local', async () => {
+    try {
+      if (fs.existsSync(SKILLS_DIR)) {
+        const files = fs.readdirSync(SKILLS_DIR).filter(f => f.endsWith('.md'))
+        return { success: true, skills: files.map(f => ({ name: f.replace(/\.md$/, ''), content: fs.readFileSync(path.join(SKILLS_DIR, f), 'utf-8') })) }
+      }
+    } catch (_e) { /* silent */ }
+    return { success: true, skills: [] }
+  })
+  ipcMain.handle('skill:load-from-local-dir', async (_event, dir: string) => {
+    try {
+      if (fs.existsSync(dir)) {
+        return { success: true, skills: fs.readdirSync(dir).filter(f => f.endsWith('.md')).map(f => ({
+          name: f.replace(/\.md$/, ''), content: fs.readFileSync(path.join(dir, f), 'utf-8'),
+        })) }
+      }
+    } catch (_e) { /* silent */ }
+    return { success: true, skills: [] }
+  })
+  ipcMain.handle('skill:load-from-git', async (_event, gitUrl: string) => {
+    return { success: false, error: 'Git 加载尚未实现' }
+  })
+  ipcMain.handle('skill:marketplace-scan', async () => ({ success: true, skills: [] }))
+  ipcMain.handle('skill:marketplace-source-add', async (_event, src: any) => {
+    _marketConfig.sources.push(src)
+    return { success: true }
+  })
+  ipcMain.handle('skill:marketplace-source-remove', async (_event, url: string) => {
+    _marketConfig.sources = _marketConfig.sources.filter((s: any) => s.url !== url)
+    return { success: true }
+  })
+  ipcMain.handle('skill:marketplace-source-update', async (_event, url: string, updates: any) => {
+    _marketConfig.sources = _marketConfig.sources.map((s: any) => s.url === url ? { ...s, ...updates } : s)
     return { success: true }
   })
 
-  ipcMain.handle('workspace:set-active', async (_event, workspaceId: string) => {
-    let found = false
-    _workspaces = _workspaces.map(w => {
-      if (w.id === workspaceId) { found = true; _workspaceRoot = w.path; return { ...w, isActive: true } }
-      return { ...w, isActive: false }
-    })
-    if (!found) return { success: false, error: '工作空间不存在' }
-    const existing = loadSettings()
-    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
-    return { success: true, path: _workspaceRoot }
+  // ── 项目技能 ─────────────────────────────────────────
+  const PROJECT_SKILLS_FILE = path.join(os.homedir(), '.claude', 'claude-space-project-skills.json')
+
+  ipcMain.handle('skill:list-project', async () => {
+    try {
+      if (fs.existsSync(PROJECT_SKILLS_FILE)) {
+        return { success: true, skills: JSON.parse(fs.readFileSync(PROJECT_SKILLS_FILE, 'utf-8')) }
+      }
+    } catch (_e) { /* silent */ }
+    return { success: true, skills: [] }
   })
+  ipcMain.handle('skill:install-to-project', async (_event, skillName: string) => {
+    try {
+      const list: string[] = JSON.parse(
+        fs.existsSync(PROJECT_SKILLS_FILE) ? fs.readFileSync(PROJECT_SKILLS_FILE, 'utf-8') : '[]'
+      )
+      if (!list.includes(skillName)) list.push(skillName)
+      fs.writeFileSync(PROJECT_SKILLS_FILE, JSON.stringify(list, null, 2), 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('skill:remove-from-project', async (_event, skillName: string) => {
+    try {
+      const list: string[] = fs.existsSync(PROJECT_SKILLS_FILE)
+        ? JSON.parse(fs.readFileSync(PROJECT_SKILLS_FILE, 'utf-8')) : []
+      const next = list.filter((n: string) => n !== skillName)
+      fs.writeFileSync(PROJECT_SKILLS_FILE, JSON.stringify(next, null, 2), 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+  ipcMain.handle('skill:clear-project', async () => {
+    try {
+      fs.writeFileSync(PROJECT_SKILLS_FILE, '[]', 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // ── 循环/自动化（Loop）─────────────────────────────────
+  // 引擎实例已在模块顶部创建：loopScheduler / workflowEngine
+  // 存储路径由引擎内部管理
+  ipcMain.handle('loop:list', async () => ({ success: true, loops: loopScheduler.loadLoops() }))
+  ipcMain.handle('loop:create', async (_event, opts: { name: string; prompt: string; interval: string }) => {
+    const loops = loopScheduler.loadLoops()
+    const loop: LoopConfig = { id: 'loop_' + Date.now().toString(36), ...opts, createdAt: new Date().toISOString(), enabled: true, lastRun: null }
+    loops.push(loop)
+    loopScheduler.saveLoops(loops)
+    // 自动调度
+    loopScheduler.schedule(loop)
+    return { success: true, loop }
+  })
+  ipcMain.handle('loop:delete', async (_event, id: string) => {
+    loopScheduler.unschedule(id)
+    const loops = loopScheduler.loadLoops().filter((l: any) => l.id !== id)
+    loopScheduler.saveLoops(loops)
+    return { success: true }
+  })
+  ipcMain.handle('loop:run-now', async (_event, id: string) => {
+    // 异步执行，不阻塞 UI
+    loopScheduler.runNow(id).catch(e => console.error('loop:run-now error:', e))
+    return { success: true }
+  })
+  ipcMain.handle('loop:update', async (_event, opts: { id: string; name?: string; prompt?: string; interval?: string; enabled?: boolean }) => {
+    const loops = loopScheduler.loadLoops().map((l: any) => l.id === opts.id ? { ...l, ...opts } : l)
+    loopScheduler.saveLoops(loops)
+    // 根据 enabled 状态管理调度
+    const updated = loops.find((l: any) => l.id === opts.id)
+    if (updated) {
+      if (updated.enabled !== false) {
+        loopScheduler.schedule(updated)
+      } else {
+        loopScheduler.unschedule(opts.id)
+      }
+    }
+    return { success: true }
+  })
+  ipcMain.handle('loop:pause', async (_event, id: string) => {
+    loopScheduler.pause(id)
+    const loops = loopScheduler.loadLoops().map((l: any) => l.id === id ? { ...l, enabled: false } : l)
+    loopScheduler.saveLoops(loops)
+    return { success: true }
+  })
+  ipcMain.handle('loop:resume', async (_event, id: string) => {
+    const loops = loopScheduler.loadLoops()
+    const loop = loops.find((l: any) => l.id === id)
+    if (loop) {
+      loop.enabled = true
+      loopScheduler.saveLoops(loops)
+      loopScheduler.schedule(loop)
+    }
+    return { success: true }
+  })
+  ipcMain.handle('loop:history', async (_event, loopId?: string) => {
+    const history = loopScheduler.loadHistory()
+    const filtered = loopId ? history.filter((r: any) => r.loopId === loopId) : history
+    return { success: true, runs: filtered }
+  })
+
+  // ── 工作流（Workflow）─────────────────────────────────
+  ipcMain.handle('workflow:list-runs', async () => {
+    return { success: true, runs: workflowEngine.loadRuns() }
+  })
+  ipcMain.handle('workflow:run', async (_event, opts: { templateId: string; name: string; phases: Array<{ name: string; type: string; prompt: string; model: string }> }) => {
+    try {
+      const run = await workflowEngine.execute({
+        templateId: opts.templateId,
+        name: opts.name,
+        phases: opts.phases,
+      })
+      return { success: true, run }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 控制台 ───────────────────────────────────────────
+  ipcMain.handle('console:open-window', async () => {
+    const win = new BrowserWindow({
+      width: 900, height: 600, title: 'Claude Space — 控制台', frame: false, titleBarStyle: 'hidden',
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, preload: path.join(__dirname, 'preload.js') },
+      show: false, backgroundColor: '#0d0d0d',
+    })
+    win.on('ready-to-show', () => win.show())
+    win.on('closed', () => {
+      const idx = windows.indexOf(win)
+      if (idx >= 0) windows.splice(idx, 1)
+    })
+    windows.push(win)
+    const url = isDev ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:55173') : `file://${path.join(__dirname, '../dist/index.html')}`
+    win.loadURL(url + '?consoleWindow=1')
+    return { success: true }
+  })
+
+  ipcMain.handle('console:get-log-history', async () => {
+    return { success: true, lines: [...logBuffer] }
+  })
+
+  // ── 开发服务器（Dev） ─────────────────────────────────
+  let _devProcess: any = null
+
+  ipcMain.handle('dev:start', async (_event, opts: { command: string; name: string }) => {
+    try {
+      if (_devProcess) { _devProcess.kill(); _devProcess = null }
+      _devProcess = spawn('cmd.exe', ['/c', opts.command], {
+        shell: true, windowsHide: true, cwd: getActiveWorkspaceRoot(),
+      })
+      _devProcess.stdout?.on('data', (d: Buffer) => {
+        for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('dev:output', d.toString()) } catch {} }
+      })
+      _devProcess.stderr?.on('data', (d: Buffer) => {
+        for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('dev:error', d.toString()) } catch {} }
+      })
+      _devProcess.on('close', () => {
+        _devProcess = null
+        for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('dev:status', { running: false, name: opts.name }) } catch {} }
+      })
+      for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('dev:status', { running: true, name: opts.name }) } catch {} }
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('dev:stop', async () => {
+    if (_devProcess) { _devProcess.kill(); _devProcess = null }
+    return { success: true }
+  })
+}
+
+/** 初始化 claude settings.json 文件监视（模块级，供 app.whenReady 调用） */
+let _claudeSettingsWatcher: fs.FSWatcher | null = null
+function initClaudeEnvWatch() {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+  try {
+    if (!fs.existsSync(settingsPath)) { console.log('[claude-env] settings.json 不存在，跳过文件监视'); return }
+    _claudeSettingsWatcher = fs.watch(settingsPath, (eventType) => {
+      if (eventType === 'change') {
+        setTimeout(() => {
+          const config = getClaudeEnvConfig()
+          for (const w of windows) {
+            try { if (!w.isDestroyed()) w.webContents.send('claude-env:changed', { ...config, mtime: fs.statSync(settingsPath).mtime.toISOString() }) } catch {}
+          }
+        }, 500)
+      }
+    })
+  } catch (err) {
+    console.warn('[claude-env] 文件监视启动失败:', err)
+  }
 }
 
 // ── 应用生命周期 ────────────────────────────────────────
@@ -2749,9 +2193,10 @@ app.whenReady().then(() => {
   applyMenu()
   registerIPC()
   createWindow()
-  // 等窗口就绪后再启动 claude settings.json 监视
+  // 恢复所有已启用的 loop 调度
   setTimeout(() => {
-    try { initClaudeSettingsWatcher() } catch (e) { console.warn('initClaudeSettingsWatcher failed:', e) }
+    try { loopScheduler.resumeAll() } catch (e) { console.warn('loopScheduler.resumeAll failed:', e) }
+    try { initClaudeEnvWatch() } catch (e) { console.warn('initClaudeEnvWatch failed:', e) }
   }, 3000)
 
   app.on('activate', () => {
@@ -2781,6 +2226,7 @@ app.on('before-quit', () => {
   for (const [, tp] of terminalProcesses) tp.kill()
   terminalProcesses.clear()
   agentPool.stopAll()
+  loopScheduler.stopAll()
   for (const [, term] of sshTerminals) term.kill()
   sshTerminals.clear()
   activeSshTerminal = null

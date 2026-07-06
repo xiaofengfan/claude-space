@@ -8,7 +8,7 @@ try { pty = require('node-pty') } catch { /* unavailable */ }
 import { EventEmitter } from 'events'
 import fs from 'fs'
 import path from 'path'
-import { encodeClaudePath } from './utils'
+import { encodeClaudePath, resolveClaudePath } from './utils'
 import os from 'os'
 
 // 调试日志 — 打包版 console.log 不可见，写文件
@@ -75,8 +75,8 @@ export class TerminalProcess extends EventEmitter {
     this.jsonlPath = null
     this.jsonlTailSize = 0
 
-    // claude 命令：优先用传入的绝对路径
-    const claudeBin = this.options.claudePath || 'claude'
+    // claude 命令：优先用传入的绝对路径，其次用系统 PATH 解析
+    const claudeBin = this.options.claudePath || resolveClaudePath()
     const args: string[] = []
     if (this.options.permissionMode === 'auto') {
       args.push('--permission-mode', 'bypassPermissions')

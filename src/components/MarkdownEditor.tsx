@@ -36,7 +36,15 @@ export function MarkdownEditor({ content, onChange, theme }: MarkdownEditorProps
       </div>
 
       {/* Splitter */}
-      <div className="splitter splitter-v" onMouseDown={splitter.onMouseDown} />
+      <div
+        className="splitter splitter-v"
+        onMouseDown={splitter.onMouseDown}
+        style={{
+          width: 6, height: '100%', cursor: 'col-resize',
+          background: isDark ? '#2a2a4a' : '#e0e0e0',
+          flexShrink: 0, transition: 'background 0.15s',
+        }}
+      />
 
       {/* Preview pane */}
       <div className="markdown-editor-pane right markdown-preview">

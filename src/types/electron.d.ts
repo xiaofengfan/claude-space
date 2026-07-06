@@ -171,9 +171,14 @@ export interface ElectronAPI {
   loopCreate: (opts: { name: string; prompt: string; interval: string }) => Promise<{ success: boolean; loop?: any; error?: string }>
   loopDelete: (id: string) => Promise<{ success: boolean; error?: string }>
   loopRunNow: (id: string) => Promise<{ success: boolean; error?: string }>
+  loopUpdate: (opts: { id: string; name?: string; prompt?: string; interval?: string; enabled?: boolean }) => Promise<{ success: boolean; error?: string }>
+  loopPause: (id: string) => Promise<{ success: boolean; error?: string }>
+  loopResume: (id: string) => Promise<{ success: boolean; error?: string }>
+  loopHistory: (loopId?: string) => Promise<{ success: boolean; runs?: any[]; error?: string }>
   workflowListRuns: () => Promise<{ success: boolean; runs?: any[]; error?: string }>
-  workflowRun: (opts: { templateId: string; name: string }) => Promise<{ success: boolean; run?: any; error?: string }>
+  workflowRun: (opts: { templateId: string; name: string; phases: Array<{ name: string; type: string; prompt: string; model: string }> }) => Promise<{ success: boolean; run?: any; error?: string }>
   onLoopStatus: (callback: (data: any) => void) => () => void
+  onLoopOutput: (callback: (data: { loopId: string; runId: string; text: string }) => void) => () => void
   onWorkflowLog: (callback: (data: any) => void) => () => void
   onWorkflowStatus: (callback: (data: any) => void) => () => void
 

@@ -113,7 +113,7 @@ export default function App() {
             return // 添加失败，放弃切换
           }
         }
-      } catch { return }
+      } catch (e) { console.warn('[App] handleWorkspaceSwitch find workspace by path failed:', e); return }
     }
 
     // 切换到目标空间
@@ -197,7 +197,7 @@ export default function App() {
         keysToRemove.forEach(k => localStorage.removeItem(k))
         const toSave = msgs.filter(m => !m.isStreaming).slice(-100)
         localStorage.setItem(getMessagesStorageKey(sessionId), JSON.stringify(toSave))
-      } catch { /* 无法恢复 */ }
+      } catch (e) { console.warn('[App] localStorage cleanup failed after full:', e) /* 无法恢复 */ }
     }
   }
 
@@ -219,7 +219,7 @@ export default function App() {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
-    } catch { /* silent */ }
+    } catch (e) { console.warn('[App] loadMessagesFromStorage JSON parse failed:', e) /* silent */ }
     return null
   }
 
@@ -340,14 +340,14 @@ export default function App() {
           })
         }
       }
-    }).catch(() => {})
+    }).catch((_e) => console.warn('[App] getSessionTranscript failed:', _e))
     // 切换终端
     if (activeProject) {
       window.electronAPI.terminalStart({
         cwd: activeProject.path,
         sessionId: sessionId,
         autoApproval: autoApprovalRef.current,
-      }).then(() => setTerminalReady(true)).catch(() => {})
+      }).then(() => setTerminalReady(true)).catch((_e) => console.warn('[App] terminalStart failed:', _e))
     }
   }
 
@@ -409,34 +409,34 @@ export default function App() {
   }, [])
 
   const loadProjectsForDialog = async () => {
-    try { setProjects(await window.electronAPI.scanProjects()) } catch (_e) { /* silent */ }
+    try { setProjects(await window.electronAPI.scanProjects()) } catch (e) { console.warn('[App] scanProjects failed:', e) }
   }
   const loadTasks = async () => {
-    try { setTasks(await window.electronAPI.loadTasks()) } catch (_e) { /* silent */ }
+    try { setTasks(await window.electronAPI.loadTasks()) } catch (e) { console.warn('[App] loadTasks failed:', e) }
   }
   const loadTeam = async () => {
     try {
       const saved = await window.electronAPI.loadTeam?.()
       if (saved?.length) setTeam(saved)
-    } catch (_e) { /* silent */ }
+    } catch (e) { console.warn('[App] loadTeam failed:', e) }
   }
   const handleTeamChange = async (newTeam: any[]) => {
     setTeam(newTeam)
-    try { await window.electronAPI.saveTeam?.(newTeam) } catch (_e) { /* silent */ }
+    try { await window.electronAPI.saveTeam?.(newTeam) } catch (e) { console.warn('[App] saveTeam failed:', e) }
   }
   const loadSettings = async () => {
     try {
       const s = await window.electronAPI.loadSettings()
       setAppSettings(s)
       if (s?.defaultGroupChat) setGroupChatMode(true)
-    } catch (_e) { /* silent */ }
+    } catch (e) { console.warn('[App] loadSettings failed:', e) }
   }
   const handleSaveSettings = useCallback(async (newSettings: AppSettingsSafe) => {
     setAppSettings(newSettings)
-    try { await window.electronAPI.saveSettings(newSettings) } catch (_e) { /* silent */ }
+    try { await window.electronAPI.saveSettings(newSettings) } catch (e) { console.warn('[App] saveSettings failed:', e) }
   }, [])
   const loadSessions = async (projectPath?: string) => {
-    try { setSessions(await window.electronAPI.listSessions(projectPath)) } catch (_e) { /* silent */ }
+    try { setSessions(await window.electronAPI.listSessions(projectPath)) } catch (e) { console.warn('[App] listSessions failed:', e) }
   }
 
   const handleSelectProject = useCallback(async (project: ProjectInfo) => {
@@ -453,7 +453,7 @@ export default function App() {
       const base = prev.length ? prev : DEFAULT_TEAM
       return base.map(e => ({ ...e, status: 'idle' as const }))
     })
-    try { setSessions(await window.electronAPI.listSessions(project.path)) } catch (_e) { /* silent */ }
+    try { setSessions(await window.electronAPI.listSessions(project.path)) } catch (e) { console.warn('[App] listSessions failed:', e) }
     if (!isSameProject) {
       try {
         const recent = await window.electronAPI.getRecentSession?.(project.path)
@@ -484,7 +484,7 @@ export default function App() {
           }
           if (recentSid && !currentSessionId) setCurrentSessionId(recentSid)
         }
-      } catch (_e) { /* silent */ }
+      } catch (e) { console.warn('[App] load recent session failed:', e) }
     }
 
     // 自动启动终端 + Claude（后台，不切换视图）
@@ -511,9 +511,9 @@ export default function App() {
           } else if (attempts >= 50) {  // 10 秒超时
             clearInterval(pollReady)
           }
-        } catch { clearInterval(pollReady) }
+        } catch (e) { console.warn('[App] terminalStatus poll failed:', e); clearInterval(pollReady) }
       }, 200)
-    } catch { /* 非关键 */ }
+    } catch (e) { console.warn('[App] terminal start failed (non-critical):', e) /* 非关键 */ }
   }, [])
 
   // 解析会话历史消息 — 保留 tool_use/tool_result/thinking 结构
@@ -1153,7 +1153,7 @@ export default function App() {
     if (!appSettings) return
     const updated = { ...appSettings, activeModelId: modelId || null }
     setAppSettings(updated)
-    try { await window.electronAPI.saveSettings(updated) } catch (_e) { /* silent */ }
+    try { await window.electronAPI.saveSettings(updated) } catch (e) { console.warn('[App] saveSettings (model change) failed:', e) }
   }, [appSettings])
 
   // Menu
@@ -1390,7 +1390,7 @@ export default function App() {
                     setCurrentSessionId(sid)
                     try { const t = await window.electronAPI.getSessionTranscript(sid)
                       if (t?.events?.length) setMessages(t.events.filter((e: any) => e.type === 'user' || e.type === 'assistant').map((e: any) => parseSessionMessage(e)).filter((m: ChatMessage | null): m is ChatMessage => m !== null && !!m.content))
-                    } catch (_e) { /* silent */ }
+                    } catch (e) { console.warn('[App] getSessionTranscript failed:', e) }
                   }}
                   autoApproval={autoApproval}
                   onAutoApprovalChange={async (v) => {

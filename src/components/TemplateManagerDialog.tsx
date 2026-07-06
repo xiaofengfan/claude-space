@@ -87,15 +87,20 @@ export function TemplateManagerDialog({ theme, activeProjectPath, onClose }: Pro
 
   async function loadProjects() {
     try {
-      const r = await window.electronAPI.skillGetMarketConfig?.()
-      if (r?.success && r.config?.localPaths) setProjects(r.config.localPaths)
+      const r = await window.electronAPI.scanProjects()
+      if (Array.isArray(r)) setProjects(r.map((p: any) => p.path))
     } catch {}
   }
 
-  async function handleRunWorkflow(templateId: string, name: string) {
-    setRunningWf(templateId)
+  async function handleRunWorkflow(template: Template) {
+    if (!template.phases || template.phases.length === 0) { alert('该模板没有阶段，无法运行'); return }
+    setRunningWf(template.id)
     try {
-      const r = await window.electronAPI.workflowRun?.({ templateId, name })
+      const r = await window.electronAPI.workflowRun?.({
+        templateId: template.id,
+        name: template.name,
+        phases: template.phases.map(p => ({ name: p.name, type: p.type, prompt: p.prompt, model: p.model })),
+      })
       if (!r?.success) alert(r?.error || '启动失败')
     } catch {}
     setRunningWf(null)
@@ -256,7 +261,7 @@ export function TemplateManagerDialog({ theme, activeProjectPath, onClose }: Pro
                   <span style={{ fontWeight: 600, fontSize: 12 }}>✏️ {selected.name || '未命名模板'}</span>
                   <span style={{ fontSize: 10, color: isDark ? '#888' : '#999' }}>{selected.phases.length} 阶段</span>
                   <div style={{ flex: 1 }} />
-                  <button className="btn btn-sm" onClick={() => handleRunWorkflow(selected.id, selected.name)} disabled={runningWf === selected.id} style={{ fontSize: 10 }}>
+                  <button className="btn btn-sm" onClick={() => handleRunWorkflow(selected)} disabled={runningWf === selected.id} style={{ fontSize: 10 }}>
                     {runningWf === selected.id ? '...' : '🚀 运行'}
                   </button>
                   <button className="btn btn-sm btn-primary" onClick={saveEditor} style={{ fontSize: 10 }}>💾 保存</button>
