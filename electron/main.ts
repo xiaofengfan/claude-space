@@ -12,7 +12,7 @@ function pushLog(text: string, source: string = 'terminal') {
 /**
  * Electron 主进程 — 窗口管理、IPC 路由、Claude 进程生命周期。
  */
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, IpcMainEvent } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -28,15 +28,20 @@ import { encodeClaudePath, decodeClaudePath, maskApiKey, readJsonlSafe, enqueueF
 import { LoopScheduler } from './loopScheduler'
 import { WorkflowEngine } from './workflowEngine'
 
+// ── Orchestrator 编排引擎 ──────────────────────────
+import { registerOrchestratorIpc } from './orchestrator/ipcRegister'
+import { disposeAllOrchestratorEngines } from './orchestrator/ipcRegister'
+import { registerKnowledgeGraphIpc } from './knowledgeGraph/ipcRegister'
+import { createClaudeRunner, createGateRunner } from './orchestrator/adapters'
+
 // ── 全局状态 ────────────────────────────────────────────
 
 let mainWindow: BrowserWindow | null = null  // 首个窗口，兼容旧代码引用
 let claudeProcess: ClaudeProcess | null = null  // 保留单聊向后兼容（路由到 'default' 会话）
 const sessionProcesses = new Map<string, { process: ClaudeProcess; projectPath?: string; createdAt: number }>()
 const agentPool = new AgentPool()              // 多智能体群聊池
-let terminalProcess: TerminalProcess | null = null  // 当前活跃终端（向后兼容）
-const terminalProcesses = new Map<string, TerminalProcess>()  // 会话→终端进程池
-const windowTerminals = new Map<number, string>()  // 窗口ID→会话ID（多窗口隔离）
+const terminalProcesses = new Map<string, TerminalProcess>()  // 会话→终端进程池（按 sessionId 隔离）
+const windowTerminals = new Map<number, string>()  // 窗口ID→会话ID（多窗口输入路由隔离）
 const terminalWindowBindings = new Map<string, Set<number>>()  // sessionId→窗口集合（广播终端事件到所有绑定窗口）
 
 // ── 终端多窗口广播辅助 ────────────────────────────────
@@ -46,6 +51,8 @@ function registerTerminalWindow(sessionId: string, windowId: number): void {
     terminalWindowBindings.set(sessionId, new Set())
   }
   terminalWindowBindings.get(sessionId)!.add(windowId)
+  // 同时写入反向映射：窗口→sessionId（用于按发送窗口路由输入）
+  windowTerminals.set(windowId, sessionId)
 }
 
 function unregisterTerminalWindow(windowId: number): void {
@@ -58,8 +65,7 @@ function unregisterTerminalWindow(windowId: number): void {
 function broadcastTerminalEvent(sessionId: string, channel: string, ...args: any[]): void {
   const winIds = terminalWindowBindings.get(sessionId)
   if (!winIds || winIds.size === 0) {
-    // 安全兜底：未注册 → 广播到所有窗口
-    for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, ...args) } catch {} }
+    // 未注册窗口则丢弃事件（避免跨窗口粘连）
     return
   }
   for (const winId of winIds) {
@@ -615,6 +621,52 @@ function saveSettings(settings: AppSettings): void {
 // ── IPC 注册 ────────────────────────────────────────────
 
 function registerIPC(): void {
+  // 注册 Orchestrator 编排引擎 IPC
+  try {
+    const claudeRunner = createClaudeRunner({
+      spawnClaude: async ({ prompt, cwd, model, onEvent }) => {
+        // 用 spawn 调用 claude.cmd，--print + stream-json 模式
+        const { spawn } = require('child_process')
+        return new Promise((resolve) => {
+          const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+          if (model) args.push('--model', model)
+          const proc = spawn('claude.cmd', args, { cwd, shell: true })
+          let exitCode = 0
+          let errorMsg = ''
+          let sessionId
+          // stream-json 输入格式：每行一个 JSON 对象
+          proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } }) + '\n')
+          proc.stdin.end()
+          proc.stdout.on('data', (data) => {
+            const lines = data.toString().split('\n').filter(Boolean)
+            for (const line of lines) {
+              try {
+                const evt = JSON.parse(line)
+                if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) sessionId = evt.session_id
+                onEvent?.(evt)
+              } catch {}
+            }
+          })
+          proc.stderr.on('data', (data) => { errorMsg += data.toString() })
+          proc.on('close', (code) => {
+            exitCode = code || 0
+            resolve({ sessionId, exitCode, error: exitCode !== 0 ? errorMsg : undefined })
+          })
+          proc.on('error', (e) => {
+            resolve({ sessionId, exitCode: 1, error: e.message })
+          })
+        })
+      }
+    })
+    const gateRunner = createGateRunner({ defaultTestCommand: 'npm test' })
+    registerOrchestratorIpc({ repoPath: '', claudeRunner, gateRunner })
+    console.log('[orchestrator] IPC registered')
+    registerKnowledgeGraphIpc()
+    console.log('[knowledge-graph] IPC registered')
+  } catch (e) {
+    console.error('[orchestrator] IPC registration failed:', e)
+  }
+
   // Claude 会话控制
   ipcMain.handle('claude:status', async () => {
     return {
@@ -949,53 +1001,7 @@ function registerIPC(): void {
   })
 
   // ── Claude 原生配置读取与文件监视 ──────────────────────────
-  const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json')
-
-  /** 从 ~/.claude/settings.json 的 env 段提取模型相关配置 */
-  function getClaudeEnvConfig() {
-    try {
-      if (!fs.existsSync(CLAUDE_SETTINGS_PATH)) {
-        return { baseUrl: '', authToken: '', defaultModel: '', models: [] }
-      }
-      const raw = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8'))
-      const env = raw?.env || {}
-      const baseUrl = env.ANTHROPIC_BASE_URL || ''
-      const authToken = env.ANTHROPIC_AUTH_TOKEN || ''
-      const defaultModel = env.ANTHROPIC_MODEL || ''
-      const seenModels = new Map()
-      for (const [k, v] of Object.entries(env)) {
-        if (typeof v !== 'string') continue
-        const tierMatch = k.match(/^ANTHROPIC_DEFAULT_(\w+)(?:_MODEL_NAME)?$/)
-        if (tierMatch) {
-          const key = v.trim()
-          if (key && !seenModels.has(key)) {
-            seenModels.set(key, {
-              name: key.replace(/\[.*?\]/g, '').trim(),
-              model: key,
-              fromEnv: k,
-            })
-          }
-        }
-        if (k === 'ANTHROPIC_MODEL' && typeof v === 'string' && v.trim()) {
-          const val = v.trim()
-          if (!seenModels.has(val)) {
-            let displayName = val.replace(/\[.*?\]/g, '').trim()
-            for (const [nk, nv] of Object.entries(env)) {
-              if (nk.endsWith('_MODEL_NAME') && nv === val) {
-                displayName = (nv + '').replace(/\[.*?\]/g, '').trim()
-                break
-              }
-            }
-            seenModels.set(val, { name: displayName, model: val, fromEnv: 'ANTHROPIC_MODEL' })
-          }
-        }
-      }
-      return { baseUrl, authToken, defaultModel, models: Array.from(seenModels.values()) }
-    } catch (err) {
-      console.warn('[claude-env] 读取 settings.json 失败:', err)
-      return { baseUrl: '', authToken: '', defaultModel: '', models: [] }
-    }
-  }
+  // 注：CLAUDE_SETTINGS_PATH 和 getClaudeEnvConfig 已提升为模块级，供 initClaudeEnvWatch 使用
 
   /** 读取 claude 原生配置并返回，附带文件修改时间 */
   ipcMain.handle('settings:claude-env-config', async () => {
@@ -1545,9 +1551,24 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
         tp.on('status', (status: any) => {
           broadcastTerminalEvent(sessionId, 'terminal:status', status)
         })
-        if (sessionId === 'default' || sessionId === (claudeProcess?.sessionId || '')) {
-          terminalProcess = tp
-        }
+        // 转发 terminal JSONL 事件到 claude:event（ChatPanel 通过此通道同步终端回复）
+        tp.on('event', (event: any) => {
+          broadcastTerminalEvent(sessionId, 'claude:event', event)
+          // 同时转发到 mainWindow 兼容旧代码
+          for (const w of windows) {
+            try { if (!w.isDestroyed()) w.webContents.send('claude:event', event) } catch {}
+          }
+        })
+        tp.on('stderr', (text: string) => {
+          for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('claude:stderr', text) } catch {} }
+        })
+        tp.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
+          for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('claude:permission-prompt', prompt) } catch {} }
+        })
+        // 终端会话关闭 / Claude 退出 → 通知渲染进程
+        tp.on('close', (code: number | null) => {
+          for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('claude:close', code) } catch {} }
+        })
       }
       if (!tp.isRunning) tp.start()
       return { success: true, sessionId }
@@ -1557,8 +1578,8 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
   })
 
   /** terminal:restart 重启终端 Claude */
-  ipcMain.handle('terminal:restart', async (_event, sessionId?: string) => {
-    const sid = sessionId || 'default'
+  ipcMain.handle('terminal:restart', async (event, sessionId?: string) => {
+    const sid = sessionId || windowTerminals.get(BrowserWindow.fromWebContents(event.sender)?.id || -1) || 'default'
     const tp = terminalProcesses.get(sid)
     if (tp) {
       tp.kill()
@@ -1570,22 +1591,19 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
   })
 
   /** terminal:kill 终止终端 */
-  ipcMain.handle('terminal:kill', async (_event, sessionId?: string) => {
-    const sid = sessionId || 'default'
+  ipcMain.handle('terminal:kill', async (event, sessionId?: string) => {
+    const sid = sessionId || windowTerminals.get(BrowserWindow.fromWebContents(event.sender)?.id || -1) || 'default'
     const tp = terminalProcesses.get(sid)
     if (tp) {
       tp.kill()
       terminalProcesses.delete(sid)
     }
-    if (sessionId === undefined || sessionId === 'default') {
-      terminalProcess = null
-    }
     return { success: true }
   })
 
   /** terminal:status 获取终端状态 */
-  ipcMain.handle('terminal:status', async (_event, sessionId?: string) => {
-    const sid = sessionId || 'default'
+  ipcMain.handle('terminal:status', async (event, sessionId?: string) => {
+    const sid = sessionId || windowTerminals.get(BrowserWindow.fromWebContents(event.sender)?.id || -1) || 'default'
     const tp = terminalProcesses.get(sid)
     if (!tp) return { running: false, claudeRunning: false, sessionId: sid }
     return {
@@ -1606,15 +1624,28 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
   })
 
   // terminal:input / terminal:resize — 使用 ipcMain.on（fire-and-forget）
-  ipcMain.on('terminal:input', (_event, data: string) => {
-    const tp = terminalProcess || terminalProcesses.get('default')
+  // 按发送窗口路由：通过 windowTerminals 反查该窗口绑定的 sessionId，再取对应 PTY
+  function findTerminalForSender(event: IpcMainEvent): TerminalProcess | null {
+    const senderWin = BrowserWindow.fromWebContents(event.sender)
+    if (!senderWin) return null
+    const sid = windowTerminals.get(senderWin.id)
+    if (sid) {
+      const tp = terminalProcesses.get(sid)
+      if (tp) return tp
+    }
+    // 兜底：窗口未注册（如启动初期）退回 'default'
+    return terminalProcesses.get('default') || null
+  }
+
+  ipcMain.on('terminal:input', (event, data: string) => {
+    const tp = findTerminalForSender(event)
     if (tp && tp.isRunning && typeof (tp as any).write === 'function') {
       (tp as any).write(data)
     }
   })
 
-  ipcMain.on('terminal:resize', (_event, opts: { cols: number; rows: number }) => {
-    const tp = terminalProcess || terminalProcesses.get('default')
+  ipcMain.on('terminal:resize', (event, opts: { cols: number; rows: number }) => {
+    const tp = findTerminalForSender(event)
     if (tp && typeof (tp as any).resize === 'function') {
       (tp as any).resize(opts.cols, opts.rows)
     }
@@ -1863,6 +1894,333 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
       return { success: true }
     } catch (err: any) { return { success: false, error: err.message } }
   })
+
+  // ── 知识图谱 ─────────────────────────────────────────
+  function getGraphDir(projectPath: string): string {
+    const encoded = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+    return path.join(CLAUDE_HOME, 'projects', encoded, 'knowledge-graph')
+  }
+
+  function getGraphFilePath(projectPath: string): string {
+    return path.join(getGraphDir(projectPath), 'graph-data.json')
+  }
+
+  ipcMain.handle('graph:load', async (_event, projectPath: string) => {
+    try {
+      const filePath = getGraphFilePath(projectPath)
+      if (!fs.existsSync(filePath)) return { success: true, data: { projectPath, entities: [], relations: [], updatedAt: new Date().toISOString() } }
+      const raw = fs.readFileSync(filePath, 'utf-8')
+      return { success: true, data: JSON.parse(raw) }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('graph:save', async (_event, projectPath: string, data: any) => {
+    try {
+      const dir = getGraphDir(projectPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      data.updatedAt = new Date().toISOString()
+      fs.writeFileSync(getGraphFilePath(projectPath), JSON.stringify(data, null, 2), 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // graph:analyze → 委托给使用配置的新实现
+  ipcMain.handle('graph:analyze', async (_event, projectPath: string) => {
+    return (ipcMain as any)._graphAnalyzeHandler(_event, projectPath)
+  })
+
+  // ── AI 图谱分析：独立 Claude 进程，不污染 ChatPanel 会话 ──
+  let graphAiProcess: ClaudeProcess | null = null
+
+  ipcMain.handle('graph:ai-analyze', async (_event, opts: { projectPath: string; prompt: string }) => {
+    // 终止已有进程
+    if (graphAiProcess) {
+      graphAiProcess.kill()
+      graphAiProcess = null
+    }
+
+    return new Promise((resolve) => {
+      let resultText = ''
+      let sessionId = ''
+      let resolved = false
+
+      const proc = new ClaudeProcess({
+        cwd: opts.projectPath,
+        permissionMode: 'auto',
+      })
+      graphAiProcess = proc
+
+      proc.on('event', (event: ClaudeEvent) => {
+        if (event.type === 'system' && event.subtype === 'init') {
+          sessionId = event.session_id
+          mainWindow?.webContents.send('graph:ai-progress', { stage: 'init', sessionId })
+        } else if (event.type === 'assistant') {
+          const content = event.message?.content
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === 'text' && block.text) {
+                resultText += block.text
+                mainWindow?.webContents.send('graph:ai-progress', {
+                  stage: 'thinking',
+                  preview: resultText.slice(-800),
+                })
+              }
+            }
+          }
+        } else if (event.type === 'result') {
+          if (event.result) {
+            resultText = event.result
+          }
+          if (event.subtype === 'error') {
+            if (!resolved) {
+              resolved = true
+              resolve({ success: false, error: event.result || 'AI 分析返回错误' })
+            }
+          }
+        }
+      })
+
+      proc.on('close', (code: number | null) => {
+        if (graphAiProcess === proc) graphAiProcess = null
+        if (!resolved) {
+          resolved = true
+          if (resultText) {
+            resolve({ success: true, result: resultText, sessionId })
+          } else {
+            resolve({ success: false, error: `Claude 进程退出 (code ${code})，未返回结果` })
+          }
+        }
+      })
+
+      try {
+        proc.sendPrompt(opts.prompt)
+      } catch (err: any) {
+        if (!resolved) {
+          resolved = true
+          resolve({ success: false, error: err?.message || '启动 Claude 进程失败' })
+        }
+      }
+    })
+  })
+
+  ipcMain.handle('graph:ai-stop', async () => {
+    if (graphAiProcess) {
+      graphAiProcess.kill()
+      graphAiProcess = null
+    }
+    return { success: true }
+  })
+
+  ipcMain.handle('graph:import-from-claude', async (_event, opts: { projectPath: string; sessionId: string }) => {
+    try {
+      const encodedPath = encodeClaudePath(opts.projectPath.replace(/\\/g, '/'))
+      const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+      const transcriptFile = path.join(sessionDir, opts.sessionId + '.jsonl')
+      if (!fs.existsSync(transcriptFile)) return { success: false, error: '会话记录不存在' }
+      return { success: true, message: '请点击「分析」按钮查看最新结果', data: undefined }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // ── 图谱分析配置读写 ─────────────────────────────────
+  function getConfigFilePath(projectPath: string): string {
+    return path.join(getGraphDir(projectPath), 'analysis-config.json')
+  }
+
+  const DEFAULT_CONFIG = {
+    includeDirs: [],
+    excludeDirs: ['node_modules', '.git', 'dist', 'build', '.next', '.nuxt', '__pycache__', '.cache', '.vscode', '.idea', 'coverage', 'tmp', 'temp', '.turbo', '.swc', 'target', 'vendor'],
+    excludeFiles: ['*.log', '*.lock', '*.map', '*.d.ts', '*.min.js', '*.min.css', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'],
+    excludeContentKeywords: ['console.log', 'console.debug', 'console.error', 'debugger'],
+    excludeExtensions: ['.log', '.lock', '.map', '.d.ts', '.min.js', '.min.css', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2'],
+    maxDepth: 5,
+    includeTests: false,
+    includeNodeModules: false,
+    includeHidden: false,
+    analyzeContent: false,
+  }
+
+  ipcMain.handle('graph:config-load', async (_event, projectPath: string) => {
+    try {
+      const filePath = getConfigFilePath(projectPath)
+      if (!fs.existsSync(filePath)) return { success: true, config: { ...DEFAULT_CONFIG } }
+      const raw = fs.readFileSync(filePath, 'utf-8')
+      const saved = JSON.parse(raw)
+      return { success: true, config: { ...DEFAULT_CONFIG, ...saved } }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('graph:config-save', async (_event, projectPath: string, config: any) => {
+    try {
+      const dir = getGraphDir(projectPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(getConfigFilePath(projectPath), JSON.stringify(config, null, 2), 'utf-8')
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // ── 更新 graph:analyze 使用配置 ──
+  ;(ipcMain as any)._graphAnalyzeHandler = async (_event: any, projectPath: string) => {
+    try {
+      // 加载配置
+      let config = { ...DEFAULT_CONFIG }
+      try {
+        const cfgFile = getConfigFilePath(projectPath)
+        if (fs.existsSync(cfgFile)) {
+          config = { ...config, ...JSON.parse(fs.readFileSync(cfgFile, 'utf-8')) }
+        }
+      } catch {}
+
+      const entries: { entities: any[]; relations: any[] } = { entities: [], relations: [] }
+      const CATEGORY_PATTERNS: Record<string, { type: string; label: string; keywords: string[] }> = {
+        core:     { type: 'module',      label: '核心业务',     keywords: ['src', 'app', 'main', 'lib', 'core', 'services', 'domain', 'business'] },
+        api:      { type: 'api',         label: 'API / 接口',   keywords: ['api', 'routes', 'router', 'controllers', 'handlers', 'endpoints', 'rest', 'graphql', 'grpc', 'trpc'] },
+        data:     { type: 'database',    label: '数据层',       keywords: ['db', 'database', 'models', 'entities', 'repositories', 'migrations', 'schema', 'seed', 'dao', 'orm', 'prisma', 'drizzle', 'typeorm', 'sequelize'] },
+        ui:       { type: 'module',      label: 'UI / 前端',    keywords: ['components', 'pages', 'views', 'layouts', 'ui', 'widgets', 'modules', 'screens', 'partials'] },
+        config:   { type: 'config',      label: '配置',         keywords: ['config', 'settings', 'env', 'constants', 'options', 'presets', 'theme'] },
+        test:     { type: 'test',        label: '测试',         keywords: ['test', 'tests', 'spec', '__tests__', 'e2e', 'jest', 'vitest', 'cypress', 'playwright'] },
+        infra:    { type: 'module',      label: '基础设施',     keywords: ['infra', 'infrastructure', 'deploy', 'docker', 'k8s', 'ci', 'cd', 'devops', 'terraform', 'helm', 'ansible'] },
+        tool:     { type: 'script',      label: '工具 / 脚本',  keywords: ['scripts', 'tools', 'utils', 'helpers', 'shared', 'common', 'bin', 'cli'] },
+        doc:      { type: 'module',      label: '文档',         keywords: ['docs', 'doc', 'documentation', 'wiki', 'guide', 'readme', 'changelog'] },
+        electron: { type: 'module',      label: 'Electron / 桌面', keywords: ['electron', 'preload', 'renderer', 'tray', 'menu', 'notification'] },
+      }
+
+      // ── 过滤函数 ──
+      function shouldExcludeDir(dirName: string): boolean {
+        const lower = dirName.toLowerCase()
+        for (const pat of config.excludeDirs) {
+          if (pat.includes('*')) {
+            const regex = new RegExp('^' + pat.replace(/\*/g, '.*') + '$', 'i')
+            if (regex.test(lower)) return true
+          } else if (lower === pat.toLowerCase()) return true
+        }
+        if (dirName.startsWith('.') && !config.includeHidden) return true
+        if (!config.includeTests && ['test', 'tests', '__tests__', 'spec', 'e2e'].includes(lower)) return true
+        if (!config.includeNodeModules && lower === 'node_modules') return true
+        return false
+      }
+
+      function shouldExcludeFile(fileName: string): boolean {
+        const lower = fileName.toLowerCase()
+        const ext = path.extname(fileName).toLowerCase()
+        if (config.excludeExtensions.includes(ext)) return true
+        for (const pat of config.excludeFiles) {
+          if (pat.includes('*')) {
+            const regex = new RegExp('^' + pat.replace(/\*/g, '.*').replace(/\./g, '\\.') + '$', 'i')
+            if (regex.test(lower)) return true
+          } else if (lower === pat.toLowerCase()) return true
+        }
+        if (fileName.startsWith('.') && !config.includeHidden) return true
+        return false
+      }
+
+      function shouldExcludeByContent(filePath: string): boolean {
+        if (config.excludeContentKeywords.length === 0) return false
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8').slice(0, 2000)
+          return config.excludeContentKeywords.some(kw => content.includes(kw))
+        } catch { return false }
+      }
+
+      // ── 获取顶层目录，应用 exclude / include ──
+      const allTopLevel = fs.readdirSync(projectPath).filter(f => {
+        const fp = path.join(projectPath, f)
+        try { return fs.statSync(fp, { throwIfNoEntry: false })?.isDirectory() || false } catch { return false }
+      })
+
+      const topLevel = allTopLevel.filter(d => {
+        if (shouldExcludeDir(d)) return false
+        if (config.includeDirs.length > 0) return config.includeDirs.some(inc => d.toLowerCase().includes(inc.toLowerCase()))
+        return true
+      })
+
+      // ── 分类顶层目录 ──
+      const categorizedTopDirs: { name: string; path: string; category: string; label: string }[] = []
+      for (const dir of topLevel) {
+        const dirLower = dir.toLowerCase()
+        let matched: string | null = null
+        for (const [catId, cat] of Object.entries(CATEGORY_PATTERNS)) {
+          if (cat.keywords.some(kw => dirLower.includes(kw) || kw.includes(dirLower))) {
+            matched = catId; break
+          }
+        }
+        if (matched) {
+          categorizedTopDirs.push({ name: dir, path: dir, category: matched, label: CATEGORY_PATTERNS[matched].label })
+        } else {
+          categorizedTopDirs.push({ name: dir, path: dir, category: 'core', label: '核心业务' })
+        }
+      }
+
+      // ── 分类组 ──
+      const categoryGroups = new Map<string, { dirs: string[]; subFiles: { name: string; path: string; ext: string }[] }>()
+      for (const d of categorizedTopDirs) {
+        if (d.category === 'test' && !config.includeTests) continue
+        if (!categoryGroups.has(d.category)) categoryGroups.set(d.category, { dirs: [], subFiles: [] })
+        const g = categoryGroups.get(d.category)!
+        g.dirs.push(d.name)
+
+        // 浅扫描子文件
+        try {
+          const subItems = fs.readdirSync(path.join(projectPath, d.path))
+          for (const sub of subItems) {
+            if (shouldExcludeDir(sub)) continue
+            const subFull = path.join(projectPath, d.path, sub)
+            const subStat = fs.statSync(subFull, { throwIfNoEntry: false })
+            if (!subStat || subStat.isDirectory()) continue
+            if (shouldExcludeFile(sub)) continue
+            if (shouldExcludeByContent(subFull)) continue
+            g.subFiles.push({ name: sub, path: path.join(d.path, sub).replace(/\\/g, '/'), ext: path.extname(sub).toLowerCase() })
+          }
+        } catch {}
+      }
+
+      // ── 创建实体 ──
+      for (const [catId, catConfig] of Object.entries(CATEGORY_PATTERNS)) {
+        const g = categoryGroups.get(catId)
+        if (!g || g.dirs.length === 0) continue
+        const catEntityId = `cat_${catId}_${Date.now()}`
+        const sigFiles = g.subFiles.filter(f => ['.ts','.tsx','.js','.jsx','.py','.go','.rs','.java','.rb'].includes(f.ext)).slice(0, 6).map(f => f.name).join(', ')
+        entries.entities.push({
+          id: catEntityId, name: catConfig.label, type: catConfig.type,
+          description: `功能模块: ${catConfig.label}\n包含: ${g.dirs.join(', ')}${sigFiles ? '\n关键文件: ' + sigFiles : ''}`,
+          tags: ['category', catId, ...g.dirs],
+          metadata: { dirCount: g.dirs.length, fileCount: g.subFiles.length, topDirs: g.dirs },
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        })
+        const keyExts = ['.ts','.tsx','.js','.jsx','.py','.sql','.json','.yaml','.yml','.css','.html','.vue']
+        const keyFiles = g.subFiles.filter(f => keyExts.includes(f.ext))
+        for (const f of keyFiles) {
+          const subEntId = `ent_${catId}_${f.name}_${Date.now()}`
+          const extType = f.ext === '.sql' ? 'database' : (f.ext === '.json'||f.ext === '.yaml'||f.ext === '.yml' ? 'config' : 'file')
+          entries.entities.push({
+            id: subEntId, name: f.name, type: extType,
+            description: `${catConfig.label} 下的文件: ${f.path}`,
+            filePath: f.path, tags: [catId, extType],
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          })
+          entries.relations.push({ id: `rel_${catEntityId}_${subEntId}_${Date.now()}`, sourceId: catEntityId, targetId: subEntId, type: 'contains', weight: 0.6 })
+        }
+      }
+
+      // ── 根目录关键文件 ──
+      try {
+        const rootFiles = fs.readdirSync(projectPath).filter(f => {
+          try { const s = fs.statSync(path.join(projectPath, f), { throwIfNoEntry: false }); return s?.isFile() || false } catch { return false }
+        })
+        for (const rf of rootFiles) {
+          const ext = path.extname(rf).toLowerCase()
+          if (shouldExcludeFile(rf)) continue
+          if (!['.json','.yaml','.yml','.js','.ts','.md','.toml','.env'].includes(ext) && !rf.toLowerCase().includes('docker')) continue
+          const rfType = rf.includes('package')||rf.includes('tsconfig')||rf.includes('eslint')||rf.includes('prettier')||rf.includes('docker')||rf.includes('Dockerfile')||rf.includes('.env')||rf.includes('vite')||rf.includes('webpack') ? 'config' : 'file'
+          const rfId = `ent_root_${rf}_${Date.now()}`
+          entries.entities.push({ id: rfId, name: rf, type: rfType, description: `根目录配置文件: ${rf}`, filePath: rf, tags: ['root', rfType], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+          const catEnt = entries.entities.find(e => e.id.startsWith('cat_core_'))
+          if (catEnt) entries.relations.push({ id: `rel_${rfId}_${catEnt.id}_${Date.now()}`, sourceId: rfId, targetId: catEnt.id, type: 'configures', weight: 0.5 })
+        }
+      } catch {}
+
+      return { success: true, data: { projectPath, entities: entries.entities, relations: entries.relations, updatedAt: new Date().toISOString() } }
+    } catch (err: any) { return { success: false, error: err.message } }
+  }
 
   // ── 技能管理 ─────────────────────────────────────────
   const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
@@ -2159,6 +2517,55 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
   })
 }
 
+// ── Claude 原生配置（模块级，供 registerIPC 和 initClaudeEnvWatch 共用）──
+const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json')
+
+/** 从 ~/.claude/settings.json 的 env 段提取模型相关配置 */
+function getClaudeEnvConfig() {
+  try {
+    if (!fs.existsSync(CLAUDE_SETTINGS_PATH)) {
+      return { baseUrl: '', authToken: '', defaultModel: '', models: [] }
+    }
+    const raw = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8'))
+    const env = raw?.env || {}
+    const baseUrl = env.ANTHROPIC_BASE_URL || ''
+    const authToken = env.ANTHROPIC_AUTH_TOKEN || ''
+    const defaultModel = env.ANTHROPIC_MODEL || ''
+    const seenModels = new Map()
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v !== 'string') continue
+      const tierMatch = k.match(/^ANTHROPIC_DEFAULT_(\w+)(?:_MODEL_NAME)?$/)
+      if (tierMatch) {
+        const key = v.trim()
+        if (key && !seenModels.has(key)) {
+          seenModels.set(key, {
+            name: key.replace(/\[.*?\]/g, '').trim(),
+            model: key,
+            fromEnv: k,
+          })
+        }
+      }
+      if (k === 'ANTHROPIC_MODEL' && typeof v === 'string' && v.trim()) {
+        const val = v.trim()
+        if (!seenModels.has(val)) {
+          let displayName = val.replace(/\[.*?\]/g, '').trim()
+          for (const [nk, nv] of Object.entries(env)) {
+            if (nk.endsWith('_MODEL_NAME') && nv === val) {
+              displayName = (nv + '').replace(/\[.*?\]/g, '').trim()
+              break
+            }
+          }
+          seenModels.set(val, { name: displayName, model: val, fromEnv: 'ANTHROPIC_MODEL' })
+        }
+      }
+    }
+    return { baseUrl, authToken, defaultModel, models: Array.from(seenModels.values()) }
+  } catch (err) {
+    console.warn('[claude-env] 读取 settings.json 失败:', err)
+    return { baseUrl: '', authToken: '', defaultModel: '', models: [] }
+  }
+}
+
 /** 初始化 claude settings.json 文件监视（模块级，供 app.whenReady 调用） */
 let _claudeSettingsWatcher: fs.FSWatcher | null = null
 function initClaudeEnvWatch() {
@@ -2185,7 +2592,11 @@ function initClaudeEnvWatch() {
 app.whenReady().then(() => {
   // 启动日志
   const logFile = path.join(os.homedir(), 'claude-space-debug.log')
-  fs.writeFileSync(logFile, `[${new Date().toISOString()}] APP STARTED v1.1.5 platform=${process.platform} electron=${process.versions.electron}\n`, 'utf-8')
+  try {
+    fs.writeFileSync(logFile, `[${new Date().toISOString()}] APP STARTED v1.1.5 platform=${process.platform} electron=${process.versions.electron}\n`, 'utf-8')
+  } catch (e) {
+    console.warn('Failed to write debug log:', e)
+  }
 
   // 先显示启动画面，再初始化应用
   splashWindow = createSplashWindow()
@@ -2218,6 +2629,9 @@ app.on('window-all-closed', () => {
   sshService.disconnectAll()
   app.quit()
 })
+
+// 清理 orchestrator 引擎
+disposeAllOrchestratorEngines()
 
 app.on('before-quit', () => {
   claudeProcess?.kill()

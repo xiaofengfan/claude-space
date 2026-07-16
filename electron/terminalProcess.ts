@@ -124,23 +124,23 @@ export class TerminalProcess extends EventEmitter {
       debugLog(`start: setting up onData handler`)
       // PTY stdout → xterm.js 渲染 + 权限提示检测
       const ptyStartTime = Date.now()
-        let ptyOutputBytes = 0
-        this.ptyProcess.onData((data: string) => {
-          this.emit('terminal-data', data)
-          // 捕获前 8 秒或前 8KB 的 PTY 输出到日志文件，用于调试 Claude 启动错误
-          const elapsed = Date.now() - ptyStartTime
-          if (elapsed < 8000 && ptyOutputBytes < 8192) {
-            ptyOutputBytes += data.length
-            const clean = data.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
-            if (clean.length > 0) {
-              debugLog(`PTY output (+${elapsed}ms): ${clean.slice(0, 500)}`)
-            }
+      let ptyOutputBytes = 0
+      this.ptyProcess.onData((data: string) => {
+        this.emit('terminal-data', data)
+        // 捕获前 8 秒或前 8KB 的 PTY 输出到日志文件，用于调试 Claude 启动错误
+        const elapsed = Date.now() - ptyStartTime
+        if (elapsed < 8000 && ptyOutputBytes < 8192) {
+          ptyOutputBytes += data.length
+          const clean = data.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
+          if (clean.length > 0) {
+            debugLog(`PTY output (+${elapsed}ms): ${clean.slice(0, 500)}`)
           }
+        }
         // 检测终端输出中的权限提示 — 必须先清洗 ANSI 再匹配！
-        const clean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
-        if (/Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(clean)) {
-          if (clean.length > 5) {
-            this.emit('permission-prompt', { text: clean, timestamp: Date.now() })
+        const ansiClean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
+        if (/Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(ansiClean)) {
+          if (ansiClean.length > 5) {
+            this.emit('permission-prompt', { text: ansiClean, timestamp: Date.now() })
           }
         }
       })
@@ -156,6 +156,7 @@ export class TerminalProcess extends EventEmitter {
           error: exitCode ? `Claude 退出 (code ${exitCode})` : '',
         })
         this.emit('terminal-data', `\r\n\x1b[33mClaude 已退出 (code ${exitCode || 0}) — 输入 claude 重新启动\x1b[0m\r\n`)
+        this.emit('close', exitCode)
       })
 
       this._claudeRunning = true
@@ -359,6 +360,10 @@ export class TerminalProcess extends EventEmitter {
     if (!this.jsonlPath) return
     try {
       this.jsonlTailSize = fs.existsSync(this.jsonlPath) ? fs.statSync(this.jsonlPath).size : 0
+      // 首次启动时，将已有内容解析后发给订阅者（恢复历史事件）
+      if (this.jsonlTailSize > 0) {
+        this.tailFrom(0, true /* replay mode */)
+      }
     } catch (_e) { /* silent */ }
 
     // 使用 fs.watch 替代轮询（立即响应文件变更，不阻塞）
@@ -395,7 +400,7 @@ export class TerminalProcess extends EventEmitter {
     }, 1000)
   }
 
-  private tailFrom(fromPos: number): void {
+  private tailFrom(fromPos: number, isReplay = false): void {
     if (!this.jsonlPath) return
     try {
       const stat = fs.statSync(this.jsonlPath)
@@ -451,6 +456,7 @@ export class TerminalProcess extends EventEmitter {
           }
 
           let parsedCount = 0
+          let hasNewAssistant = false
           for (const line of lines) {
             if (!line.trim()) continue
             try {
