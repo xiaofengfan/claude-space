@@ -123,17 +123,19 @@ export class TerminalProcess extends EventEmitter {
 
       debugLog(`start: setting up onData handler`)
       // PTY stdout → xterm.js 渲染 + 权限提示检测
-      let ptyOutputLogged = false
-      this.ptyProcess.onData((data: string) => {
-        this.emit('terminal-data', data)
-        // 捕获前几秒 PTY 输出到日志文件，用于调试 Claude 启动错误
-        if (!ptyOutputLogged) {
-          const clean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
-          if (clean.length > 3) {
-            debugLog(`PTY output (first): ${clean.slice(0, 300)}`)
-            ptyOutputLogged = true
+      const ptyStartTime = Date.now()
+        let ptyOutputBytes = 0
+        this.ptyProcess.onData((data: string) => {
+          this.emit('terminal-data', data)
+          // 捕获前 8 秒或前 8KB 的 PTY 输出到日志文件，用于调试 Claude 启动错误
+          const elapsed = Date.now() - ptyStartTime
+          if (elapsed < 8000 && ptyOutputBytes < 8192) {
+            ptyOutputBytes += data.length
+            const clean = data.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
+            if (clean.length > 0) {
+              debugLog(`PTY output (+${elapsed}ms): ${clean.slice(0, 500)}`)
+            }
           }
-        }
         // 检测终端输出中的权限提示 — 必须先清洗 ANSI 再匹配！
         const clean = data.replace(/\x1b\[[0-9;]*m/g, '').replace(/[\x00-\x08\x0E-\x1F]/g, '').trim()
         if (/Do you want to proceed|Allow (this |the )?tool|permission denied|\[y\/n|y\/n\/\^C|\(y\)|\(n\)|Proceed\?/i.test(clean)) {
@@ -358,8 +360,30 @@ export class TerminalProcess extends EventEmitter {
     try {
       this.jsonlTailSize = fs.existsSync(this.jsonlPath) ? fs.statSync(this.jsonlPath).size : 0
     } catch (_e) { /* silent */ }
-    if (this.jsonlTailSize > 0) this.tailFrom(0)
 
+    // 使用 fs.watch 替代轮询（立即响应文件变更，不阻塞）
+    try {
+      // 清除旧的 watcher
+      if ((this as any)._jsonlWatcher) {
+        (this as any)._jsonlWatcher.close()
+      }
+      const watcher = fs.watch(this.jsonlPath, (eventType) => {
+        if (eventType === 'change' && this.jsonlPath) {
+          try {
+            const stat = fs.statSync(this.jsonlPath)
+            if (stat.size > this.jsonlTailSize) {
+              this.tailFrom(this.jsonlTailSize)
+            }
+          } catch (_e) { /* silent */ }
+        }
+      })
+      ;(this as any)._jsonlWatcher = watcher
+    } catch (_e) {
+      // fs.watch 不可用时回退到轮询
+      debugLog('startJsonlWatch: fs.watch failed, falling back to polling')
+    }
+
+    // 仍然保留 1000ms 轮询作为兜底（fs.watch 在某些平台可能不可靠）
     this.jsonlInterval = setInterval(() => {
       if (!this.jsonlPath) return
       try {
@@ -368,7 +392,7 @@ export class TerminalProcess extends EventEmitter {
           this.tailFrom(this.jsonlTailSize)
         }
       } catch (_e) { /* silent */ }
-    }, 300)
+    }, 1000)
   }
 
   private tailFrom(fromPos: number): void {
@@ -377,61 +401,114 @@ export class TerminalProcess extends EventEmitter {
       const stat = fs.statSync(this.jsonlPath)
       if (stat.size <= fromPos) return
 
-      const fd = fs.openSync(this.jsonlPath, 'r')
-      const MAX_CHUNK = 1024 * 1024  // 1MB per read
-      let readPos = fromPos
-      let rawData = this._tailBuffer  // 前置之前未完成的部分行
+      const MAX_CHUNK = 256 * 1024  // 256KB per read（防止大文件阻塞主进程）
+      let rawData = this._tailBuffer
       this._tailBuffer = ''
 
-      // 循环读取，处理文件增长 >1MB 的情况
-      while (readPos < stat.size) {
-        const chunkSize = Math.min(stat.size - readPos, MAX_CHUNK)
-        const buf = Buffer.alloc(chunkSize)
-        fs.readSync(fd, buf, 0, chunkSize, readPos)
-        rawData += buf.toString('utf-8')
-        readPos += chunkSize
-      }
-      fs.closeSync(fd)
-
-      // 按行分割，保留最后一个不完整行到 _tailBuffer
-      const lines = rawData.split('\n')
-      // 如果原始数据不以 \n 结尾，最后一行是不完整的
-      if (!rawData.endsWith('\n')) {
-        this._tailBuffer = lines.pop() || ''
-      } else {
-        this._tailBuffer = ''
-      }
-
-      for (const line of lines) {
-        if (!line.trim()) continue
+      // 分块读取，每块通过 setImmediate 让出事件循环
+      const readChunkAndProcess = (fd: number, readPos: number, fileSize: number) => {
         try {
-          const event: ClaudeEvent = JSON.parse(line)
-          if (event.type === 'system' && event.subtype === 'init') {
-            if (!this._sessionId || event.session_id !== this._sessionId) {
-              this._sessionId = event.session_id
-              this._claudeRunning = true
-              this.emit('status', {
-                running: true, connected: true,
-                claudeRunning: true,
-                sessionId: event.session_id,
-                error: '',
-              })
+          // 检查文件是否已删除/重置（防止 fd 失效后继续读旧文件）
+          try {
+            const curStat = fs.fstatSync(fd)
+            if (curStat.size < readPos) {
+              // 文件被截断或删除，重置
+              fs.closeSync(fd)
+              this.jsonlTailSize = 0
+              return
+            }
+          } catch { fs.closeSync(fd); return }
+
+          const remaining = fileSize - readPos
+          if (remaining <= 0) {
+            fs.closeSync(fd)
+            this.jsonlTailSize = fileSize
+            return
+          }
+
+          const chunkSize = Math.min(remaining, MAX_CHUNK)
+          const buf = Buffer.alloc(chunkSize)
+          fs.readSync(fd, buf, 0, chunkSize, readPos)
+          rawData += buf.toString('utf-8')
+
+          const newReadPos = readPos + chunkSize
+
+          if (newReadPos < fileSize) {
+            // 还有更多数据 → 异步继续，让事件循环呼吸
+            setImmediate(() => readChunkAndProcess(fd, newReadPos, fileSize))
+            return
+          }
+
+          // 全部读完 → 关闭 fd，解析行
+          fs.closeSync(fd)
+
+          // 按行分割
+          const lines = rawData.split('\n')
+          if (!rawData.endsWith('\n')) {
+            this._tailBuffer = lines.pop() || ''
+          } else {
+            this._tailBuffer = ''
+          }
+
+          let parsedCount = 0
+          for (const line of lines) {
+            if (!line.trim()) continue
+            try {
+              const event: ClaudeEvent = JSON.parse(line)
+              parsedCount++
+
+              // 断连恢复：JSONL 文件发现 Claude 事件但 _claudeRunning=false 时恢复连接
+              if (!this._claudeRunning && (event.type === 'assistant' || event.type === 'system')) {
+                this._claudeRunning = true
+                this.emit('status', {
+                  running: true, connected: true,
+                  claudeRunning: true,
+                  sessionId: this._sessionId,
+                  error: '',
+                })
+              }
+
+              if (event.type === 'system' && event.subtype === 'init') {
+                if (!this._sessionId || event.session_id !== this._sessionId) {
+                  this._sessionId = event.session_id
+                  this._claudeRunning = true
+                  this.emit('status', {
+                    running: true, connected: true,
+                    claudeRunning: true,
+                    sessionId: event.session_id,
+                    error: '',
+                  })
+                }
+              }
+              // Claude 退出事件 → 更新状态
+              if (event.type === 'result' && event.is_error) {
+                debugLog(`tailFrom: Claude error event: ${JSON.stringify(event).slice(0, 200)}`)
+              }
+
+              this.emit('event', event)
+            } catch (parseErr: any) {
+              // 不静默吞错误 — 记录到 debug log 帮助排查
+              debugLog(`tailFrom JSON parse error: ${parseErr.message} line: ${line.slice(0, 100)}`)
             }
           }
-          // 只对新事件打印简短日志（非首次大批量回放时）
-          if (event.type === 'assistant' || event.type === 'user') {
-            try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] tailFrom event: type=${event.type} sessionId=${this._sessionId?.slice(0,8)}\n`, 'utf-8') } catch {}
+
+          this.jsonlTailSize = newReadPos
+          // 批量处理日志（避免日志刷屏）
+          if (parsedCount > 50) {
+            debugLog(`tailFrom: batch processed ${parsedCount} events, newTailSize=${newReadPos}`)
           }
-          this.emit('event', event)
-        } catch {
-          // 静默跳过不可解析的行（损坏数据、非 JSON 输出等）
+        } catch (err: any) {
+          try { fs.closeSync(fd) } catch {}
+          debugLog(`tailFrom readChunk error: ${err.message}`)
         }
       }
 
-      // 使用实际读取位置（而非文件大小），确保不漏数据
-      this.jsonlTailSize = readPos
-    } catch {
-      // 文件读取失败静默跳过（文件可能正在写入中）
+      // 开始异步分块读取
+      const fd = fs.openSync(this.jsonlPath, 'r')
+      setImmediate(() => readChunkAndProcess(fd, fromPos, stat.size))
+
+    } catch (err: any) {
+      debugLog(`tailFrom error: ${err.message}`)
     }
   }
 

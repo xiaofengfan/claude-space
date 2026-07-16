@@ -1,6 +1,8 @@
 import { ChatMessage } from '../types/claude'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolUseBlock } from './ToolUseBlock'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 const AGENT_ICONS: Record<string, string> = {
   Coordinator: '👔', Architect: '🏗️', Implementer: '💻',
@@ -52,7 +54,67 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
               ))}
             </div>
           )}
-          {message.content && <div className="message-text">{message.content}</div>}
+          {message.content && (
+            <div className="message-text">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                a: ({ href, children }) => (
+                  <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent, #6c8cff)', textDecoration: 'underline' }}>
+                    {children}
+                  </a>
+                ),
+                code: ({ className, children, ...props }: any) => {
+                  const isInline = !className
+                  if (isInline) {
+                    return <code style={{
+                      background: 'rgba(100,100,130,0.2)',
+                      padding: '1px 5px',
+                      borderRadius: 3,
+                      fontSize: '0.9em',
+                      fontFamily: '"Cascadia Code","Fira Code",Consolas,monospace',
+                      color: '#e0e0e0',
+                    }} {...props}>{children}</code>
+                  }
+                  return <pre style={{
+                    background: '#0d1117',
+                    border: '1px solid #2a2a2a',
+                    borderRadius: 6,
+                    padding: 12,
+                    overflow: 'auto',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    fontFamily: '"Cascadia Code","Fira Code",Consolas,monospace',
+                  }}><code className={className} {...props}>{children}</code></pre>
+                },
+                table: ({ children }) => (
+                  <div style={{ overflow: 'auto', margin: '8px 0' }}>
+                    <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>{children}</table>
+                  </div>
+                ),
+                th: ({ children }) => <th style={{ border: '1px solid #333', padding: '6px 10px', background: '#1a1a1a', fontWeight: 600 }}>{children}</th>,
+                td: ({ children }) => <td style={{ border: '1px solid #333', padding: '6px 10px' }}>{children}</td>,
+                ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '6px 0' }}>{children}</ul>,
+                ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '6px 0' }}>{children}</ol>,
+                li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
+                blockquote: ({ children }) => (
+                  <blockquote style={{
+                    borderLeft: '3px solid var(--accent, #6c8cff)',
+                    margin: '8px 0',
+                    padding: '4px 12px',
+                    color: '#888',
+                    background: 'rgba(100,100,130,0.08)',
+                    borderRadius: '0 4px 4px 0',
+                  }}>{children}</blockquote>
+                ),
+                hr: () => <hr style={{ border: 'none', borderTop: '1px solid #2a2a2a', margin: '12px 0' }} />,
+                h1: ({ children }) => <h1 style={{ fontSize: 18, fontWeight: 700, margin: '12px 0 6px' }}>{children}</h1>,
+                h2: ({ children }) => <h2 style={{ fontSize: 16, fontWeight: 700, margin: '10px 0 5px' }}>{children}</h2>,
+                h3: ({ children }) => <h3 style={{ fontSize: 14, fontWeight: 600, margin: '8px 0 4px' }}>{children}</h3>,
+                p: ({ children }) => <p style={{ margin: '6px 0', lineHeight: 1.7 }}>{children}</p>,
+              }}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          )}
           {message.isStreaming && !message.content && !message.toolCalls?.length && (
             <div className="message-loading"><span className="dot-pulse" /></div>
           )}

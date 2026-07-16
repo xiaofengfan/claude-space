@@ -1,3 +1,5 @@
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { ChatMessage, ClaudeAssistantEvent, ClaudeResultEvent, ToolCall } from '../types/claude'
 import type { ImageAttachment } from '../types/claude'
@@ -727,7 +729,17 @@ export const ChatPanel = forwardRef(function ChatPanel({
         {/* 流式文本 */}
         {(streamingText || (assistantMessageRef.current?.isStreaming && !streamingText && !thinkingRef.current)) && (
           <div className="streaming-text">
-            {streamingText || '思考中...'}
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+              code: ({ className, children, ...props }: any) => {
+                const isInline = !className
+                return isInline
+                  ? <code style={{ background: 'rgba(100,100,130,0.2)', padding: '1px 5px', borderRadius: 3, fontSize: '0.9em', fontFamily: 'Consolas,monospace' }} {...props}>{children}</code>
+                  : <pre style={{ background: '#0d1117', border: '1px solid #2a2a2a', borderRadius: 6, padding: 12, overflow: 'auto', fontSize: 12, lineHeight: 1.5 }}><code className={className} {...props}>{children}</code></pre>
+              },
+              p: ({ children }) => <p style={{ margin: '4px 0', lineHeight: 1.6 }}>{children}</p>,
+            }}>
+              {streamingText || '思考中...'}
+            </ReactMarkdown>
             <span className="cursor-blink">▌</span>
           </div>
         )}

@@ -158,7 +158,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .message-content { padding: 10px 14px; }
 .message-content p { line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .message-text { line-height: 1.6; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
+.message-text p:first-child { margin-top: 0; }
+.message-text p:last-child { margin-bottom: 0; }
+.message-text pre { margin: 8px 0; }
+.message-text ul, .message-text ol { margin: 4px 0; }
 .streaming-text { line-height: 1.6; white-space: pre-wrap; font-size: 14px; padding-left: 42px; margin-bottom: 16px; color: #ccc; }
+.streaming-text p:first-child { margin-top: 0; }
+.streaming-text p:last-child { margin-bottom: 0; }
 .cursor-blink { animation: blink 0.8s infinite; color: var(--accent); }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
 .dot-pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent); animation:pulse 1.2s infinite; }
