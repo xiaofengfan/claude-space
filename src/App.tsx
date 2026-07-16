@@ -33,8 +33,15 @@ import { ContentRulesPanel } from './components/ContentRulesPanel'
 import { MemoryPanel } from './components/MemoryPanel'
 import { KnowledgeDialog } from './components/KnowledgeDialog'
 import { SkillPanel } from './components/SkillPanel'
-import { AutomationPanel } from './components/AutomationPanel'
+import { UnifiedTemplateManagerDialog } from './components/UnifiedTemplateManagerDialog'
+import { OrchestratorSidebar } from './components/orchestrator/OrchestratorSidebar'
+import { OrchestrationDetailView } from './components/orchestrator/OrchestrationDetailView'
+import './components/orchestrator/orchestrator.css'
 import { ConsolePanel } from './components/ConsolePanel'
+import { KnowledgeGraphPanel } from './components/knowledge-graph/KnowledgeGraphPanel'
+import { KnowledgeGraphSidebar } from './components/knowledge-graph/KnowledgeGraphSidebar'
+import { ModuleSidebar } from './components/knowledge-graph/ModuleSidebar'
+import { AIAnalysisLog, type AIAnalysisEntry } from './components/knowledge-graph/AIAnalysisLog'
 import { ActivityBar, VIEW_LABELS } from './components/ActivityBar'
 import { useSplitter } from './hooks/useSplitter'
 import { useTaskSync, ApprovalRequest } from './hooks/useTaskSync'
@@ -147,12 +154,18 @@ export default function App() {
   const [theme, setThemeState] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem('claude-space-theme') as 'dark' | 'light') || 'dark'
   )
-  const [leftView, setLeftView] = useState<'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'automation'>('files')
-  const [rightView, setRightView] = useState<'tasks' | 'office' | 'connection' | 'plan' | 'assistant' | 'ssh' | 'remote-files' | 'deploy'>('tasks')
+  const [showUnifiedTemplateManager, setShowUnifiedTemplateManager] = useState(false)
+  const [activeOrchId, setActiveOrchId] = useState<string | null>(null)
+  const [leftView, setLeftView] = useState<'files' | 'modules' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'orchestrator' | 'knowledge-graph'>('files')
+  const [rightView, setRightView] = useState<'tasks' | 'office' | 'connection' | 'plan' | 'assistant' | 'ssh' | 'remote-files' | 'deploy' | 'graph-analysis'>('tasks')
+  const [aiEntries, setAiEntries] = useState<AIAnalysisEntry[]>([])
+  const [graphVersion, setGraphVersion] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [showProjectManager, setShowProjectManager] = useState(false)
   const [showKnowledge, setShowKnowledge] = useState(false)
   const [showConsole, setShowConsole] = useState(false)
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
   const [consoleHeight, setConsoleHeight] = useState(200)
   const [pendingProject, setPendingProject] = useState<ProjectInfo | null>(null)
   const [showGitPanel, setShowGitPanel] = useState(false)
@@ -385,7 +398,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const openFile = activeTabId ? fileTabs.find(t => t.id === activeTabId) || null : null
   const [groupChatMode, setGroupChatMode] = useState(false)
-  const [chatMode, setChatMode] = useState<'chat' | 'terminal' | 'editor' | 'remote-terminal'>('chat')
+  const [chatMode, setChatMode] = useState<'chat' | 'terminal' | 'editor' | 'remote-terminal' | 'orchestration' | 'knowledge-graph'>('chat')
   const [terminalReady, setTerminalReady] = useState(false)
   const [terminalClaudeRunning, setTerminalClaudeRunning] = useState(false)
   const [sshStatus, setSshStatus] = useState<{ serverId: string | null; status: string; error: string }>({ serverId: null, status: 'disconnected', error: '' })
@@ -1212,6 +1225,7 @@ export default function App() {
     {
       label: '知识', items: [
         { label: '📊 知识管理', action: () => setShowKnowledge(true) },
+        { label: '🕸️ 项目图谱', action: () => setLeftView('knowledge-graph') },
         { label: '🧠 记忆面板', shortcut: '', action: () => setLeftView('memory') },
         { label: '📋 项目规则', shortcut: '', action: () => setLeftView('rules') },
         { divider: true, label: '' },
@@ -1264,7 +1278,8 @@ export default function App() {
     <div className="app">
       <MenuBar menus={menus} onOpenProjectManager={openProjectManager} theme={theme}
         onThemeToggle={() => setThemeState(t => t === 'dark' ? 'light' : 'dark')}
-        onGitToggle={() => activeProject && setShowGitPanel(v => !v)} />
+        onGitToggle={() => activeProject && setShowGitPanel(v => !v)}
+        onToggleRight={() => setRightCollapsed(v => !v)} rightCollapsed={rightCollapsed} />
 
       {noProject ? (
         <WelcomePage
@@ -1277,21 +1292,32 @@ export default function App() {
         />
       ) : (
         <>
-          <ProjectNav project={activeProject} leftView={leftView} theme={theme} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'automation')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onConsoleClick={() => setShowConsole(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
+          <ProjectNav project={activeProject} leftView={leftView} theme={theme} onLeftViewChange={(v) => setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'orchestrator')} onGitClick={() => setShowGitPanel(v => !v)} onConnectionClick={() => setShowConnPanel(v => !v)} onSshClick={() => setShowSshSlidePanel(v => !v)} onConsoleClick={() => setShowConsole(v => !v)} onWorkspaceChange={async (workspaceId: string) => {
             await handleWorkspaceSwitch(workspaceId)
           }} onOpenSettings={() => setShowSettings(true)} />
           <div className="app-body">
+            <>
             {/* VS Code 风格左侧栏: ActivityBar + SideBar */}
             <div style={{ display: 'flex', flexShrink: 0 }}>
               <ActivityBar activeView={leftView} onViewChange={(v) => {
                 if (v === 'sessions') loadSessions(activeProject.path)
-                setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'automation')
-              }} />
-              <aside className="sidebar left-sidebar" style={{ width: Math.max(leftSplitter.size - 48, 132) }}>
+                if (v === 'knowledge-graph') setChatMode('knowledge-graph')
+                setLeftView(v as 'files' | 'sessions' | 'rules' | 'memory' | 'skills' | 'git' | 'orchestrator' | 'knowledge-graph')
+              }} onToggleLeft={() => setLeftCollapsed(v => !v)} leftCollapsed={leftCollapsed} />
+              {!leftCollapsed && (
+                <aside className="sidebar left-sidebar" style={{ width: Math.max(leftSplitter.size - 48, 132) }}>
                 <div className="sidebar-header">{VIEW_LABELS[leftView] || ''}</div>
                 <div className="sidebar-content">
                   {leftView === 'files' && (
                     <ProjectBrowser projects={projects} activeProject={activeProject} onSelect={handleSwitchProject} onRefresh={() => {}} mode="files" onOpenFile={handleOpenFile} projectPath={activeProject?.path} />
+                  )}
+                  {leftView === 'modules' && activeProject?.path && (
+                    <ModuleSidebar
+                      projectPath={activeProject.path}
+                      theme={theme}
+                      refreshTrigger={graphVersion}
+                      onOpenGraph={() => { setChatMode('knowledge-graph'); setLeftView('knowledge-graph') }}
+                    />
                   )}
                   {leftView === 'sessions' && (
                     <SessionList
@@ -1306,11 +1332,24 @@ export default function App() {
                   {leftView === 'skills' && (
                     <SkillPanel theme={theme} />
                   )}
-                  {leftView === 'automation' && (
-                    <AutomationPanel theme={theme} activeProjectPath={activeProject?.path} />
+                  {leftView === 'orchestrator' && activeProject && (
+                    <OrchestratorSidebar
+                      repoPath={activeProject.path}
+                      activeOrchId={activeOrchId}
+                      onSelectTask={(id) => { setActiveOrchId(id); setChatMode('orchestration') }}
+                      onOpenTemplateManager={() => setShowUnifiedTemplateManager(true)}
+                    />
                   )}
                   {leftView === 'memory' && (
                     <MemoryPanel theme={theme} activeProjectPath={activeProject?.path} />
+                  )}
+                  {leftView === 'knowledge-graph' && activeProject?.path && (
+                    <KnowledgeGraphSidebar
+                      projectPath={activeProject.path}
+                      theme={theme}
+                      refreshTrigger={graphVersion}
+                      onOpenGraph={() => setChatMode('knowledge-graph')}
+                    />
                   )}
                   {leftView === 'git' && (
                     <GitPanel projectPath={activeProject?.path} onCommitSuccess={(msg) => {
@@ -1326,9 +1365,10 @@ export default function App() {
                   )}
                 </div>
               </aside>
+              )}
             </div>
 
-            <div className="splitter splitter-h" onMouseDown={leftSplitter.onMouseDown} />
+            {!leftCollapsed && <div className="splitter splitter-h" onMouseDown={leftSplitter.onMouseDown} />}
 
             <main className="main-area">
               {/* ── 模式切换栏 ─────────────────────────── */}
@@ -1346,6 +1386,14 @@ export default function App() {
                     className={`mode-switch-btn ${chatMode === 'remote-terminal' ? 'active' : ''}`}
                     onClick={() => setChatMode('remote-terminal')}
                   >🌐 远程终端</button>
+                  <button
+                    className={`mode-switch-btn ${chatMode === 'orchestration' ? 'active' : ''}`}
+                    onClick={() => setChatMode('orchestration')}
+                  >🤖 编排</button>
+                  <button
+                    className={`mode-switch-btn ${chatMode === 'knowledge-graph' ? 'active' : ''}`}
+                    onClick={() => setChatMode('knowledge-graph')}
+                  >🕸️ 图谱</button>
                 </div>
                 {/* ── 文件标签栏 ── */}
                 {fileTabs.length > 0 && (
@@ -1368,6 +1416,8 @@ export default function App() {
                 <span className="mode-switch-hint">
                   {chatMode === 'chat' ? '结构化富 UI 模式'
                     : chatMode === 'terminal' ? '原生 CLI 终端模式 — 与 Chat 同步'
+                    : chatMode === 'orchestration' ? '自动化编排任务执行详情'
+                    : chatMode === 'knowledge-graph' ? '项目图谱可视化分析'
                     : '文件编辑模式'}
                 </span>
               </div>
@@ -1453,13 +1503,68 @@ export default function App() {
                   onOpenInNewWindow={handleOpenFileInNewWindow}
                 />
               )}
+
+              {/* ── 编排任务执行详情 ─────────────────── */}
+              {chatMode === 'orchestration' && activeProject && (
+                activeOrchId ? (
+                  <OrchestrationDetailView orchId={activeOrchId} repoPath={activeProject.path} />
+                ) : (
+                  <div className="orch-empty-state" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>
+                    <div className="orch-empty-icon" style={{ fontSize: 48 }}>👈</div>
+                    <div className="orch-empty-text">从左侧任务列表点击任务查看执行情况</div>
+                  </div>
+                )
+              )}
+
+              {/* ── 知识图谱 ─────────────────────────── */}
+              {chatMode === 'knowledge-graph' && activeProject?.path && (
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <KnowledgeGraphPanel projectPath={activeProject.path} theme={theme}
+                    onAITaskChange={(aiTask) => {
+                      if (!aiTask) return
+                      const id = 'ai_graph_' + Date.now().toString(36)
+                      const currentProjectPath = activeProject.path
+                      setAiEntries(prev => {
+                        // 更新同 label 且同项目的运行中条目
+                        const existing = prev.findIndex(e =>
+                          e.label === aiTask.label &&
+                          e.status === 'running' &&
+                          e.projectPath === currentProjectPath
+                        )
+                        const entry: AIAnalysisEntry = {
+                          id: existing >= 0 ? prev[existing].id : id,
+                          label: aiTask.label,
+                          status: aiTask.running ? 'running' : (aiTask.error ? 'error' : 'done'),
+                          preview: aiTask.preview || '',
+                          startTime: existing >= 0 ? prev[existing].startTime : new Date().toISOString(),
+                          projectPath: currentProjectPath,
+                          entities: aiTask.entities,
+                          relations: aiTask.relations,
+                          error: aiTask.error,
+                        }
+                        if (existing >= 0) {
+                          const next = [...prev]
+                          next[existing] = entry
+                          return next
+                        }
+                        return [...prev, entry]
+                      })
+                      // 自动切换到图谱分析 tab
+                      if (aiTask.running) setRightView('graph-analysis')
+                      // AI 分析完成后递增 graphVersion，触发 Sidebar 刷新
+                      if (!aiTask.running) setGraphVersion(v => v + 1)
+                    }}
+                  />
+                </div>
+              )}
             </main>
 
-            <div className="splitter splitter-h" onMouseDown={rightSplitter.onMouseDown} />
+	              <div className="splitter splitter-h" onMouseDown={rightSplitter.onMouseDown} />
 
-            <aside className="sidebar right-sidebar" style={{ width: rightSplitter.size }}>
-              <div className="sidebar-tabs">
-                <button className={rightView === 'tasks' ? 'active' : ''} onClick={() => setRightView('tasks')}>
+	            {!rightCollapsed ? (
+	            <aside className="sidebar right-sidebar" style={{ width: rightSplitter.size }}>
+	              <div className="sidebar-tabs">
+	                <button className={rightView === 'tasks' ? 'active' : ''} onClick={() => setRightView('tasks')}>
                   📊 看板
                   {(() => {
                     const pendingCount = tasks.filter(t => {
@@ -1481,6 +1586,14 @@ export default function App() {
                 <button className={rightView === 'plan' ? 'active' : ''} onClick={() => setRightView('plan')}>📋 计划</button>
                 <button className={rightView === 'office' ? 'active' : ''} onClick={() => setRightView('office')}>🏢 办公室</button>
                 <button className={rightView === 'assistant' ? 'active' : ''} onClick={() => setRightView('assistant')}>🤖 助手</button>
+                <button className={rightView === 'graph-analysis' ? 'active' : ''} onClick={() => setRightView('graph-analysis')}>
+                  🕸️ 图谱分析
+                  {aiEntries.filter(e => e.status === 'running' && (!activeProject?.path || e.projectPath === activeProject.path)).length > 0 && (
+                    <span style={{ marginLeft: 4, background: '#4a5cf7', color: '#fff', fontSize: 9, padding: '1px 5px', borderRadius: 8, fontWeight: 600 }}>
+                      {aiEntries.filter(e => e.status === 'running' && (!activeProject?.path || e.projectPath === activeProject.path)).length}
+                    </span>
+                  )}
+                </button>
               </div>
               {rightView === 'tasks' && (
                 <div className="right-panel-scroll">
@@ -1521,6 +1634,14 @@ export default function App() {
                   autoApproval={autoApproval}
                 />
               )}
+              {rightView === 'graph-analysis' && (
+                <AIAnalysisLog
+                  theme={theme}
+                  entries={aiEntries.filter(e => !activeProject?.path || e.projectPath === activeProject.path)}
+                  onDismiss={(id) => setAiEntries(prev => prev.filter(e => e.id !== id))}
+                  onClear={() => setAiEntries(prev => prev.filter(e => activeProject?.path && e.projectPath !== activeProject.path))}
+                />
+              )}
               {rightView === 'ssh' && (
                 <div className="right-panel-scroll">
                   <SshConnectionPanel
@@ -1558,6 +1679,16 @@ export default function App() {
                 </div>
               )}
             </aside>
+            ) : (
+              <div className="right-sidebar-collapsed" style={{ flexShrink: 0 }}>
+                <button className="right-collapse-btn" onClick={() => setRightCollapsed(false)} title="展开右侧栏">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M14 1H2L1 2v12l1 1h12l1-1V2l-1-1zM2 14V2h3v12H2zm4 0V2h8v12H6zM8 5v6l3-3-3-3z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            </>
           </div>
         </>
       )}
@@ -1611,6 +1742,14 @@ export default function App() {
         setShowSettings(false)
         await handleWorkspaceSwitch(id)
       }} />}
+      {showUnifiedTemplateManager && activeProject && (
+        <UnifiedTemplateManagerDialog
+          theme={theme}
+          activeProjectPath={activeProject.path}
+          onClose={() => setShowUnifiedTemplateManager(false)}
+          onOrchestrationCreated={() => { /* 保持在编排视图，sidebar 会自动刷新列表 */ }}
+        />
+      )}
       {showKnowledge && activeProject?.path && (
         <KnowledgeDialog
           theme={theme}

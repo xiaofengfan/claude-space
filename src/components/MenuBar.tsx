@@ -19,12 +19,16 @@ export function MenuBar({
   theme,
   onThemeToggle,
   onGitToggle,
+  onToggleRight,
+  rightCollapsed,
 }: {
   menus: MenuGroup[]
   onOpenProjectManager: () => void
   theme: 'dark' | 'light'
   onThemeToggle: () => void
   onGitToggle: () => void
+  onToggleRight?: () => void
+  rightCollapsed?: boolean
 }) {
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -76,7 +80,15 @@ export function MenuBar({
       ))}
       {/* 窗口控制按钮 */}
       <div className="menubar-win-controls">
-        <button className="menubar-win-btn" onClick={onGitToggle} title="Git">⎇</button>
+        <button className="menubar-win-btn" onClick={onToggleRight} title={rightCollapsed ? '展开右侧栏' : '折叠右侧栏'}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ verticalAlign: 'middle' }}>
+            {rightCollapsed ? (
+              <path d="M14 1H2L1 2v12l1 1h12l1-1V2l-1-1zM2 14V2h3v12H2zm4 0V2h8v12H6zM8 5v6l3-3-3-3z" />
+            ) : (
+              <path d="M14 1H2L1 2v12l1 1h12l1-1V2l-1-1zM2 14V2h3v12H2zm4 0V2h8v12H6zM11 5L8 8l3 3V5z" />
+            )}
+          </svg>
+        </button>
         <button className="menubar-win-btn" onClick={onThemeToggle} title={`主题: ${theme}`}>
           {theme === 'dark' ? '☀️' : '🌙'}
         </button>

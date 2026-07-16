@@ -10,3 +10,5 @@ dist_install/win-unpacked/
 .env
 test-screenshots/
 screenshot_*.png
+.foundry/
+%TEMP%/

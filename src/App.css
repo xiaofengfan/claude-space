@@ -82,10 +82,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .sidebar { background: var(--bg-elevated); flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
 .right-sidebar { border-right: none; border-left: 1px solid var(--border); overflow-x:hidden; }
 
+/* ── Right sidebar collapsed ──────────────────── */
+.right-sidebar-collapsed { width: 20px; background: var(--bg-elevated); border-left: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; }
+
 /* 右侧栏标签按钮（保留原有水平标签样式） */
 .sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .sidebar-tabs button { flex: 1; padding: 8px 6px; border: none; background: transparent; color: #888; font-size: 11px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
 .sidebar-tabs button.active { color: #fff; border-bottom-color: var(--accent); }
+.sidebar-collapse-btn { flex-shrink: 0; width: 24px; padding: 8px 0; border: none; background: transparent; color: #888; font-size: 11px; cursor: pointer; opacity: 0.5; display: flex; align-items: center; justify-content: center; border-bottom: 2px solid transparent; }
+.sidebar-collapse-btn:hover { opacity: 1; color: #fff; }
 
 /* VS Code 风格: 左侧栏头部 + 内容区 */
 .sidebar-header { padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: #888; border-bottom: 1px solid var(--border); flex-shrink: 0; }
@@ -99,6 +104,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .activity-bar-btn.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: var(--accent); border-radius: 0 2px 2px 0; }
 .activity-bar-icon { line-height: 1; }
 .activity-bar-badge { position: absolute; top: 6px; right: 8px; min-width: 14px; height: 14px; padding: 0 3px; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; border-radius: 7px; background: #e04040; color: #fff; }
+
+/* ── ActivityBar Collapse Button ───────────────── */
+.activity-bar-btn.collapse-btn { opacity: 0.5; font-size: 16px; margin-bottom: 4px; }
+.activity-bar-btn.collapse-btn:hover { opacity: 1; color: #fff; }
+.activity-bar-btn.collapse-btn.collapsed { opacity: 0.7; }
+.right-collapse-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 6px 0; border: none; background: transparent; color: #888; font-size: 11px; cursor: pointer; opacity: 0.5; transition: opacity .15s; }
+.right-collapse-btn:hover { opacity: 1; color: #fff; }
 
 /* ── Splitter ──────────────────────────────────── */
 .splitter { flex-shrink: 0; z-index: 10; }
