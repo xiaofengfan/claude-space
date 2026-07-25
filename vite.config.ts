@@ -15,7 +15,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', 'child_process', 'fs', 'path', 'os', 'node-pty', 'ssh2'],
+              external: ['electron', 'child_process', 'fs', 'path', 'os', 'node-pty', 'ssh2', 'better-sqlite3'],
             },
           },
           plugins: [

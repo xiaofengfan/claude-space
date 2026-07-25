@@ -10,7 +10,6 @@ interface Employee {
 function DeskCard({ emp, onEdit, taskTitle }: { emp: Employee; onEdit: () => void; taskTitle?: string }) {
   const isActive = emp.status === 'working' || emp.status === 'busy'
   const [showBubble, setShowBubble] = useState(false)
-  const [progress, setProgress] = useState(0)
   const [lookSide, setLookSide] = useState(false)
 
   // Staggered bubble with proper cleanup
@@ -39,19 +38,11 @@ function DeskCard({ emp, onEdit, taskTitle }: { emp: Employee; onEdit: () => voi
     }
   }, [emp.id])
 
-  useEffect(() => {
-    if (!isActive) { setProgress(0); return }
-    const t = setInterval(() => { setProgress(p => (p >= 100 ? 0 : p + Math.random() * 8)) }, 500)
-    return () => clearInterval(t)
-  }, [isActive, emp.status])
-
   function handleClick() {
     setLookSide(true)
     setTimeout(() => setLookSide(false), 1500)
     onEdit()
   }
-
-  const darkColor = (emp.color || '#6c8cff').replace('4','3').replace('7','5').replace('e','c').replace('8','6').replace('b','8').replace('3','2').replace('9','7').replace('d','a')
 
   return (
     <div className="flat-desk" onClick={handleClick}>
@@ -59,61 +50,15 @@ function DeskCard({ emp, onEdit, taskTitle }: { emp: Employee; onEdit: () => voi
       <div className="flat-name-label">{emp.name} · {emp.role}</div>
 
       <div className="flat-cubicle">
-        <div className="flat-wall-back" />
-        <div className="flat-wall-left" />
-        <div className="flat-wall-right" />
-
-        {/* Monitor — sits ON desk, lower position */}
-        <div className={`flat-monitor ${isActive ? 'active' : ''}`}>
-          <div className="flat-monitor-frame">
-            <div className="flat-monitor-screen">
-              {isActive && (
-                <div className="flat-monitor-content">
-                  {emp.status === 'busy' ? (
-                    <div className="monitor-code">
-                      <div className="monitor-code-line" /><div className="monitor-code-line short" /><div className="monitor-code-line" />
-                    </div>
-                  ) : (
-                    <div className="monitor-progress">
-                      <div className="monitor-progress-bar" style={{ width: `${Math.min(progress, 100)}%` }} />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="flat-monitor-stand" />
-          <div className="flat-monitor-base" />
-        </div>
-
-        {/* Desk surface — thin */}
-        <div className="flat-desk-surface">
-          <div className="flat-keyboard" />
-          <div className="flat-mouse" />
-        </div>
-
-        {/* Chair back */}
-        <div className="flat-chair-back" />
-
-        {/* Person — bigger, side-turn animation on click */}
+        {/* 字体图标：角色头像 */}
         <div className={`flat-person ${emp.status} ${lookSide ? 'look-side' : ''}`}>
-          <svg viewBox="0 0 52 56" width="52" height="56">
-            <ellipse cx="26" cy="10" rx="13" ry="12" fill={isActive ? '#3d2314' : '#5a4a3a'} />
-            <ellipse cx="26" cy="8" rx="10" ry="9" fill={isActive ? '#ffe0bd' : '#f5deb3'} />
-            <ellipse cx="26" cy="9" rx="12" ry="10" fill={isActive ? '#3d2314' : '#5a4a3a'} />
-            <ellipse cx="14" cy="9" rx="4" ry="5" fill={isActive ? '#f0c090' : '#deb887'} />
-            <ellipse cx="38" cy="9" rx="4" ry="5" fill={isActive ? '#f0c090' : '#deb887'} />
-            <rect x="22" y="15" width="8" height="4" rx="2" fill={isActive ? '#f0c090' : '#deb887'} />
-            <rect x="13" y="18" width="26" height="22" rx="6" fill={emp.color || '#6c8cff'} />
-            <rect x="20" y="17" width="12" height="4" rx="2" fill={isActive ? darkColor : '#5a6a8a'} />
-            <rect x="2" y="22" width="11" height="5" rx="2.5" fill={emp.color || '#6c8cff'} />
-            <rect x="39" y="22" width="11" height="5" rx="2.5" fill={emp.color || '#6c8cff'} />
-            <circle cx="7" cy="24.5" r="4" fill={isActive ? '#ffe0bd' : '#f5deb3'} />
-            <circle cx="45" cy="24.5" r="4" fill={isActive ? '#ffe0bd' : '#f5deb3'} />
-          </svg>
+          {emp.status === 'busy' ? '🤖' : emp.status === 'working' ? '👨‍💻' : '🧑‍💻'}
         </div>
 
-        <div className="flat-desk-shadow" />
+        {/* 字体图标：显示器 */}
+        <div className={`flat-monitor ${isActive ? 'active' : ''}`}>
+          {emp.status === 'busy' ? '⚡' : isActive ? '💻' : '🖥️'}
+        </div>
 
         {emp.status === 'idle' && (
           <div className="flat-standby-bubble">🔵 待命中</div>

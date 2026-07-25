@@ -11,6 +11,9 @@
   /* 石墨黑 - 边框层级 */
   --border: #2a2a2a;            /* 主边框 */
   --border-light: #333;         /* 浅边框/输入框边框 */
+  /* 石墨黑 - 文本色 */
+  --text-main: #e0e0e0;         /* 主文字色 */
+  --text-muted: #888;           /* 次级文字色 */
   /* 石墨黑 - 强调色 (代替蓝色 #6c8cff) */
   --accent: #4a4a5a;
   --accent-hover: #5a5a6a;
@@ -22,14 +25,16 @@
   --accent-bg-subtle: rgba(74, 74, 90, 0.15);
 }
 [data-theme="light"] {
-  --bg-base: initial;
-  --bg-surface: initial;
-  --bg-elevated: initial;
-  --bg-tool: initial;
-  --bg-hover: initial;
-  --bg-active: initial;
-  --border: initial;
-  --border-light: initial;
+  --bg-base: #f0f2f5;
+  --bg-surface: #e8e8e8;
+  --bg-elevated: #f5f5f5;
+  --bg-tool: #fafafa;
+  --bg-hover: #ddd;
+  --bg-active: #d5d5d5;
+  --border: #d0d0d0;
+  --border-light: #e0e0e0;
+  --text-main: #222;
+  --text-muted: #888;
   --accent: #6c8cff;
   --accent-hover: #5a7aee;
   --accent-border: #6c8cff;
@@ -42,7 +47,7 @@
 
 /* ── Reset & Global ─────────────────────────────── */
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-base); color: #e0e0e0; overflow: hidden; height: 100vh; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-base); color: var(--text-main); overflow: hidden; height: 100vh; }
 #root { height: 100vh; display: flex; flex-direction: column; }
 .app { height: 100vh; display: flex; flex-direction: column; }
 
@@ -98,16 +103,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 /* ── Activity Bar ────────────────────────────────── */
 .activity-bar { width: 48px; background: var(--bg-surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding-top: 4px; flex-shrink: 0; }
-.activity-bar-btn { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; font-size: 20px; cursor: pointer; position: relative; color: #888; transition: color .15s; }
-.activity-bar-btn:hover { color: #ccc; }
-.activity-bar-btn.active { color: #fff; }
-.activity-bar-btn.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: var(--accent); border-radius: 0 2px 2px 0; }
+.activity-bar-btn { width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; cursor: pointer; position: relative; color: var(--text-muted); transition: color .15s, background .15s; border-radius: 0; }
+.activity-bar-btn:hover { color: var(--text-main); background: var(--bg-hover); }
+.activity-bar-btn.active { color: var(--accent-strong); }
+.activity-bar-btn.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--accent-border); border-radius: 0 2px 2px 0; }
 .activity-bar-icon { line-height: 1; }
 .activity-bar-badge { position: absolute; top: 6px; right: 8px; min-width: 14px; height: 14px; padding: 0 3px; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; border-radius: 7px; background: #e04040; color: #fff; }
 
 /* ── ActivityBar Collapse Button ───────────────── */
-.activity-bar-btn.collapse-btn { opacity: 0.5; font-size: 16px; margin-bottom: 4px; }
-.activity-bar-btn.collapse-btn:hover { opacity: 1; color: #fff; }
+.activity-bar-btn.collapse-btn { opacity: 0.5; font-size: 16px; margin-bottom: 6px; }
+.activity-bar-btn.collapse-btn:hover { opacity: 1; color: var(--text-main); }
 .activity-bar-btn.collapse-btn.collapsed { opacity: 0.7; }
 .right-collapse-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 6px 0; border: none; background: transparent; color: #888; font-size: 11px; cursor: pointer; opacity: 0.5; transition: opacity .15s; }
 .right-collapse-btn:hover { opacity: 1; color: #fff; }
@@ -275,8 +280,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .section-divider { height:1px; background:var(--border); margin:0 12px; }
 
 /* ── Flat 2D Office ───────────────────────────── */
-.flat-office{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#f5f3f0}
-.flat-office-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:12px;color:#666;border-bottom:1px solid #e0dcd6;flex-shrink:0;background:#faf8f5}
+.flat-office{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg-elevated)}
+.flat-office-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-surface)}
 .flat-office-header-right{display:flex;align-items:center;gap:6px;}
 .flat-office-count{font-size:11px;color:#bbb}
 .flat-office-stats{display:flex;gap:4px;align-items:center;}
@@ -293,11 +298,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-desk{width:160px;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition:transform .2s;padding:0;position:relative}
 .flat-desk:hover{transform:translateY(-3px)}
 .flat-desk.empty{width:160px;visibility:hidden}
-.flat-name-label{font-size:11px;color:#444;font-weight:700;margin-bottom:6px;white-space:nowrap;text-align:center}
+.flat-name-label{font-size:11px;color:var(--text-main);font-weight:700;margin-bottom:6px;white-space:nowrap;text-align:center}
 .flat-status-badge{font-size:8px;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0}
-.flat-status-badge.status-working{background:#e8f5e9;color:#2e7d32}
-.flat-status-badge.status-busy{background:#ffebee;color:#c62828}
-.flat-status-badge.status-idle{background:#e3f2fd;color:#1565c0}
+.flat-status-badge.status-working{background:rgba(76,175,80,0.15);color:#4caf50}
+.flat-status-badge.status-busy{background:rgba(224,85,85,0.15);color:#e05555}
+.flat-status-badge.status-idle{background:rgba(33,150,243,0.12);color:#2196f3}
 .flat-task-content{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#555}
 .flat-task-label{font-size:10px;color:#1565c0;font-weight:600;margin-bottom:6px;
   max-width:148px;max-height:28px;overflow:hidden;text-overflow:ellipsis;
@@ -305,57 +310,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-task-label:hover{overflow:auto;max-height:60px;white-space:normal}
 
 /* Cubicle */
-.flat-cubicle{position:relative;width:148px;height:140px;margin:0 auto;background:linear-gradient(180deg,#fcfbf8,#f4f1ea);border-radius:6px;overflow:visible;box-shadow:0 3px 12px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.03)}
-.flat-wall-back{position:absolute;top:0;left:0;right:0;height:2px;background:#e8e4dc;z-index:1}
-.flat-wall-left{position:absolute;top:0;left:0;bottom:0;width:2px;background:linear-gradient(to right,#e8e4dc,transparent);z-index:1}
-.flat-wall-right{position:absolute;top:0;right:0;bottom:0;width:2px;background:linear-gradient(to left,#e8e4dc,transparent);z-index:1}
+.flat-cubicle{position:relative;width:148px;height:130px;margin:0 auto;background:var(--bg-surface, #141414);border:1px solid var(--border, #2a2a2a);border-radius:10px;overflow:visible;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;transition:border-color .2s}
+.flat-desk:hover .flat-cubicle{border-color:var(--accent-border, #4a4a5a)}
 
-/* Person — bigger, side-turn on click */
-.flat-person{position:absolute;bottom:48px;left:50%;transform:translateX(-50%);z-index:6;filter:drop-shadow(0 2px 3px rgba(0,0,0,.1));transition:transform .4s ease}
-.flat-person.look-side{transform:translateX(-50%) rotate(-8deg) translateX(-4px)}
-.flat-person.working svg{animation:person-idle 3s ease-in-out infinite}
-.flat-person.busy svg{animation:person-busy .7s ease-in-out infinite}
-.flat-person.idle svg{opacity:1!important}
-.flat-person.away svg{opacity:.18}
-@keyframes person-idle{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
-@keyframes person-busy{0%,100%{transform:translateY(0)}30%{transform:translateY(-2px)}60%{transform:translateY(0)}}
+/* Person — font icon */
+.flat-person{font-size:36px;line-height:1;transition:transform .4s ease;z-index:2}
+.flat-person.look-side{transform:rotate(-8deg) translateX(-4px)}
+.flat-person.idle{opacity:.7}
+.flat-person.away{opacity:.3}
+.flat-person.working{animation:person-idle 3s ease-in-out infinite}
+.flat-person.busy{animation:person-busy .7s ease-in-out infinite}
+@keyframes person-idle{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes person-busy{0%,100%{transform:translateY(0)}30%{transform:translateY(-3px)}60%{transform:translateY(0)}}
 
-/* Chair */
-.flat-chair-back{position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:30px;height:28px;border:1.5px solid #d8d0c6;border-radius:12px 12px 3px 3px;background:linear-gradient(to bottom,#f2ece2,#e4dacc);z-index:5;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-
-/* Desk — thin */
-.flat-desk-surface{position:absolute;bottom:70px;left:50%;transform:translateX(-50%);width:134px;height:10px;border:1.5px solid #d4ccc2;background:linear-gradient(180deg,#fefdfc,#f5f1e8);border-radius:3px;display:flex;align-items:center;justify-content:center;gap:40px;z-index:4;box-shadow:0 2px 3px rgba(0,0,0,.04)}
-.flat-keyboard{width:36px;height:6px;border:1px solid #e0d8ce;background:#f8f4ec;border-radius:2px;box-shadow:inset 0 1px 1px rgba(0,0,0,.03)}
-.flat-mouse{width:7px;height:10px;border:1px solid #e0d8ce;background:#f8f4ec;border-radius:5px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-left:-6px}
-
-/* Desk legs */
-.flat-desk-surface::before,
-.flat-desk-surface::after{content:'';position:absolute;bottom:-18px;width:3px;height:18px;background:linear-gradient(to bottom,#c8c0b4,#c0b6a8);border-radius:1px;box-shadow:0 1px 1px rgba(0,0,0,.03)}
-.flat-desk-surface::before{left:14px}
-.flat-desk-surface::after{right:14px}
-
-/* Monitor */
-.flat-monitor{position:absolute;top:14px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;z-index:2}
-.flat-monitor-frame{width:36px;height:24px;border:2px solid #4a4a4a;border-radius:3px;background:#1a1a1a;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.flat-monitor-screen{width:32px;height:20px;background:#000;position:relative;border-radius:1px}
-.flat-monitor.active .flat-monitor-screen{background:#0a1628}
-.flat-monitor-stand{width:4px;height:6px;background:#555;border-radius:1px}
-.flat-monitor-base{width:18px;height:2px;background:#555;border-radius:1px}
-
-/* Monitor on desk contact shadow */
-.flat-monitor-base::after{content:'';position:absolute;bottom:0;left:-2px;right:-2px;height:2px;background:rgba(0,0,0,.03);border-radius:50%}
-
-/* Monitor content */
-.flat-monitor-content{position:absolute;inset:1px}
-.monitor-progress{position:absolute;bottom:1px;left:1px;right:1px;height:2px;background:#122020;border-radius:1px;overflow:hidden}
-.monitor-progress-bar{height:100%;background:linear-gradient(90deg,#2196F3,#64B5F6);border-radius:1px;transition:width .4s ease;box-shadow:0 0 3px rgba(33,150,243,.3)}
-.monitor-code{display:flex;flex-direction:column;gap:1px;padding:1px 2px}
-.monitor-code-line{height:1.5px;background:#0f0;border-radius:1px;width:100%;animation:code-scroll 1.5s ease-in-out infinite}
-.monitor-code-line.short{width:55%;animation-delay:.3s}
-@keyframes code-scroll{0%,100%{opacity:.8}50%{opacity:.3}}
-
-/* Shadow */
-.flat-desk-shadow{position:absolute;bottom:50px;left:14px;right:14px;height:6px;background:rgba(0,0,0,.04);border-radius:50%;z-index:0}
+/* Monitor — font icon */
+.flat-monitor{font-size:28px;line-height:1;z-index:1}
+.flat-monitor.active{text-shadow:0 0 12px rgba(108,140,255,0.4)}
 
 /* Idle bubble */
 .flat-standby-bubble{position:absolute;top:4px;left:50%;transform:translateX(-50%);background:#e3f2fd;border:1px solid #2196f3;border-radius:10px;padding:2px 8px;font-size:9px;color:#1565c0;white-space:nowrap;z-index:10;animation:bubble-pop .3s ease-out;box-shadow:0 2px 6px rgba(33,150,243,.12);font-weight:600}
@@ -683,8 +653,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* ── Shared ────────────────────────────────────── */
 .btn-primary { padding:8px 18px; border:none; border-radius:6px; background:var(--accent); color:#fff; font-size:13px; cursor:pointer; }
 .btn-primary:hover { background:var(--accent-hover); }
-.btn-cancel { padding:8px 18px; border:1px solid var(--border-light); border-radius:6px; background:transparent; color:#888; font-size:13px; cursor:pointer; }
-.btn-cancel:hover { background:var(--border); color:#fff; }
+.btn-cancel { padding:8px 18px; border:1px solid var(--border-light); border-radius:6px; background:transparent; color:var(--text-main); font-size:13px; cursor:pointer; }
+.btn-cancel:hover { background:var(--bg-hover); color:var(--text-main); }
 
 /* ── Project Switch Dialog ──────────────────────── */
 .btn-switch-current { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px;
@@ -695,8 +665,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   border: 1px solid var(--border-light); border-radius: 8px; background: transparent; color: #ccc;
   font-size: 13px; cursor: pointer; text-align: left; transition: all 0.15s; }
 .btn-switch-new:hover { border-color: var(--accent); color: #fff; }
-.icon-btn { background:none; border:none; color:#888; cursor:pointer; padding:4px 8px; font-size:14px; border-radius:4px; }
-.icon-btn:hover { background:var(--border); color:#fff; }
 .empty-hint { text-align:center; padding:24px; color:#666; font-size:13px; }
 .file-browser-placeholder { padding:20px; text-align:center; color:#888; }
 .file-browser-placeholder .hint { font-size:11px; color:#666; margin-top:8px; }
@@ -724,11 +692,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .flat-task-line{position:absolute;bottom:5px;left:4px;right:4px;font-size:9px;color:#999;text-align:center;z-index:1;line-height:1.3;max-height:24px;overflow:hidden;display:flex;align-items:center;justify-content:center;gap:4px}
 
 /* ── Light Theme ──────────────────────────────── */
-[data-theme="light"] .app{background:#f0f2f5;color:#333}
-[data-theme="light"] body{background:#f0f2f5;color:#333}
-[data-theme="light"] .menubar{background:#e8e8e8}
-[data-theme="light"] .menubar-item{color:#333}
-[data-theme="light"] .menubar-item:hover,[data-theme="light"] .menubar-item.active{background:#ddd;color:#000}
+[data-theme="light"] .app{background:var(--bg-base);color:var(--text-main)}
+[data-theme="light"] body{background:var(--bg-base);color:var(--text-main)}
+[data-theme="light"] .menubar{background:var(--bg-surface)}
+[data-theme="light"] .menubar-item{color:var(--text-muted)}
+[data-theme="light"] .menubar-item:hover,[data-theme="light"] .menubar-item.active{background:var(--bg-hover);color:var(--text-main)}
 [data-theme="light"] .menubar-dropdown{background:#fff;border-color:#ddd}
 [data-theme="light"] .menubar-dropdown-item{color:#333}
 [data-theme="light"] .menubar-dropdown-item:hover{background:var(--accent);color:#fff}
@@ -736,11 +704,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 [data-theme="light"] .sidebar-tabs button{color:#666}
 [data-theme="light"] .sidebar-tabs button.active{color:#222;border-bottom-color:var(--accent)}
 [data-theme="light"] .sidebar-header{color:#000;border-color:#e0e0e0;font-weight:700}
-[data-theme="light"] .activity-bar{background:#e8e8e8;border-color:#d0d0d0}
-[data-theme="light"] .activity-bar-btn{color:#999}
-[data-theme="light"] .activity-bar-btn:hover{color:#000}
-[data-theme="light"] .activity-bar-btn.active{color:#4a5cf7}
-[data-theme="light"] .activity-bar-btn.active::before{background:#4a5cf7}
+[data-theme="light"] .activity-bar{background:var(--bg-surface);border-color:var(--border)}
+[data-theme="light"] .activity-bar-btn{color:var(--text-muted)}
+[data-theme="light"] .activity-bar-btn:hover{color:var(--text-main)}
+[data-theme="light"] .activity-bar-btn.active{color:var(--accent-strong)}
+[data-theme="light"] .activity-bar-btn.active::before{background:var(--accent-border)}
 [data-theme="light"] .sidebar{background:#f5f6f8;border-color:#e0e0e0}
 [data-theme="light"] .chat-header{border-color:#e0e0e0}
 [data-theme="light"] .input-box{background:#fff;border-color:#e0e0e0}
@@ -755,8 +723,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 [data-theme="light"] .dialog-header{border-color:#e0e0e0}
 [data-theme="light"] .dialog-footer{border-color:#e0e0e0}
 [data-theme="light"] .task-card{background:#f5f5f5}
-[data-theme="light"] .flat-office{background:#fafafa}
-[data-theme="light"] .flat-office-header{background:#f5f5f5;border-color:#e0e0e0}
 
 /* ── Mention Dropdown ──────────────────────────── */
 .mention-dropdown{position:absolute;bottom:56px;left:12px;right:12px;background:var(--bg-elevated);border:1px solid #3a3a6a;border-radius:8px;max-height:220px;overflow-y:auto;z-index:999;box-shadow:0 -8px 24px rgba(0,0,0,.5)}
@@ -801,11 +767,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 }
 
 /* ── Full Light Theme ──────────────────────────── */
-[data-theme="light"] body{background:#f5f5f5;color:#222}
-[data-theme="light"] .app{background:#f5f5f5;color:#222}
-[data-theme="light"] .menubar{background:#e8e8e8}
-[data-theme="light"] .menubar-item{color:#333}
-[data-theme="light"] .menubar-item:hover,[data-theme="light"] .menubar-item.active{background:#d0d0d0;color:#000}
+[data-theme="light"] body{background:var(--bg-base);color:var(--text-main)}
+[data-theme="light"] .app{background:var(--bg-base);color:var(--text-main)}
+[data-theme="light"] .menubar{background:var(--bg-surface)}
+[data-theme="light"] .menubar-item{color:var(--text-muted)}
+[data-theme="light"] .menubar-item:hover,[data-theme="light"] .menubar-item.active{background:var(--bg-hover);color:var(--text-main)}
 [data-theme="light"] .menubar-dropdown{background:#fff;border-color:#ddd;box-shadow:0 4px 16px rgba(0,0,0,.1)}
 [data-theme="light"] .menubar-dropdown-item{color:#333}
 [data-theme="light"] .menubar-dropdown-item:hover{background:var(--accent);color:#fff}
@@ -910,8 +876,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 [data-theme="light"] .pm-item-path{color:#888}
 
 [data-theme="light"] .empty-hint{color:#bbb}
-[data-theme="light"] .icon-btn{color:#999}
-[data-theme="light"] .icon-btn:hover{background:#f0f0f0;color:#222}
 
 [data-theme="light"] ::-webkit-scrollbar-thumb{background:#ddd}
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#bbb}
@@ -2097,17 +2061,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 [data-theme="light"] .kn-stat-card{background:#fff;border-color:#e0e0e0}
 [data-theme="light"] .kn-tabs{background:#fff}
 [data-theme="light"] .memory-list-item.selected{color:#fff}
-[data-theme="light"] .memory-filter-tab.active{color:#fff}
-[data-theme="light"] .kn-filter-btn.active{color:#fff}
 
 /* ── Memory Panel ─────────────────────────────── */
 .memory-panel{display:flex;flex-direction:column;height:100%}
 .memory-toolbar{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0;min-height:34px}
 .memory-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--accent-text);gap:8px;font-size:12px;padding:24px}
 .memory-filter-tabs{display:flex;gap:3px;padding:6px 8px;border-bottom:1px solid var(--border-light);flex-shrink:0;overflow-x:auto;flex-wrap:wrap}
-.memory-filter-tab{padding:3px 8px;border-radius:10px;font-size:10px;cursor:pointer;border:1px solid transparent;background:transparent;color:var(--accent-text);display:flex;align-items:center;gap:3px;white-space:nowrap;transition:all .12s}
-.memory-filter-tab:hover{background:var(--border);color:var(--accent-strong)}
-.memory-filter-tab.active{background:var(--accent);color:var(--accent-strong);border-color:var(--accent-border)}
+.memory-filter-tab{padding:3px 8px;border-radius:10px;font-size:10px;cursor:pointer;border:1px solid transparent;background:transparent;color:var(--text-muted);display:flex;align-items:center;gap:3px;white-space:nowrap;transition:all .12s}
+.memory-filter-tab:hover{background:var(--bg-hover);color:var(--text-main)}
+.memory-filter-tab.active{background:var(--bg-active);color:var(--text-main);border-color:var(--border)}
 .memory-filter-count{margin-left:2px;font-size:9px;opacity:.6}
 .memory-list{flex:1;overflow-y:auto}
 .memory-list-item{padding:8px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border-light);transition:background .12s}
@@ -2172,9 +2134,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 /* ── Knowledge Dialog ──────────────────────────── */
 .kn-tabs{display:flex;gap:3px;padding:8px 12px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-surface)}
-.kn-tab{padding:5px 14px;font-size:11px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--accent-text);cursor:pointer;transition:all .12s}
-.kn-tab:hover{background:var(--border);color:var(--accent-strong)}
-.kn-tab.active{background:var(--accent);color:var(--accent-strong);border-color:var(--accent-border)}
+.kn-tab{padding:5px 14px;font-size:11px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer;transition:all .12s}
+.kn-tab:hover{background:var(--bg-hover);color:var(--text-main)}
+.kn-tab.active{background:var(--bg-active);color:var(--text-main);border-color:var(--border)}
 .kn-body{flex:1;overflow:hidden;display:flex;flex-direction:column}
 .kn-scroll{flex:1;overflow-y:auto;padding:16px}
 .kn-stats-cards{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -2204,9 +2166,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .kn-tl-preview{position:absolute;right:10px;top:8px;max-width:200px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--accent-text);line-height:1.5;max-height:48px;overflow:hidden}
 .kn-consolidate-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .kn-preview-box{padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-surface);font-size:11px;line-height:1.7;color:var(--accent-strong);white-space:pre-wrap;max-height:200px;overflow-y:auto}
-.kn-filter-btn{padding:2px 7px;font-size:9px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--accent-text);cursor:pointer;transition:all .12s;white-space:nowrap}
-.kn-filter-btn:hover{background:var(--border);color:var(--accent-strong)}
-.kn-filter-btn.active{background:var(--accent);color:var(--accent-strong);border-color:var(--accent-border)}
+.kn-filter-btn{padding:2px 7px;font-size:9px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text-muted);cursor:pointer;transition:all .12s;white-space:nowrap}
+.kn-filter-btn:hover{background:var(--bg-hover);color:var(--text-main)}
+.kn-filter-btn.active{background:var(--bg-active);color:var(--text-main);border-color:var(--border)}
 .kn-list-item{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border-light);transition:background .12s}
 .kn-list-item:hover{background:var(--border)}
 .kn-list-item.active{background:rgba(var(--accent-rgb),.1)}

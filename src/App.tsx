@@ -1279,7 +1279,8 @@ export default function App() {
       <MenuBar menus={menus} onOpenProjectManager={openProjectManager} theme={theme}
         onThemeToggle={() => setThemeState(t => t === 'dark' ? 'light' : 'dark')}
         onGitToggle={() => activeProject && setShowGitPanel(v => !v)}
-        onToggleRight={() => setRightCollapsed(v => !v)} rightCollapsed={rightCollapsed} />
+        onToggleRight={() => setRightCollapsed(v => !v)} rightCollapsed={rightCollapsed}
+        onToggleLeft={() => setLeftCollapsed(v => !v)} leftCollapsed={leftCollapsed} />
 
       {noProject ? (
         <WelcomePage
@@ -1520,6 +1521,7 @@ export default function App() {
               {chatMode === 'knowledge-graph' && activeProject?.path && (
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   <KnowledgeGraphPanel projectPath={activeProject.path} theme={theme}
+                    onOpenFile={handleOpenFile}
                     onAITaskChange={(aiTask) => {
                       if (!aiTask) return
                       const id = 'ai_graph_' + Date.now().toString(36)
@@ -1537,6 +1539,7 @@ export default function App() {
                           status: aiTask.running ? 'running' : (aiTask.error ? 'error' : 'done'),
                           preview: aiTask.preview || '',
                           startTime: existing >= 0 ? prev[existing].startTime : new Date().toISOString(),
+                          finishTime: aiTask.running ? undefined : new Date().toISOString(),
                           projectPath: currentProjectPath,
                           entities: aiTask.entities,
                           relations: aiTask.relations,

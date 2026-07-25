@@ -81,33 +81,12 @@ export function OfficeView({
                 onClick={() => onSelectDesk({ name: desk.projectName, path: desk.projectPath })}
                 title={`${desk.projectName} - 点击切换到项目`}
               >
-                {/* 桌面 */}
+                {/* 字体图标桌面 */}
                 <div className="desk-top">
-                  {/* 显示器 */}
+                  {/* 显示器图标 */}
                   <div className="desk-monitor">
-                    <div className="monitor-screen">
-                      {desk.status === 'active' && (
-                        <span className="screen-text">{'{ }'}</span>
-                      )}
-                    </div>
+                    {desk.status === 'active' ? '💻' : '🖥️'}
                   </div>
-
-                  {/* 文档 */}
-                  {desk.tasks > 0 && (
-                    <div className={`desk-docs ${desk.status === 'active' ? 'pulse' : ''}`}>
-                      <div className="doc doc-1" />
-                      <div className="doc doc-2" />
-                      <div className="doc doc-3" />
-                    </div>
-                  )}
-
-                  {/* Agent 机器人 */}
-                  {desk.status === 'active' && (
-                    <div className="desk-agent">
-                      <div className="agent-body">🤖</div>
-                      <div className="agent-indicator active" />
-                    </div>
-                  )}
 
                   {/* 状态标签 */}
                   <div className={`desk-status-badge ${desk.status}`}>

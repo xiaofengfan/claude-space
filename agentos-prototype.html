@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentOS — 多模型协作平台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* ─── Reset & Base ─────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080b12;
+  --bg1:#0d1120;
+  --bg2:#111827;
+  --bg3:#161d2e;
+  --bg4:#1e2740;
+  --bg5:#243050;
+  --border:#1f2d4a;
+  --border2:#2a3d5e;
+  --border3:#3a5080;
+  --text:#e8edf5;
+  --text2:#8fa3bf;
+  --text3:#4a637d;
+  --text4:#2d4060;
+  --accent:#00d4ff;
+  --accent2:#0099cc;
+  --blue:#3b82f6;
+  --blue2:#1e6bb8;
+  --green:#00e5a0;
+  --green2:#009966;
+  --amber:#ffb800;
+  --amber2:#cc8800;
+  --red:#ff4466;
+  --red2:#cc2244;
+  --purple:#a855f7;
+  --purple2:#7c22d4;
+  --pink:#f472b6;
+  --cyan:#22d3ee;
+  --mono:'JetBrains Mono',monospace;
+  --display:'Syne',sans-serif;
+  --r:6px;
+  --r2:10px;
+  --r3:16px;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--mono)}
+
+/* ─── App Shell ────────────────────────────────────────────── */
+.shell{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* ─── Top Nav ──────────────────────────────────────────────── */
+.topnav{
+  height:52px;flex-shrink:0;
+  background:var(--bg1);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;
+  padding:0 20px;gap:20px;
+  position:relative;z-index:100;
+}
+.logo{
+  font-family:var(--display);font-size:17px;font-weight:800;
+  letter-spacing:3px;text-transform:uppercase;
+  color:var(--accent);
+  display:flex;align-items:center;gap:8px;
+  margin-right:8px;
+}
+.logo-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);animation:blink 2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+.nav-links{display:flex;gap:2px}
+.nav-link{
+  font-size:11px;font-weight:500;letter-spacing:.5px;
+  padding:6px 14px;border-radius:var(--r);cursor:pointer;
+  color:var(--text3);border:1px solid transparent;
+  transition:all .2s;text-transform:uppercase;
+}
+.nav-link:hover{color:var(--text2);background:var(--bg3)}
+.nav-link.active{color:var(--accent);background:rgba(0,212,255,.08);border-color:rgba(0,212,255,.2)}
+
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.live-badge{
+  display:flex;align-items:center;gap:6px;
+  font-size:10px;color:var(--green);
+  padding:5px 10px;border-radius:20px;
+  background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.2);
+}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 1.5s ease-in-out infinite}
+.time-display{font-size:12px;color:var(--text3);font-family:var(--mono)}
+.icon-btn{
+  width:32px;height:32px;border-radius:var(--r);
+  border:1px solid var(--border2);background:var(--bg2);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:var(--text3);font-size:14px;transition:all .15s;
+}
+.icon-btn:hover{background:var(--bg4);color:var(--text);border-color:var(--border3)}
+
+/* ─── Body Layout ──────────────────────────────────────────── */
+.body{display:flex;flex:1;overflow:hidden}
+
+/* ─── Sidebar ──────────────────────────────────────────────── */
+.sidebar{
+  width:220px;flex-shrink:0;
+  background:var(--bg1);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  overflow:hidden;
+}
+.sidebar-top{padding:16px 14px 10px;border-bottom:1px solid var(--border)}
+.sidebar-search{
+  width:100%;background:var(--bg3);border:1px solid var(--border2);
+  border-radius:var(--r);padding:7px 10px;
+  font-size:11px;color:var(--text2);font-family:var(--mono);outline:none;
+  transition:all .2s;
+}
+.sidebar-search:focus{border-color:var(--accent2);background:var(--bg4)}
+.sidebar-search::placeholder{color:var(--text4)}
+
+.sidebar-body{flex:1;overflow-y:auto;padding:8px 0}
+.sidebar-body::-webkit-scrollbar{width:3px}
+.sidebar-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+.sidebar-section{margin-bottom:4px}
+.sidebar-heading{
+  font-size:9px;font-weight:600;letter-spacing:1.5px;
+  text-transform:uppercase;color:var(--text4);
+  padding:10px 16px 6px;
+}
+.sidebar-item{
+  display:flex;align-items:center;gap:9px;
+  padding:8px 16px;cursor:pointer;transition:all .15s;
+  font-size:11px;color:var(--text3);
+  border-left:2px solid transparent;
+}
+.sidebar-item:hover{color:var(--text2);background:rgba(255,255,255,.02)}
+.sidebar-item.active{color:var(--text);background:rgba(0,212,255,.05);border-left-color:var(--accent)}
+.sidebar-item .si-icon{width:18px;text-align:center;font-size:13px;flex-shrink:0}
+.sidebar-item .si-label{flex:1}
+.sidebar-item .si-badge{
+  font-size:9px;padding:2px 6px;border-radius:3px;
+  background:var(--bg4);color:var(--text3);
+}
+.sidebar-item .si-badge.red{background:rgba(255,68,102,.12);color:var(--red)}
+.sidebar-item .si-badge.amber{background:rgba(255,184,0,.1);color:var(--amber)}
+.sidebar-item .si-badge.green{background:rgba(0,229,160,.08);color:var(--green)}
+
+.sidebar-footer{
+  padding:12px 14px;border-top:1px solid var(--border);
+  font-size:10px;
+}
+.user-row{display:flex;align-items:center;gap:8px}
+.user-avatar{
+  width:28px;height:28px;border-radius:var(--r);
+  background:linear-gradient(135deg,var(--blue),var(--purple));
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:600;font-family:var(--display);color:#fff;
+}
+.user-name{font-size:11px;color:var(--text2)}
+.user-role{font-size:9px;color:var(--text4);margin-top:1px}
+.user-status{margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green)}
+
+/* ─── Main Content ─────────────────────────────────────────── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+
+/* Page header */
+.page-header{
+  padding:16px 24px 14px;
+  border-bottom:1px solid var(--border);
+  background:var(--bg1);
+  display:flex;align-items:flex-start;gap:16px;flex-shrink:0;
+}
+.page-header-left{flex:1}
+.page-breadcrumb{font-size:10px;color:var(--text4);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.page-title{font-family:var(--display);font-size:20px;font-weight:700;color:var(--text)}
+.page-subtitle{font-size:11px;color:var(--text3);margin-top:3px}
+.page-actions{display:flex;gap:8px;align-items:center}
+
+.btn{
+  font-size:11px;font-family:var(--mono);font-weight:500;
+  padding:8px 16px;border-radius:var(--r);cursor:pointer;
+  border:1px solid var(--border2);background:var(--bg2);
+  color:var(--text2);transition:all .15s;letter-spacing:.3px;
+}
+.btn:hover{background:var(--bg4);color:var(--text);border-color:var(--border3)}
+.btn.primary{background:rgba(0,212,255,.1);color:var(--accent);border-color:rgba(0,212,255,.3)}
+.btn.primary:hover{background:rgba(0,212,255,.18);border-color:var(--accent)}
+.btn.success{background:rgba(0,229,160,.08);color:var(--green);border-color:rgba(0,229,160,.25)}
+.btn.danger{background:rgba(255,68,102,.08);color:var(--red);border-color:rgba(255,68,102,.25)}
+
+/* Page scrollable content */
+.page-content{flex:1;overflow-y:auto;padding:20px 24px}
+.page-content::-webkit-scrollbar{width:4px}
+.page-content::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ─── Right Panel ──────────────────────────────────────────── */
+.rightpanel{
+  width:300px;flex-shrink:0;
+  background:var(--bg1);
+  border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.rp-tabs{display:flex;border-bottom:1px solid var(--border)}
+.rp-tab{
+  flex:1;padding:12px 8px;text-align:center;
+  font-size:10px;letter-spacing:.5px;text-transform:uppercase;
+  cursor:pointer;color:var(--text4);border-bottom:2px solid transparent;
+  transition:all .2s;
+}
+.rp-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.rp-tab:hover:not(.active){color:var(--text3)}
+.rp-body{flex:1;overflow-y:auto;padding:14px}
+.rp-body::-webkit-scrollbar{width:3px}
+.rp-body::-webkit-scrollbar-thumb{background:var(--border2)}
+
+/* ─── Grid Layouts ─────────────────────────────────────────── */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:16px;position:relative;overflow:hidden;
+  transition:all .2s;cursor:default;
+}
+.stat-card:hover{border-color:var(--border3);background:var(--bg3)}
+.stat-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+}
+.stat-card.blue::before{background:linear-gradient(90deg,transparent,var(--blue),transparent)}
+.stat-card.green::before{background:linear-gradient(90deg,transparent,var(--green),transparent)}
+.stat-card.amber::before{background:linear-gradient(90deg,transparent,var(--amber),transparent)}
+.stat-card.purple::before{background:linear-gradient(90deg,transparent,var(--purple),transparent)}
+.stat-card.red::before{background:linear-gradient(90deg,transparent,var(--red),transparent)}
+.stat-card.cyan::before{background:linear-gradient(90deg,transparent,var(--cyan),transparent)}
+
+.sc-label{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+.sc-value{font-family:var(--display);font-size:26px;font-weight:700;line-height:1}
+.sc-value.up{color:var(--green)}
+.sc-value.warn{color:var(--amber)}
+.sc-value.down{color:var(--red)}
+.sc-value.blue{color:var(--blue)}
+.sc-value.purple{color:var(--purple)}
+.sc-delta{font-size:10px;margin-top:5px;display:flex;align-items:center;gap:4px}
+.sc-delta.up{color:var(--green)} .sc-delta.down{color:var(--red)} .sc-delta.neutral{color:var(--text3)}
+.sc-sparkline{position:absolute;bottom:0;right:0;opacity:.3}
+
+/* ─── Section headers ──────────────────────────────────────── */
+.section-header{
+  display:flex;align-items:center;gap:10px;margin-bottom:14px;
+}
+.section-title{font-family:var(--display);font-size:13px;font-weight:600;color:var(--text2);letter-spacing:.5px}
+.section-line{flex:1;height:1px;background:var(--border)}
+.section-action{font-size:10px;color:var(--text3);cursor:pointer;letter-spacing:.3px;transition:color .15s}
+.section-action:hover{color:var(--accent)}
+
+/* ─── Agent Cards Grid ─────────────────────────────────────── */
+.agent-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.agent-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:16px;cursor:pointer;
+  transition:all .2s;position:relative;overflow:hidden;
+}
+.agent-card:hover{border-color:var(--border3);background:var(--bg3);transform:translateY(-1px)}
+.agent-card.selected{border-color:var(--accent);background:rgba(0,212,255,.04)}
+.agent-card-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
+.agent-icon{
+  width:38px;height:38px;border-radius:var(--r2);
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;flex-shrink:0;
+}
+.agent-name{font-size:12px;font-weight:600;color:var(--text);font-family:var(--display);margin-bottom:2px}
+.agent-role{font-size:10px;color:var(--text3)}
+.agent-model-tag{
+  font-size:9px;padding:2px 7px;border-radius:3px;
+  border:1px solid;font-family:var(--mono);margin-top:4px;display:inline-block;
+}
+.agent-metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:10px}
+.am-item{background:var(--bg3);border-radius:var(--r);padding:6px 7px;text-align:center}
+.am-val{font-size:13px;font-weight:700;font-family:var(--display)}
+.am-key{font-size:9px;color:var(--text4);margin-top:2px}
+.agent-status-row{display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.status-pill{
+  display:flex;align-items:center;gap:4px;
+  font-size:9px;padding:3px 8px;border-radius:10px;
+}
+.status-pill.active{background:rgba(0,229,160,.08);color:var(--green);border:1px solid rgba(0,229,160,.2)}
+.status-pill.busy{background:rgba(255,184,0,.08);color:var(--amber);border:1px solid rgba(255,184,0,.2)}
+.status-pill.idle{background:rgba(74,99,125,.1);color:var(--text3);border:1px solid var(--border)}
+.status-pill-dot{width:4px;height:4px;border-radius:50%;background:currentColor;animation:blink 2s ease-in-out infinite}
+.agent-load-bar{height:2px;background:var(--bg4);border-radius:1px;margin-left:auto;flex:1}
+.agent-load-fill{height:100%;border-radius:1px}
+
+/* ─── Task Table ───────────────────────────────────────────── */
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;margin-bottom:20px}
+.data-table{width:100%;border-collapse:collapse}
+.data-table thead th{
+  font-size:9px;letter-spacing:1px;text-transform:uppercase;
+  color:var(--text4);padding:10px 14px;text-align:left;
+  background:var(--bg3);border-bottom:1px solid var(--border);
+  font-weight:500;
+}
+.data-table tbody tr{border-bottom:1px solid rgba(31,45,74,.6);transition:background .15s;cursor:pointer}
+.data-table tbody tr:last-child{border-bottom:none}
+.data-table tbody tr:hover{background:var(--bg3)}
+.data-table td{padding:10px 14px;font-size:11px;color:var(--text2);vertical-align:middle}
+.td-id{font-family:var(--mono);color:var(--text4);font-size:10px;white-space:nowrap}
+.td-name{color:var(--text);font-weight:500}
+.td-agents{display:flex;gap:4px;flex-wrap:wrap}
+.mini-chip{
+  font-size:9px;padding:2px 6px;border-radius:3px;
+  border:1px solid;font-family:var(--mono);
+}
+.progress-wrap{display:flex;align-items:center;gap:8px;min-width:100px}
+.progress-bar{flex:1;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;border-radius:2px;transition:width 1s}
+.progress-num{font-size:10px;color:var(--text3);min-width:28px;text-align:right}
+.badge{font-size:9px;padding:3px 8px;border-radius:4px;font-weight:500;letter-spacing:.3px}
+.badge.running{background:rgba(59,130,246,.12);color:#60a5fa}
+.badge.done{background:rgba(0,229,160,.1);color:var(--green)}
+.badge.failed{background:rgba(255,68,102,.12);color:var(--red)}
+.badge.waiting{background:rgba(74,99,125,.1);color:var(--text3)}
+.badge.paused{background:rgba(255,184,0,.1);color:var(--amber)}
+.priority-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+
+/* ─── Employee Monitoring ──────────────────────────────────── */
+.emp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.emp-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:16px;cursor:pointer;transition:all .2s;
+}
+.emp-card:hover{border-color:var(--border3);background:var(--bg3);transform:translateY(-1px)}
+.emp-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.emp-avatar{
+  width:36px;height:36px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--display);font-size:13px;font-weight:700;color:#fff;flex-shrink:0;
+}
+.emp-fullname{font-size:12px;font-weight:600;color:var(--text);font-family:var(--display)}
+.emp-title{font-size:10px;color:var(--text3);margin-top:1px}
+.emp-agent-bind{
+  display:flex;align-items:center;gap:5px;
+  font-size:9px;padding:3px 8px;border-radius:4px;margin-bottom:10px;
+  border:1px solid var(--border2);color:var(--text3);background:var(--bg3);width:fit-content;
+}
+.emp-stats-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.emp-stat{background:var(--bg3);border-radius:var(--r);padding:7px 9px}
+.emp-stat-val{font-size:15px;font-weight:700;font-family:var(--display)}
+.emp-stat-label{font-size:9px;color:var(--text4);margin-top:2px}
+.spark-row{display:flex;align-items:flex-end;gap:2px;height:22px}
+.spark-bar{flex:1;border-radius:1px;transition:height .3s}
+.emp-online-bar{height:3px;background:var(--bg4);border-radius:2px;margin-top:8px}
+.emp-online-fill{height:100%;border-radius:2px}
+
+/* ─── Topology view ────────────────────────────────────────── */
+.topology-wrap{
+  position:relative;background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);overflow:hidden;margin-bottom:20px;
+}
+.topo-canvas{width:100%;height:400px;position:relative}
+
+/* ─── Right panel widgets ──────────────────────────────────── */
+.rp-section{margin-bottom:16px}
+.rp-label{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text4);margin-bottom:8px}
+.metric-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(31,45,74,.5)}
+.metric-row:last-child{border-bottom:none}
+.metric-label{font-size:11px;color:var(--text3)}
+.metric-val{font-size:12px;font-weight:600}
+.mini-bar{height:3px;background:var(--bg4);border-radius:2px;margin-top:4px;overflow:hidden}
+.mini-bar-fill{height:100%;border-radius:2px}
+
+.log-list{display:flex;flex-direction:column;gap:1px}
+.log-item{
+  font-size:9px;font-family:var(--mono);
+  padding:5px 8px;border-radius:var(--r);
+  border-left:2px solid;
+  display:flex;gap:8px;align-items:flex-start;
+}
+.log-time{color:var(--text4);white-space:nowrap;flex-shrink:0;width:42px}
+.log-text{color:var(--text2);line-height:1.5}
+.log-item.info{background:rgba(34,211,238,.03);border-color:var(--cyan)}
+.log-item.info .log-text{color:var(--cyan)}
+.log-item.success{background:rgba(0,229,160,.03);border-color:var(--green)}
+.log-item.success .log-text{color:var(--green)}
+.log-item.warn{background:rgba(255,184,0,.04);border-color:var(--amber)}
+.log-item.warn .log-text{color:var(--amber)}
+.log-item.error{background:rgba(255,68,102,.04);border-color:var(--red)}
+.log-item.error .log-text{color:var(--red)}
+.log-item.default{background:rgba(255,255,255,.01);border-color:var(--border)}
+
+/* ─── Model comparison grid ────────────────────────────────── */
+.model-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px}
+.model-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:16px;transition:all .2s;cursor:pointer;
+}
+.model-card:hover{border-color:var(--border3);background:var(--bg3)}
+.model-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.model-logo{
+  width:36px;height:36px;border-radius:var(--r2);
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;flex-shrink:0;font-weight:700;
+  font-family:var(--display);
+}
+.model-name{font-size:12px;font-weight:600;font-family:var(--display);color:var(--text)}
+.model-version{font-size:9px;color:var(--text4);margin-top:1px}
+.model-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
+.ms-item{text-align:center;background:var(--bg3);border-radius:var(--r);padding:6px 0}
+.ms-val{font-size:13px;font-weight:700;font-family:var(--display)}
+.ms-key{font-size:8px;color:var(--text4);margin-top:2px;text-transform:uppercase}
+.model-bar-row{margin-bottom:6px}
+.mbr-label{display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-bottom:3px}
+.model-usage-bar{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden}
+.model-usage-fill{height:100%;border-radius:2px}
+.model-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.model-tag{
+  font-size:9px;padding:2px 7px;border-radius:3px;
+  background:var(--bg3);border:1px solid var(--border2);color:var(--text3);
+}
+
+/* ─── Sync status ──────────────────────────────────────────── */
+.sync-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.sync-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:14px;text-align:center;
+}
+.sync-icon{font-size:22px;margin-bottom:6px}
+.sync-val{font-family:var(--display);font-size:20px;font-weight:700;margin-bottom:2px}
+.sync-label{font-size:9px;color:var(--text3);letter-spacing:.5px}
+
+/* ─── Alert list ───────────────────────────────────────────── */
+.alert-list{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.alert-item{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:14px 16px;
+  display:flex;align-items:flex-start;gap:12px;
+  border-left:3px solid;transition:all .2s;cursor:pointer;
+}
+.alert-item:hover{background:var(--bg3)}
+.alert-item.high{border-left-color:var(--red)}
+.alert-item.medium{border-left-color:var(--amber)}
+.alert-item.low{border-left-color:var(--blue)}
+.alert-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.alert-title{font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px}
+.alert-desc{font-size:10px;color:var(--text3)}
+.alert-time{font-size:9px;color:var(--text4);margin-left:auto;white-space:nowrap;padding-top:2px}
+
+/* ─── Page Views ───────────────────────────────────────────── */
+.page-view{display:none}
+.page-view.active{display:block}
+
+/* ─── Topology SVG ─────────────────────────────────────────── */
+#topo-svg{width:100%;height:100%}
+
+/* ─── Animations ───────────────────────────────────────────── */
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes scanline{from{transform:translateY(-100%)}to{transform:translateY(100vh)}}
+.page-view.active .stat-card{animation:fadeIn .3s ease both}
+.page-view.active .stat-card:nth-child(1){animation-delay:.04s}
+.page-view.active .stat-card:nth-child(2){animation-delay:.08s}
+.page-view.active .stat-card:nth-child(3){animation-delay:.12s}
+.page-view.active .stat-card:nth-child(4){animation-delay:.16s}
+
+/* Scanline effect */
+.scanline{
+  position:fixed;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(transparent,rgba(0,212,255,.03),transparent);
+  animation:scanline 8s linear infinite;pointer-events:none;z-index:999;
+}
+
+/* Connection line animations */
+@keyframes dash{to{stroke-dashoffset:-20}}
+.flow-line{animation:dash 1.5s linear infinite}
+
+/* ─── Chart mini ───────────────────────────────────────────── */
+.chart-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:16px;margin-bottom:20px}
+.chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.chart-title{font-family:var(--display);font-size:13px;font-weight:600}
+.chart-legend{display:flex;gap:12px}
+.legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text3)}
+.legend-dot{width:6px;height:6px;border-radius:50%}
+canvas.chart{width:100%;height:160px}
+
+/* ─── Settings page ────────────────────────────────────────── */
+.settings-grid{display:grid;grid-template-columns:220px 1fr;gap:20px;margin-bottom:20px}
+.settings-nav{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:8px 0;height:fit-content}
+.settings-nav-item{
+  padding:9px 16px;font-size:11px;color:var(--text3);cursor:pointer;
+  transition:all .15s;display:flex;align-items:center;gap:8px;
+}
+.settings-nav-item:hover{background:rgba(255,255,255,.02);color:var(--text2)}
+.settings-nav-item.active{color:var(--accent);background:rgba(0,212,255,.05)}
+.settings-content{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:20px}
+.settings-section-title{font-family:var(--display);font-size:15px;font-weight:600;margin-bottom:4px}
+.settings-section-desc{font-size:11px;color:var(--text3);margin-bottom:20px;line-height:1.6}
+.settings-divider{height:1px;background:var(--border);margin:16px 0}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.form-input{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);
+  padding:8px 10px;font-size:11px;color:var(--text);font-family:var(--mono);outline:none;
+  transition:all .2s;
+}
+.form-input:focus{border-color:var(--accent2);background:var(--bg4)}
+.form-select{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);
+  padding:8px 10px;font-size:11px;color:var(--text);font-family:var(--mono);outline:none;
+  cursor:pointer;transition:all .2s;
+}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(31,45,74,.4)}
+.toggle-row:last-child{border-bottom:none}
+.toggle-label{font-size:11px;color:var(--text2)}
+.toggle-desc{font-size:9px;color:var(--text4);margin-top:2px}
+.toggle{
+  width:36px;height:20px;border-radius:10px;position:relative;
+  cursor:pointer;transition:background .2s;flex-shrink:0;
+}
+.toggle.on{background:var(--accent2)}
+.toggle.off{background:var(--bg4);border:1px solid var(--border2)}
+.toggle::after{
+  content:'';position:absolute;top:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;transition:left .2s;
+}
+.toggle.on::after{left:18px}
+.toggle.off::after{left:2px}
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+<div class="shell">
+
+<!-- ─── Top Nav ─────────────────────────────────────────────── -->
+<nav class="topnav">
+  <div class="logo"><div class="logo-dot"></div>AgentOS</div>
+  <div class="nav-links">
+    <div class="nav-link active" onclick="showPage('dashboard',this)">总览</div>
+    <div class="nav-link" onclick="showPage('agents',this)">Agent 集群</div>
+    <div class="nav-link" onclick="showPage('tasks',this)">任务流水线</div>
+    <div class="nav-link" onclick="showPage('employees',this)">员工监控</div>
+    <div class="nav-link" onclick="showPage('models',this)">模型管理</div>
+    <div class="nav-link" onclick="showPage('sync',this)">同步中心</div>
+    <div class="nav-link" onclick="showPage('alerts',this)">告警</div>
+    <div class="nav-link" onclick="showPage('settings',this)">设置</div>
+  </div>
+  <div class="nav-right">
+    <div class="live-badge"><div class="live-dot"></div>实时同步</div>
+    <div class="time-display" id="clock">--:--:--</div>
+    <div class="icon-btn" title="通知">🔔</div>
+    <div class="icon-btn" title="全屏">⛶</div>
+  </div>
+</nav>
+
+<div class="body">
+<!-- ─── Sidebar ─────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-top">
+    <input class="sidebar-search" placeholder="搜索 agents / 任务 ..." />
+  </div>
+  <div class="sidebar-body">
+    <div class="sidebar-section">
+      <div class="sidebar-heading">主要</div>
+      <div class="sidebar-item active" onclick="showPage('dashboard',null)"><div class="si-icon">📊</div><div class="si-label">控制台</div></div>
+      <div class="sidebar-item" onclick="showPage('agents',null)"><div class="si-icon">🤖</div><div class="si-label">Agent 集群</div><div class="si-badge green">12</div></div>
+      <div class="sidebar-item" onclick="showPage('tasks',null)"><div class="si-icon">⚡</div><div class="si-label">任务流水线</div><div class="si-badge">7</div></div>
+      <div class="sidebar-item" onclick="showPage('employees',null)"><div class="si-icon">👥</div><div class="si-label">员工监控</div></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-heading">管理</div>
+      <div class="sidebar-item" onclick="showPage('models',null)"><div class="si-icon">🧠</div><div class="si-label">模型管理</div></div>
+      <div class="sidebar-item" onclick="showPage('sync',null)"><div class="si-icon">⇄</div><div class="si-label">同步中心</div><div class="si-badge green">在线</div></div>
+      <div class="sidebar-item" onclick="showPage('alerts',null)"><div class="si-icon">⚠</div><div class="si-label">告警中心</div><div class="si-badge red">3</div></div>
+      <div class="sidebar-item" onclick="showPage('settings',null)"><div class="si-icon">⚙</div><div class="si-label">系统设置</div></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-heading">集群节点</div>
+      <div class="sidebar-item"><div class="si-icon" style="color:#a855f7">●</div><div class="si-label">编排层 (2)</div></div>
+      <div class="sidebar-item"><div class="si-icon" style="color:#3b82f6">●</div><div class="si-label">工作层 (7)</div></div>
+      <div class="sidebar-item"><div class="si-icon" style="color:#00e5a0">●</div><div class="si-label">监控层 (3)</div></div>
+    </div>
+  </div>
+  <div class="sidebar-footer">
+    <div class="user-row">
+      <div class="user-avatar">管</div>
+      <div><div class="user-name">管理员</div><div class="user-role">超级管理员</div></div>
+      <div class="user-status"></div>
+    </div>
+  </div>
+</aside>
+
+<!-- ─── Main ────────────────────────────────────────────────── -->
+<main class="main">
+
+<!-- ═══ DASHBOARD ════════════════════════════════════════════ -->
+<div id="page-dashboard" class="page-view active">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>控制台</span></div>
+      <div class="page-title">运营总览</div>
+      <div class="page-subtitle">今日 · 集群健康 · 实时数据</div>
+    </div>
+    <div class="page-actions">
+      <div class="btn">导出报告</div>
+      <div class="btn primary">+ 新建任务</div>
+    </div>
+  </div>
+  <div class="page-content">
+    <!-- Stats -->
+    <div class="stat-grid">
+      <div class="stat-card green">
+        <div class="sc-label">活跃 Agents</div>
+        <div class="sc-value up" id="s-agents">11</div>
+        <div class="sc-delta up">↑ 在线率 91.7%</div>
+        <svg class="sc-sparkline" width="60" height="30"><polyline points="0,28 10,22 20,25 30,15 40,18 50,10 60,14" fill="none" stroke="rgba(0,229,160,.3)" stroke-width="1.5"/></svg>
+      </div>
+      <div class="stat-card blue">
+        <div class="sc-label">任务吞吐量</div>
+        <div class="sc-value blue" id="s-tasks">247<span style="font-size:14px;opacity:.6">/min</span></div>
+        <div class="sc-delta up">↑ 较昨日 +18%</div>
+        <svg class="sc-sparkline" width="60" height="30"><polyline points="0,25 10,20 20,22 30,12 40,16 50,8 60,11" fill="none" stroke="rgba(59,130,246,.3)" stroke-width="1.5"/></svg>
+      </div>
+      <div class="stat-card green">
+        <div class="sc-label">任务成功率</div>
+        <div class="sc-value up" id="s-success">98.7%</div>
+        <div class="sc-delta up">↑ 较上周 +0.4%</div>
+        <svg class="sc-sparkline" width="60" height="30"><polyline points="0,20 10,18 20,19 30,15 40,14 50,12 60,10" fill="none" stroke="rgba(0,229,160,.3)" stroke-width="1.5"/></svg>
+      </div>
+      <div class="stat-card amber">
+        <div class="sc-label">平均响应延迟</div>
+        <div class="sc-value warn" id="s-lat">142<span style="font-size:14px;opacity:.6">ms</span></div>
+        <div class="sc-delta down">↑ 较基线 +12ms</div>
+        <svg class="sc-sparkline" width="60" height="30"><polyline points="0,18 10,22 20,16 30,20 40,14 50,18 60,22" fill="none" stroke="rgba(255,184,0,.3)" stroke-width="1.5"/></svg>
+      </div>
+    </div>
+
+    <!-- Topology -->
+    <div class="section-header"><div class="section-title">集群拓扑</div><div class="section-line"></div><div class="section-action">全屏查看</div></div>
+    <div class="topology-wrap">
+      <div class="topo-canvas">
+        <svg id="topo-svg" viewBox="0 0 900 380" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#2a3d5e" stroke-width="1.5"/>
+            </marker>
+            <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#3b82f6" stroke-width="1.5"/>
+            </marker>
+            <marker id="arr-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#a855f7" stroke-width="1.5"/>
+            </marker>
+            <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#00e5a0" stroke-width="1.5"/>
+            </marker>
+            <marker id="arr-cyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#22d3ee" stroke-width="1.5"/>
+            </marker>
+          </defs>
+
+          <!-- Background grid -->
+          <defs><pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M 30 0 L 0 0 0 30" fill="none" stroke="#1a2035" stroke-width="0.5"/></pattern></defs>
+          <rect width="900" height="380" fill="url(#grid)" opacity="0.6"/>
+
+          <!-- Cluster rings -->
+          <ellipse cx="450" cy="190" rx="340" ry="155" fill="none" stroke="#1f2d4a" stroke-width="1" stroke-dasharray="4,6" opacity="0.5"/>
+          <ellipse cx="450" cy="190" rx="200" ry="90" fill="none" stroke="#1f2d4a" stroke-width="1" stroke-dasharray="3,8" opacity="0.4"/>
+
+          <!-- Connections -->
+          <!-- Orchestrator to workers -->
+          <line x1="450" y1="175" x2="170" y2="165" stroke="#a855f7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr-purple)" opacity="0.7"/>
+          <line x1="450" y1="175" x2="280" y2="280" stroke="#3b82f6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr-blue)" opacity="0.7"/>
+          <line x1="450" y1="175" x2="450" y2="300" stroke="#3b82f6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr-blue)" opacity="0.7"/>
+          <line x1="450" y1="175" x2="620" y2="280" stroke="#3b82f6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr-blue)" opacity="0.7"/>
+          <line x1="450" y1="175" x2="730" y2="165" stroke="#3b82f6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr-blue)" opacity="0.7"/>
+          <line x1="450" y1="155" x2="450" y2="90" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr-cyan)" opacity="0.8"/>
+          <!-- Monitor connections -->
+          <line x1="80" y1="190" x2="420" y2="185" stroke="#00e5a0" stroke-width="1" stroke-dasharray="3,5" marker-end="url(#arr-green)" opacity="0.5"/>
+          <line x1="820" y1="190" x2="480" y2="185" stroke="#00e5a0" stroke-width="1" stroke-dasharray="3,5" marker-end="url(#arr-green)" opacity="0.5"/>
+          <!-- Worker-to-worker -->
+          <path d="M 300 280 Q 365 320 420 300" fill="none" stroke="#2a3d5e" stroke-width="1" stroke-dasharray="3,5" marker-end="url(#arr)" opacity="0.6"/>
+          <path d="M 480 300 Q 550 320 605 280" fill="none" stroke="#2a3d5e" stroke-width="1" stroke-dasharray="3,5" marker-end="url(#arr)" opacity="0.6"/>
+
+          <!-- Flow animation dots -->
+          <circle r="3" fill="#a855f7" opacity="0.8">
+            <animateMotion dur="2.5s" repeatCount="indefinite" path="M450,175 L170,165"/>
+          </circle>
+          <circle r="3" fill="#3b82f6" opacity="0.8">
+            <animateMotion dur="2s" repeatCount="indefinite" path="M450,175 L730,165"/>
+          </circle>
+          <circle r="3" fill="#22d3ee" opacity="0.8">
+            <animateMotion dur="1.8s" repeatCount="indefinite" path="M450,155 L450,90"/>
+          </circle>
+          <circle r="2.5" fill="#00e5a0" opacity="0.6">
+            <animateMotion dur="3s" repeatCount="indefinite" path="M80,190 L420,185"/>
+          </circle>
+
+          <!-- ─── NODES ─── -->
+          <!-- Main Orchestrator -->
+          <g style="cursor:pointer">
+            <rect x="390" y="145" width="120" height="60" rx="10" fill="#1e1535" stroke="#a855f7" stroke-width="1.5"/>
+            <text x="450" y="167" text-anchor="middle" font-family="Syne,sans-serif" font-size="11" fill="#a855f7" font-weight="700">🧠 Master</text>
+            <text x="450" y="182" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="9" fill="#7c3aed">Orchestrator</text>
+            <text x="450" y="197" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#4a3060">Claude Opus 4</text>
+          </g>
+
+          <!-- Sync Agent (top) -->
+          <g style="cursor:pointer">
+            <rect x="400" y="50" width="100" height="48" rx="8" fill="#0d1e2a" stroke="#22d3ee" stroke-width="1.2"/>
+            <text x="450" y="70" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" fill="#22d3ee" font-weight="600">⇄ Sync</text>
+            <text x="450" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#1e5068">状态同步层</text>
+          </g>
+
+          <!-- Left cluster: NLP + Health Monitor -->
+          <g style="cursor:pointer">
+            <rect x="100" y="135" width="110" height="54" rx="8" fill="#0d1a0d" stroke="#00e5a0" stroke-width="1.2"/>
+            <text x="155" y="155" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" fill="#00e5a0" font-weight="600">🗣️ NLP</text>
+            <text x="155" y="168" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#1a4a2a">语义理解</text>
+            <text x="155" y="180" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#0d3020">GPT-4o</text>
+          </g>
+          <g style="cursor:pointer">
+            <rect x="30" y="160" width="80" height="48" rx="8" fill="#0d1c14" stroke="#22c55e" stroke-width="1" stroke-dasharray="3,3"/>
+            <text x="70" y="180" text-anchor="middle" font-family="Syne,sans-serif" font-size="9" fill="#22c55e" font-weight="600">❤️ Health</text>
+            <text x="70" y="193" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#155024">监控</text>
+          </g>
+
+          <!-- Right cluster: Search + Perf Monitor -->
+          <g style="cursor:pointer">
+            <rect x="680" y="135" width="110" height="54" rx="8" fill="#1a1505" stroke="#f59e0b" stroke-width="1.2"/>
+            <text x="735" y="155" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" fill="#f59e0b" font-weight="600">🔍 Search</text>
+            <text x="735" y="168" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#4a3a0a">知识检索</text>
+            <text x="735" y="180" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#302500">Gemini</text>
+          </g>
+          <g style="cursor:pointer">
+            <rect x="790" y="160" width="80" height="48" rx="8" fill="#131a05" stroke="#a3e635" stroke-width="1" stroke-dasharray="3,3"/>
+            <text x="830" y="180" text-anchor="middle" font-family="Syne,sans-serif" font-size="9" fill="#a3e635" font-weight="600">📈 Perf</text>
+            <text x="830" y="193" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#304010">性能</text>
+          </g>
+
+          <!-- Bottom workers -->
+          <g style="cursor:pointer">
+            <rect x="215" y="255" width="105" height="54" rx="8" fill="#0d1420" stroke="#3b82f6" stroke-width="1.2"/>
+            <text x="267" y="274" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" fill="#3b82f6" font-weight="600">💻 Code</text>
+            <text x="267" y="287" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#1a3060">代码生成</text>
+            <text x="267" y="299" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#0d2040">Sonnet 4</text>
+          </g>
+          <g style="cursor:pointer">
+            <rect x="395" y="270" width="110" height="54" rx="8" fill="#0d1a24" stroke="#06b6d4" stroke-width="1.2"/>
+            <text x="450" y="290" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" fill="#06b6d4" font-weight="600">📊 Data</text>
+            <text x="450" y="303" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#0a3a48">数据分析</text>
+            <text x="450" y="315" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#062030">Sonnet 4</text>
+          </g>
+          <g style="cursor:pointer">
+            <rect x="570" y="255" width="105" height="54" rx="8" fill="#201014" stroke="#ec4899" stroke-width="1.2"/>
+            <text x="622" y="274" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" fill="#ec4899" font-weight="600">👁️ Vision</text>
+            <text x="622" y="287" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#5a2040">图像理解</text>
+            <text x="622" y="299" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7" fill="#3a1030">GPT-4o</text>
+          </g>
+
+          <!-- Legend -->
+          <rect x="20" y="20" width="220" height="22" rx="4" fill="#0d1120" opacity="0.8"/>
+          <circle cx="35" cy="31" r="3" fill="#a855f7"/>
+          <text x="43" y="35" font-family="JetBrains Mono,monospace" font-size="8" fill="#4a3060">控制流</text>
+          <circle cx="90" cy="31" r="3" fill="#3b82f6"/>
+          <text x="98" y="35" font-family="JetBrains Mono,monospace" font-size="8" fill="#1a3060">任务流</text>
+          <circle cx="145" cy="31" r="3" fill="#22d3ee"/>
+          <text x="153" y="35" font-family="JetBrains Mono,monospace" font-size="8" fill="#0a3a48">同步流</text>
+          <circle cx="200" cy="31" r="3" fill="#00e5a0"/>
+          <text x="208" y="35" font-family="JetBrains Mono,monospace" font-size="8" fill="#1a4a2a">监控流</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Recent Tasks -->
+    <div class="section-header"><div class="section-title">近期任务</div><div class="section-line"></div><div class="section-action" onclick="showPage('tasks',null)">查看全部 →</div></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>任务 ID</th><th>任务名称</th><th>负责 Agents</th><th>进度</th><th>状态</th><th>优先级</th><th>耗时</th>
+        </tr></thead>
+        <tbody id="task-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ AGENTS PAGE ═══════════════════════════════════════════ -->
+<div id="page-agents" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>Agent 集群</span></div>
+      <div class="page-title">Agent 集群管理</div>
+      <div class="page-subtitle">12 个节点 · 3 种类型 · 4 种模型后端</div>
+    </div>
+    <div class="page-actions">
+      <div class="btn">筛选</div>
+      <div class="btn primary">+ 部署新 Agent</div>
+    </div>
+  </div>
+  <div class="page-content">
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card purple"><div class="sc-label">编排层</div><div class="sc-value purple">2</div><div class="sc-delta neutral">Master + Sub Orchestrator</div></div>
+      <div class="stat-card blue"><div class="sc-label">工作层</div><div class="sc-value blue">7</div><div class="sc-delta up">↑ 6/7 在线</div></div>
+      <div class="stat-card green"><div class="sc-label">监控层</div><div class="sc-value up">3</div><div class="sc-delta up">↑ 全部在线</div></div>
+    </div>
+    <div class="section-header"><div class="section-title">编排层节点</div><div class="section-line"></div></div>
+    <div class="agent-grid" id="agent-grid-orch"></div>
+    <div class="section-header"><div class="section-title">工作层节点</div><div class="section-line"></div></div>
+    <div class="agent-grid" id="agent-grid-worker"></div>
+    <div class="section-header"><div class="section-title">监控层节点</div><div class="section-line"></div></div>
+    <div class="agent-grid" id="agent-grid-monitor"></div>
+  </div>
+</div>
+
+<!-- ═══ TASKS PAGE ════════════════════════════════════════════ -->
+<div id="page-tasks" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>任务流水线</span></div>
+      <div class="page-title">任务执行流水线</div>
+      <div class="page-subtitle">实时任务监控 · 状态跟踪 · 执行日志</div>
+    </div>
+    <div class="page-actions">
+      <div class="btn">导出</div>
+      <div class="btn success">批量重试</div>
+      <div class="btn primary">+ 新建任务</div>
+    </div>
+  </div>
+  <div class="page-content">
+    <div class="stat-grid">
+      <div class="stat-card blue"><div class="sc-label">执行中</div><div class="sc-value blue" id="t-running">4</div><div class="sc-delta neutral">实时</div></div>
+      <div class="stat-card green"><div class="sc-label">已完成</div><div class="sc-value up">2</div><div class="sc-delta up">↑ 今日</div></div>
+      <div class="stat-card red"><div class="sc-label">失败</div><div class="sc-value down">1</div><div class="sc-delta down">需处理</div></div>
+      <div class="stat-card amber"><div class="sc-label">等待中</div><div class="sc-value warn">2</div><div class="sc-delta neutral">队列中</div></div>
+    </div>
+    <div class="section-header"><div class="section-title">全部任务</div><div class="section-line"></div><div class="section-action">刷新</div></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>任务 ID</th><th>任务名称</th><th>负责 Agents</th><th>进度</th><th>状态</th><th>优先级</th><th>开始时间</th><th>耗时</th><th>操作</th>
+        </tr></thead>
+        <tbody id="tasks-full-table"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EMPLOYEES PAGE ═══════════════════════════════════════ -->
+<div id="page-employees" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>员工监控</span></div>
+      <div class="page-title">员工 · Agent 绑定监控</div>
+      <div class="page-subtitle">6 名员工 · 实时效能 · AI协作分析</div>
+    </div>
+    <div class="page-actions">
+      <div class="btn">绑定 Agent</div>
+      <div class="btn primary">效能报告</div>
+    </div>
+  </div>
+  <div class="page-content">
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card green"><div class="sc-label">平均效能提升</div><div class="sc-value up">+34%</div><div class="sc-delta up">较引入 AI 前</div></div>
+      <div class="stat-card blue"><div class="sc-label">今日协作任务</div><div class="sc-value blue">247</div><div class="sc-delta up">↑ 人机协作</div></div>
+      <div class="stat-card amber"><div class="sc-label">高负载预警</div><div class="sc-value warn">2</div><div class="sc-delta down">需关注</div></div>
+    </div>
+    <div class="section-header"><div class="section-title">员工绑定状态</div><div class="section-line"></div><div class="section-action">全部详情</div></div>
+    <div class="emp-grid" id="emp-grid"></div>
+  </div>
+</div>
+
+<!-- ═══ MODELS PAGE ═══════════════════════════════════════════ -->
+<div id="page-models" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>模型管理</span></div>
+      <div class="page-title">模型管理中心</div>
+      <div class="page-subtitle">4 个模型后端 · 多模型路由 · 性能对比</div>
+    </div>
+    <div class="page-actions"><div class="btn primary">+ 接入新模型</div></div>
+  </div>
+  <div class="page-content">
+    <div class="section-header"><div class="section-title">模型概览</div><div class="section-line"></div></div>
+    <div class="model-grid" id="model-grid"></div>
+  </div>
+</div>
+
+<!-- ═══ SYNC PAGE ════════════════════════════════════════════ -->
+<div id="page-sync" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>同步中心</span></div>
+      <div class="page-title">客户端 · 服务端同步中心</div>
+      <div class="page-subtitle">8 个客户端在线 · WebSocket · CRDT 状态同步</div>
+    </div>
+    <div class="page-actions"><div class="btn primary">强制同步</div></div>
+  </div>
+  <div class="page-content">
+    <div class="sync-grid">
+      <div class="sync-card"><div class="sync-icon">💻</div><div class="sync-val" style="color:var(--green)">8</div><div class="sync-label">在线客户端</div></div>
+      <div class="sync-card"><div class="sync-icon">⚡</div><div class="sync-val" style="color:var(--cyan)" id="sync-events">1.2k</div><div class="sync-label">事件/秒</div></div>
+      <div class="sync-card"><div class="sync-icon">📡</div><div class="sync-val" style="color:var(--blue)">3</div><div class="sync-label">服务端节点</div></div>
+      <div class="sync-card"><div class="sync-icon">⏱</div><div class="sync-val" style="color:var(--amber)">18ms</div><div class="sync-label">同步延迟</div></div>
+    </div>
+    <div class="section-header"><div class="section-title">客户端连接状态</div><div class="section-line"></div></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>客户端 ID</th><th>类型</th><th>IP 地址</th><th>状态</th><th>延迟</th><th>上次同步</th><th>订阅事件</th></tr></thead>
+        <tbody id="sync-table"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ ALERTS PAGE ══════════════════════════════════════════ -->
+<div id="page-alerts" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>告警中心</span></div>
+      <div class="page-title">告警中心</div>
+      <div class="page-subtitle">3 条活跃告警 · 实时监控</div>
+    </div>
+    <div class="page-actions">
+      <div class="btn danger">全部清除</div>
+      <div class="btn primary">告警规则</div>
+    </div>
+  </div>
+  <div class="page-content">
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card red"><div class="sc-label">高危</div><div class="sc-value down">1</div><div class="sc-delta down">需立即处理</div></div>
+      <div class="stat-card amber"><div class="sc-label">中危</div><div class="sc-value warn">2</div><div class="sc-delta neutral">需关注</div></div>
+      <div class="stat-card green"><div class="sc-label">今日已解决</div><div class="sc-value up">7</div><div class="sc-delta up">↑ 平均解决时间 4.2min</div></div>
+    </div>
+    <div class="section-header"><div class="section-title">活跃告警</div><div class="section-line"></div></div>
+    <div class="alert-list" id="alert-list"></div>
+  </div>
+</div>
+
+<!-- ═══ SETTINGS PAGE ════════════════════════════════════════ -->
+<div id="page-settings" class="page-view">
+  <div class="page-header">
+    <div class="page-header-left">
+      <div class="page-breadcrumb"><span>AgentOS</span><span style="color:var(--text4)">›</span><span>系统设置</span></div>
+      <div class="page-title">系统设置</div>
+      <div class="page-subtitle">平台配置 · 模型路由 · 权限管理</div>
+    </div>
+    <div class="page-actions"><div class="btn primary">保存更改</div></div>
+  </div>
+  <div class="page-content">
+    <div class="settings-grid">
+      <div class="settings-nav">
+        <div class="settings-nav-item active">⚙ 基础配置</div>
+        <div class="settings-nav-item">🔀 模型路由</div>
+        <div class="settings-nav-item">🔐 权限管理</div>
+        <div class="settings-nav-item">📡 同步配置</div>
+        <div class="settings-nav-item">🔔 告警规则</div>
+        <div class="settings-nav-item">📊 监控配置</div>
+        <div class="settings-nav-item">🗄 存储设置</div>
+      </div>
+      <div class="settings-content">
+        <div class="settings-section-title">基础配置</div>
+        <div class="settings-section-desc">配置 AgentOS 平台的基本参数，包括集群名称、并发限制和超时设置。</div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">平台名称</div><input class="form-input" value="AgentOS Production"/></div>
+          <div class="form-group"><div class="form-label">集群 ID</div><input class="form-input" value="cluster-prod-001" style="color:var(--text3)"/></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">最大并发任务</div><input class="form-input" value="256"/></div>
+          <div class="form-group"><div class="form-label">任务超时 (秒)</div><input class="form-input" value="300"/></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">日志级别</div>
+            <select class="form-select"><option>INFO</option><option>DEBUG</option><option>WARN</option><option>ERROR</option></select>
+          </div>
+          <div class="form-group"><div class="form-label">时区</div>
+            <select class="form-select"><option>Asia/Shanghai</option><option>UTC</option><option>America/New_York</option></select>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:12px;font-family:var(--display)">功能开关</div>
+        <div class="toggle-row">
+          <div><div class="toggle-label">自动负载均衡</div><div class="toggle-desc">根据 Agent 负载自动路由任务</div></div>
+          <div class="toggle on"></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-label">故障自动转移</div><div class="toggle-desc">Agent 失败时自动切换到备用节点</div></div>
+          <div class="toggle on"></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-label">实时日志流</div><div class="toggle-desc">向客户端推送实时执行日志</div></div>
+          <div class="toggle on"></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-label">员工效能追踪</div><div class="toggle-desc">记录员工与 Agent 协作数据</div></div>
+          <div class="toggle on"></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-label">实验性功能</div><div class="toggle-desc">开启 Beta 功能（可能不稳定）</div></div>
+          <div class="toggle off"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<!-- ─── Right Panel ─────────────────────────────────────────── -->
+<aside class="rightpanel">
+  <div class="rp-tabs">
+    <div class="rp-tab active" onclick="rpTab(this,'metrics')">指标</div>
+    <div class="rp-tab" onclick="rpTab(this,'logs')">日志</div>
+    <div class="rp-tab" onclick="rpTab(this,'info')">信息</div>
+  </div>
+
+  <!-- Metrics tab -->
+  <div class="rp-body" id="rp-metrics">
+    <div class="rp-section">
+      <div class="rp-label">实时系统指标</div>
+      <div class="metric-row"><div class="metric-label">任务吞吐量</div><div class="metric-val" style="color:var(--green)" id="r-throughput">247/min</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:78%;background:var(--green)"></div></div>
+      <div class="metric-row"><div class="metric-label">平均响应延迟</div><div class="metric-val" style="color:var(--amber)" id="r-lat">142ms</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:42%;background:var(--amber)"></div></div>
+      <div class="metric-row"><div class="metric-label">Agent 利用率</div><div class="metric-val" style="color:var(--blue)" id="r-util">91.3%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:91%;background:var(--blue)"></div></div>
+      <div class="metric-row"><div class="metric-label">任务成功率</div><div class="metric-val" style="color:var(--green)" id="r-succ">98.7%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:98%;background:var(--green)"></div></div>
+      <div class="metric-row"><div class="metric-label">CPU 使用率</div><div class="metric-val" style="color:var(--text2)" id="r-cpu">63%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:63%;background:var(--text3)"></div></div>
+      <div class="metric-row"><div class="metric-label">内存使用</div><div class="metric-val" style="color:var(--text2)">12.4 GB</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:55%;background:var(--text3)"></div></div>
+    </div>
+    <div class="rp-section">
+      <div class="rp-label">同步状态</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div style="background:var(--bg3);border-radius:var(--r);padding:8px;text-align:center;border:1px solid var(--border)">
+          <div style="font-family:var(--display);font-size:18px;font-weight:700;color:var(--green)">8</div>
+          <div style="font-size:9px;color:var(--text4);margin-top:2px">客户端</div>
+        </div>
+        <div style="background:var(--bg3);border-radius:var(--r);padding:8px;text-align:center;border:1px solid var(--border)">
+          <div style="font-family:var(--display);font-size:18px;font-weight:700;color:var(--cyan)" id="r-events">1.2k</div>
+          <div style="font-size:9px;color:var(--text4);margin-top:2px">事件/s</div>
+        </div>
+      </div>
+    </div>
+    <div class="rp-section">
+      <div class="rp-label">模型调用分布</div>
+      <div class="metric-row"><div class="metric-label" style="display:flex;align-items:center;gap:5px"><span style="color:#00a67e">●</span> Claude Opus</div><div class="metric-val">38%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:38%;background:#00a67e"></div></div>
+      <div class="metric-row"><div class="metric-label" style="display:flex;align-items:center;gap:5px"><span style="color:#3b82f6">●</span> Claude Sonnet</div><div class="metric-val">42%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:42%;background:#3b82f6"></div></div>
+      <div class="metric-row"><div class="metric-label" style="display:flex;align-items:center;gap:5px"><span style="color:#7c3aed">●</span> GPT-4o</div><div class="metric-val">12%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:12%;background:#7c3aed"></div></div>
+      <div class="metric-row"><div class="metric-label" style="display:flex;align-items:center;gap:5px"><span style="color:#ea4335">●</span> Gemini</div><div class="metric-val">8%</div></div>
+      <div class="mini-bar"><div class="mini-bar-fill" style="width:8%;background:#ea4335"></div></div>
+    </div>
+  </div>
+
+  <!-- Logs tab -->
+  <div class="rp-body" id="rp-logs" style="display:none">
+    <div class="log-list" id="log-list"></div>
+  </div>
+
+  <!-- Info tab -->
+  <div class="rp-body" id="rp-info" style="display:none">
+    <div class="rp-section">
+      <div class="rp-label">系统信息</div>
+      <div class="metric-row"><div class="metric-label">版本</div><div class="metric-val" style="color:var(--text3)">v2.4.1</div></div>
+      <div class="metric-row"><div class="metric-label">集群 ID</div><div class="metric-val" style="color:var(--text3);font-size:9px">prod-001</div></div>
+      <div class="metric-row"><div class="metric-label">运行时长</div><div class="metric-val" style="color:var(--green)" id="uptime">14d 6h</div></div>
+      <div class="metric-row"><div class="metric-label">API 版本</div><div class="metric-val" style="color:var(--text3)">REST v3</div></div>
+    </div>
+    <div class="rp-section">
+      <div class="rp-label">快捷操作</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="btn" style="text-align:center;font-size:10px">📋 导出系统日志</div>
+        <div class="btn" style="text-align:center;font-size:10px">🔄 重启所有 Agents</div>
+        <div class="btn" style="text-align:center;font-size:10px">📊 生成健康报告</div>
+        <div class="btn primary" style="text-align:center;font-size:10px">⚡ 一键扩容</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+</div><!-- body -->
+</div><!-- shell -->
+
+<script>
+// ─── Data ──────────────────────────────────────────────────
+const agentsData = [
+  {id:'orch-1',name:'Master Orchestrator',role:'主编排器',type:'orch',model:'Claude Opus 4',modelColor:'#00a67e',status:'active',tasks:47,lat:24,load:72,icon:'🧠',color:'#a855f7',bg:'rgba(168,85,247,.08)',border:'rgba(168,85,247,.25)',skills:['任务分解','优先级路由','负载均衡']},
+  {id:'orch-2',name:'Sub Orchestrator',role:'子编排器',type:'orch',model:'Claude Opus 4',modelColor:'#00a67e',status:'active',tasks:31,lat:28,load:55,icon:'🔀',color:'#7c3aed',bg:'rgba(124,58,237,.08)',border:'rgba(124,58,237,.25)',skills:['故障转移','队列管理','任务派发']},
+  {id:'w-code',name:'Code Agent',role:'代码生成',type:'worker',model:'Claude Sonnet 4',modelColor:'#3b82f6',status:'active',tasks:62,lat:18,load:87,icon:'💻',color:'#3b82f6',bg:'rgba(59,130,246,.08)',border:'rgba(59,130,246,.25)',skills:['Python','TypeScript','测试生成']},
+  {id:'w-data',name:'Data Agent',role:'数据分析',type:'worker',model:'Claude Sonnet 4',modelColor:'#3b82f6',status:'active',tasks:44,lat:31,load:91,icon:'📊',color:'#06b6d4',bg:'rgba(6,182,212,.08)',border:'rgba(6,182,212,.25)',skills:['SQL','数据清洗','可视化']},
+  {id:'w-nlp',name:'NLP Agent',role:'语义理解',type:'worker',model:'GPT-4o',modelColor:'#7c3aed',status:'active',tasks:38,lat:22,load:76,icon:'🗣️',color:'#10b981',bg:'rgba(16,185,129,.08)',border:'rgba(16,185,129,.25)',skills:['文本分类','情感分析','摘要提取']},
+  {id:'w-search',name:'Search Agent',role:'知识检索',type:'worker',model:'Gemini Ultra',modelColor:'#ea4335',status:'busy',tasks:55,lat:44,load:94,icon:'🔍',color:'#f59e0b',bg:'rgba(245,158,11,.08)',border:'rgba(245,158,11,.25)',skills:['向量检索','RAG','知识图谱']},
+  {id:'w-vision',name:'Vision Agent',role:'图像理解',type:'worker',model:'GPT-4o',modelColor:'#7c3aed',status:'busy',tasks:19,lat:67,load:58,icon:'👁️',color:'#ec4899',bg:'rgba(236,72,153,.08)',border:'rgba(236,72,153,.25)',skills:['OCR','目标检测','图像描述']},
+  {id:'w-plan',name:'Plan Agent',role:'规划推理',type:'worker',model:'Claude Opus 4',modelColor:'#00a67e',status:'active',tasks:29,lat:35,load:65,icon:'🗺️',color:'#f97316',bg:'rgba(249,115,22,.08)',border:'rgba(249,115,22,.25)',skills:['思维链','多步推理','目标分解']},
+  {id:'w-exec',name:'Exec Agent',role:'工具执行',type:'worker',model:'Claude Sonnet 4',modelColor:'#3b82f6',status:'active',tasks:71,lat:12,load:83,icon:'⚡',color:'#64748b',bg:'rgba(100,116,139,.08)',border:'rgba(100,116,139,.25)',skills:['API调用','代码执行','文件操作']},
+  {id:'m-health',name:'Health Monitor',role:'健康检测',type:'monitor',model:'Claude Sonnet 4',modelColor:'#3b82f6',status:'active',tasks:200,lat:8,load:45,icon:'❤️',color:'#22c55e',bg:'rgba(34,197,94,.08)',border:'rgba(34,197,94,.25)',skills:['心跳检测','资源监控','异常告警']},
+  {id:'m-perf',name:'Perf Monitor',role:'性能监控',type:'monitor',model:'Gemini Ultra',modelColor:'#ea4335',status:'active',tasks:180,lat:9,load:52,icon:'📈',color:'#a3e635',bg:'rgba(163,230,53,.08)',border:'rgba(163,230,53,.25)',skills:['延迟追踪','吞吐分析','趋势预测']},
+  {id:'m-sync',name:'Sync Agent',role:'状态同步',type:'monitor',model:'Claude Sonnet 4',modelColor:'#3b82f6',status:'active',tasks:320,lat:5,load:61,icon:'⇄',color:'#22d3ee',bg:'rgba(34,211,238,.08)',border:'rgba(34,211,238,.25)',skills:['WebSocket','事件溯源','CRDT']},
+];
+
+const tasksData = [
+  {id:'T-1024',name:'用户画像多模型分析',agents:['w-data','w-nlp','w-plan'],progress:73,status:'running',priority:'high',start:'14:22',elapsed:'8.4m'},
+  {id:'T-1023',name:'代码重构 + 测试生成',agents:['w-code','w-exec'],progress:91,status:'running',priority:'normal',start:'14:18',elapsed:'12.6m'},
+  {id:'T-1022',name:'报告自动化生成',agents:['w-data','w-nlp','w-code'],progress:100,status:'done',priority:'normal',start:'14:10',elapsed:'18.3m'},
+  {id:'T-1021',name:'图像批量识别与标注',agents:['w-vision','w-nlp'],progress:45,status:'running',priority:'high',start:'14:25',elapsed:'5.2m'},
+  {id:'T-1020',name:'知识库向量索引更新',agents:['w-search','m-sync'],progress:0,status:'waiting',priority:'low',start:'--',elapsed:'--'},
+  {id:'T-1019',name:'API 性能压测分析',agents:['m-perf','w-exec'],progress:38,status:'failed',priority:'high',start:'14:05',elapsed:'25.1m'},
+  {id:'T-1018',name:'多语言内容翻译',agents:['w-nlp','w-exec'],progress:100,status:'done',priority:'normal',start:'13:58',elapsed:'31.2m'},
+  {id:'T-1017',name:'智能客服意图识别',agents:['w-nlp','w-plan'],progress:0,status:'waiting',priority:'normal',start:'--',elapsed:'--'},
+];
+
+const empData = [
+  {name:'张晓明',initials:'张',role:'AI 产品经理',agent:'orch-1',color:'#8b5cf6',eff:94,load:82,tasks:28,trend:[60,72,80,85,88,92,94]},
+  {name:'李雯雯',initials:'李',role:'数据科学家',agent:'w-data',color:'#06b6d4',eff:88,load:91,tasks:44,trend:[70,75,82,79,85,88,88]},
+  {name:'王建国',initials:'王',role:'后端工程师',agent:'w-code',color:'#3b82f6',eff:96,load:87,tasks:62,trend:[80,85,90,88,92,95,96]},
+  {name:'陈静',initials:'陈',role:'NLP 研究员',agent:'w-nlp',color:'#10b981',eff:91,load:76,tasks:38,trend:[65,70,75,82,85,88,91]},
+  {name:'赵磊',initials:'赵',role:'运维工程师',agent:'m-health',color:'#22c55e',eff:99,load:65,tasks:200,trend:[90,92,95,96,98,99,99]},
+  {name:'孙华',initials:'孙',role:'搜索工程师',agent:'w-search',color:'#f59e0b',eff:85,load:93,tasks:55,trend:[72,76,80,82,83,84,85]},
+];
+
+const modelsData = [
+  {name:'Claude Opus 4',version:'claude-opus-4',vendor:'Anthropic',logo:'A',color:'#00a67e',agents:3,tasks:247,avgLat:89,cost:0.024,quality:98,speed:72,context:200,tags:['最高质量','复杂推理','长上下文','指令遵循']},
+  {name:'Claude Sonnet 4',version:'claude-sonnet-4',vendor:'Anthropic',logo:'A',color:'#3b82f6',agents:5,tasks:581,avgLat:44,cost:0.008,quality:94,speed:91,context:200,tags:['均衡性能','高吞吐','高性价比']},
+  {name:'GPT-4o',version:'gpt-4o',vendor:'OpenAI',logo:'O',color:'#7c3aed',agents:2,tasks:142,avgLat:62,cost:0.015,quality:95,speed:82,context:128,tags:['多模态','视觉理解','代码生成']},
+  {name:'Gemini Ultra',version:'gemini-ultra',vendor:'Google',logo:'G',color:'#ea4335',agents:2,tasks:98,avgLat:78,cost:0.020,quality:93,speed:76,context:1000,tags:['超长上下文','多模态','实时搜索']},
+];
+
+const syncClients = [
+  {id:'client-web-001',type:'Web App',ip:'192.168.1.42',status:'connected',lat:12,sync:'1s ago',events:'全部'},
+  {id:'client-mob-002',type:'Mobile',ip:'10.0.1.88',status:'connected',lat:24,sync:'2s ago',events:'任务+日志'},
+  {id:'client-api-003',type:'API Client',ip:'203.88.12.5',status:'connected',lat:8,sync:'<1s ago',events:'全部'},
+  {id:'client-desk-004',type:'Desktop',ip:'192.168.1.55',status:'connected',lat:18,sync:'3s ago',events:'全部'},
+  {id:'client-iot-005',type:'IoT Device',ip:'10.0.2.14',status:'reconnecting',lat:145,sync:'8s ago',events:'指标'},
+  {id:'client-bi-006',type:'BI Dashboard',ip:'192.168.2.30',status:'connected',lat:31,sync:'5s ago',events:'指标+告警'},
+  {id:'client-ci-007',type:'CI/CD Pipeline',ip:'172.16.0.8',status:'connected',lat:6,sync:'<1s ago',events:'任务'},
+  {id:'client-mob-008',type:'Mobile',ip:'10.0.1.99',status:'connected',lat:19,sync:'2s ago',events:'任务+告警'},
+];
+
+const alertsData = [
+  {level:'high',icon:'🔴',title:'任务 T-1019 执行超时',desc:'API 性能压测分析任务已超过最大执行时长 30 分钟，进程已终止。建议检查 m-perf Agent 健康状态。',time:'3分钟前'},
+  {level:'medium',icon:'🟡',title:'w-search Agent 延迟升高',desc:'知识检索 Agent 响应延迟从基准 22ms 升高至 89ms，超过警戒阈值 (50ms)。可能由 Gemini API 限速导致。',time:'7分钟前'},
+  {level:'medium',icon:'🟡',title:'client-iot-005 连接不稳定',desc:'IoT 设备客户端在过去 10 分钟内发生了 3 次断线重连，当前延迟 145ms，超出正常范围。',time:'12分钟前'},
+];
+
+const logMessages = [
+  {type:'info',text:'orch-1 → 接收任务 T-1024，分配至 w-data, w-nlp, w-plan'},
+  {type:'success',text:'T-1022 已完成，耗时 18.3s，质量评分 0.94'},
+  {type:'info',text:'m-sync → 广播状态更新至 8 个客户端'},
+  {type:'warn',text:'w-search 延迟升高: 22ms → 89ms，触发阈值告警'},
+  {type:'info',text:'orch-2 → 负载均衡触发，重新分配 3 个任务'},
+  {type:'success',text:'w-code 生成代码，通过 47/47 单元测试'},
+  {type:'error',text:'T-1019 执行超时 (30min)，任务终止'},
+  {type:'info',text:'m-health → 全部 12 节点心跳正常'},
+  {type:'success',text:'集群弹性扩容触发：+2 worker agents 上线'},
+  {type:'warn',text:'GPT-4o API 速率限制，自动切换备用配额池'},
+  {type:'info',text:'向量索引同步完成，共更新 1.2M 文档'},
+  {type:'success',text:'w-nlp 情感分析批处理完成 (2840 条记录)'},
+  {type:'info',text:'m-perf → 任务吞吐量峰值 312/min，性能正常'},
+  {type:'success',text:'客户端 client-ci-007 订阅任务事件成功'},
+];
+
+// ─── Render Functions ──────────────────────────────────────
+function renderTaskRow(t, showActions=false) {
+  const a = t.agents.map(aid=>{
+    const ag = agentsData.find(x=>x.id===aid);
+    return ag ? `<span class="mini-chip" style="background:${ag.bg};border-color:${ag.border};color:${ag.color}">${ag.icon} ${ag.name}</span>` : '';
+  }).join('');
+  const barColor = {running:'#3b82f6',done:'#00e5a0',failed:'#ff4466',waiting:'#4a637d'}[t.status];
+  const priorityColor = {high:'#ff4466',normal:'#4a637d',low:'#2d4060'}[t.priority];
+  const actionsHtml = showActions ? `<td><div style="display:flex;gap:4px"><div class="btn" style="padding:4px 8px;font-size:9px">详情</div>${t.status==='failed'?'<div class="btn danger" style="padding:4px 8px;font-size:9px">重试</div>':''}</div></td>` : '';
+  return `<tr>
+    <td><span class="td-id">${t.id}</span></td>
+    <td><span class="td-name">${t.name}</span></td>
+    <td><div class="td-agents">${a}</div></td>
+    <td><div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:${t.progress}%;background:${barColor}"></div></div><span class="progress-num">${t.progress}%</span></div></td>
+    <td><span class="badge ${t.status}">${t.status}</span></td>
+    <td><span class="priority-dot" style="background:${priorityColor}"></span> <span style="font-size:10px;color:${priorityColor}">${t.priority}</span></td>
+    <td style="color:var(--text3);font-size:10px">${t.start}</td>
+    ${showActions ? `<td style="color:var(--text3);font-size:10px">${t.elapsed}</td>` : `<td style="color:var(--text3);font-size:10px">${t.elapsed}</td>`}
+    ${actionsHtml}
+  </tr>`;
+}
+
+function renderAgentCard(a) {
+  const statusPill = `<span class="status-pill ${a.status}">${a.status==='active'?'<span class="status-pill-dot"></span>':''}${a.status}</span>`;
+  const loadColor = a.load > 85 ? '#ff4466' : a.load > 70 ? '#ffb800' : '#00e5a0';
+  return `<div class="agent-card" onclick="this.classList.toggle('selected')">
+    <div class="agent-card-top">
+      <div class="agent-icon" style="background:${a.bg}">${a.icon}</div>
+      <div>
+        <div class="agent-name">${a.name}</div>
+        <div class="agent-role">${a.role}</div>
+        <div class="agent-model-tag" style="color:${a.modelColor};border-color:${a.modelColor}40;background:${a.modelColor}10">${a.model}</div>
+      </div>
+    </div>
+    <div class="agent-metrics">
+      <div class="am-item"><div class="am-val" style="color:${a.color}">${a.tasks}</div><div class="am-key">任务数</div></div>
+      <div class="am-item"><div class="am-val" style="color:${a.lat>50?'#ffb800':'#00e5a0'}">${a.lat}ms</div><div class="am-key">延迟</div></div>
+      <div class="am-item"><div class="am-val" style="color:${loadColor}">${a.load}%</div><div class="am-key">负载</div></div>
+    </div>
+    <div class="agent-status-row">
+      ${statusPill}
+      <div class="agent-load-bar"><div class="agent-load-fill" style="width:${a.load}%;background:${loadColor}"></div></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:8px">${a.skills.map(s=>`<span style="font-size:8px;padding:2px 5px;border-radius:3px;background:var(--bg4);color:var(--text3);border:1px solid var(--border)">${s}</span>`).join('')}</div>
+  </div>`;
+}
+
+function renderEmpCard(e) {
+  const ag = agentsData.find(x=>x.id===e.agent);
+  const effColor = e.eff > 93 ? '#00e5a0' : e.eff > 82 ? '#22d3ee' : '#ffb800';
+  const loadColor = e.load > 90 ? '#ffb800' : '#4a637d';
+  const bars = e.trend.map((v,i)=>`<div class="spark-bar" style="height:${v/5.5}px;background:${e.color};opacity:${.3+i*.1}"></div>`).join('');
+  return `<div class="emp-card">
+    <div class="emp-header">
+      <div class="emp-avatar" style="background:linear-gradient(135deg,${e.color},${e.color}88)">${e.initials}</div>
+      <div><div class="emp-fullname">${e.name}</div><div class="emp-title">${e.role}</div></div>
+    </div>
+    <div class="emp-agent-bind">${ag?ag.icon:'?'} 绑定: ${ag?ag.name:'未绑定'}</div>
+    <div class="emp-stats-row">
+      <div class="emp-stat"><div class="emp-stat-val" style="color:${effColor}">${e.eff}%</div><div class="emp-stat-label">工作效率</div></div>
+      <div class="emp-stat"><div class="emp-stat-val" style="color:${loadColor}">${e.load}%</div><div class="emp-stat-label">负载率</div></div>
+      <div class="emp-stat"><div class="emp-stat-val" style="color:var(--blue)">${e.tasks}</div><div class="emp-stat-label">完成任务</div></div>
+      <div class="emp-stat"><div class="emp-stat-val" style="color:var(--green)">+${Math.round((e.eff-70)*0.9)}%</div><div class="emp-stat-label">AI 增益</div></div>
+    </div>
+    <div class="emp-online-bar"><div class="emp-online-fill" style="width:${e.eff}%;background:${e.color}"></div></div>
+    <div class="spark-row" style="margin-top:8px">${bars}</div>
+  </div>`;
+}
+
+function renderModelCard(m) {
+  const agents = agentsData.filter(a=>a.model.includes(m.name.split(' ')[0]));
+  return `<div class="model-card">
+    <div class="model-header">
+      <div class="model-logo" style="background:${m.color}15;border:1px solid ${m.color}30;color:${m.color};font-size:14px">${m.logo}</div>
+      <div>
+        <div class="model-name">${m.name}</div>
+        <div class="model-version" style="color:var(--text4);font-family:var(--mono)">${m.version}</div>
+        <div style="font-size:9px;color:var(--text4);margin-top:2px">${m.vendor}</div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div style="font-size:9px;color:var(--text4)">Agent 数</div>
+        <div style="font-size:16px;font-weight:700;font-family:var(--display);color:${m.color}">${m.agents}</div>
+      </div>
+    </div>
+    <div class="model-stats">
+      <div class="ms-item"><div class="ms-val" style="color:var(--green)">${m.quality}%</div><div class="ms-key">质量分</div></div>
+      <div class="ms-item"><div class="ms-val" style="color:var(--blue)">${m.speed}%</div><div class="ms-key">速度分</div></div>
+      <div class="ms-item"><div class="ms-val" style="color:var(--amber)">$${m.cost}</div><div class="ms-key">$/1k tok</div></div>
+    </div>
+    <div class="model-bar-row">
+      <div class="mbr-label"><span>响应延迟</span><span style="color:var(--amber)">${m.avgLat}ms</span></div>
+      <div class="model-usage-bar"><div class="model-usage-fill" style="width:${Math.min(100,m.avgLat/1.5)}%;background:${m.avgLat<60?'#00e5a0':m.avgLat<100?'#ffb800':'#ff4466'}"></div></div>
+    </div>
+    <div class="model-bar-row">
+      <div class="mbr-label"><span>上下文窗口</span><span>${m.context}k</span></div>
+      <div class="model-usage-bar"><div class="model-usage-fill" style="width:${Math.min(100,m.context/10)}%;background:var(--blue)"></div></div>
+    </div>
+    <div class="model-bar-row">
+      <div class="mbr-label"><span>今日调用量</span><span style="color:var(--green)">${m.tasks}</span></div>
+      <div class="model-usage-bar"><div class="model-usage-fill" style="width:${Math.min(100,m.tasks/8)}%;background:${m.color}"></div></div>
+    </div>
+    <div class="model-tags">${m.tags.map(t=>`<span class="model-tag">${t}</span>`).join('')}</div>
+  </div>`;
+}
+
+function renderSyncTable() {
+  return syncClients.map(c => {
+    const statusStyle = c.status==='connected' ? 'color:var(--green)' : 'color:var(--amber)';
+    const latColor = c.lat > 100 ? 'var(--red)' : c.lat > 40 ? 'var(--amber)' : 'var(--green)';
+    return `<tr>
+      <td class="td-id">${c.id}</td>
+      <td style="font-size:10px;color:var(--text2)">${c.type}</td>
+      <td style="font-size:10px;color:var(--text3);font-family:var(--mono)">${c.ip}</td>
+      <td><span class="badge ${c.status==='connected'?'done':'paused'}">${c.status}</span></td>
+      <td style="font-size:11px;color:${latColor}">${c.lat}ms</td>
+      <td style="font-size:10px;color:var(--text3)">${c.sync}</td>
+      <td style="font-size:10px;color:var(--text2)">${c.events}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Init Render ───────────────────────────────────────────
+function initAll() {
+  // Task table
+  const tb = document.getElementById('task-table-body');
+  if(tb) tb.innerHTML = tasksData.slice(0,5).map(t=>renderTaskRow(t)).join('');
+  const tft = document.getElementById('tasks-full-table');
+  if(tft) tft.innerHTML = tasksData.map(t=>renderTaskRow(t,true)).join('');
+
+  // Agent grids
+  const go = document.getElementById('agent-grid-orch');
+  if(go) go.innerHTML = agentsData.filter(a=>a.type==='orch').map(renderAgentCard).join('');
+  const gw = document.getElementById('agent-grid-worker');
+  if(gw) gw.innerHTML = agentsData.filter(a=>a.type==='worker').map(renderAgentCard).join('');
+  const gm = document.getElementById('agent-grid-monitor');
+  if(gm) gm.innerHTML = agentsData.filter(a=>a.type==='monitor').map(renderAgentCard).join('');
+
+  // Employee grid
+  const eg = document.getElementById('emp-grid');
+  if(eg) eg.innerHTML = empData.map(renderEmpCard).join('');
+
+  // Model grid
+  const mg = document.getElementById('model-grid');
+  if(mg) mg.innerHTML = modelsData.map(renderModelCard).join('');
+
+  // Sync table
+  const st = document.getElementById('sync-table');
+  if(st) st.innerHTML = renderSyncTable();
+
+  // Alerts
+  const al = document.getElementById('alert-list');
+  if(al) al.innerHTML = alertsData.map(a=>`
+    <div class="alert-item ${a.level}">
+      <div class="alert-icon">${a.icon}</div>
+      <div style="flex:1">
+        <div class="alert-title">${a.title}</div>
+        <div class="alert-desc">${a.desc}</div>
+      </div>
+      <div class="alert-time">${a.time}</div>
+    </div>`).join('');
+}
+
+// ─── Navigation ────────────────────────────────────────────
+function showPage(id, navEl) {
+  document.querySelectorAll('.page-view').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  document.querySelectorAll('.nav-link').forEach(l=>l.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(l=>l.classList.remove('active'));
+  if(navEl) navEl.classList.add('active');
+  const pageTitles = {dashboard:'控制台',agents:'Agent 集群',tasks:'任务流水线',employees:'员工监控',models:'模型管理',sync:'同步中心',alerts:'告警中心',settings:'系统设置'};
+}
+
+function rpTab(el, tab) {
+  document.querySelectorAll('.rp-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('rp-metrics').style.display = tab==='metrics'?'block':'none';
+  document.getElementById('rp-logs').style.display = tab==='logs'?'block':'none';
+  document.getElementById('rp-info').style.display = tab==='info'?'block':'none';
+}
+
+// ─── Clock ─────────────────────────────────────────────────
+function updateClock(){
+  const n=new Date();
+  const t=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+  const el=document.getElementById('clock');
+  if(el) el.textContent=t;
+}
+
+// ─── Live Metrics ──────────────────────────────────────────
+let logIdx = 0;
+function updateMetrics(){
+  const tp = Math.round(220+Math.random()*60);
+  const lat = Math.round(110+Math.random()*70);
+  const util = (87+Math.random()*8).toFixed(1);
+  const succ = (97.5+Math.random()*2).toFixed(1);
+  const cpu = Math.round(55+Math.random()*30);
+  const evts = (0.8+Math.random()*0.8).toFixed(1);
+  const s = (id,val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+  s('s-tasks', tp+'/min'); s('s-lat', lat+'ms'); s('s-success', succ+'%');
+  s('r-throughput', tp+'/min'); s('r-lat', lat+'ms'); s('r-util', util+'%');
+  s('r-succ', succ+'%'); s('r-cpu', cpu+'%'); s('r-events', evts+'k');
+  s('sync-events', evts+'k');
+}
+
+function addLog(){
+  const ll=document.getElementById('log-list');
+  if(!ll) return;
+  const n=new Date();
+  const t=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+  const msg=logMessages[logIdx%logMessages.length];
+  logIdx++;
+  const item=document.createElement('div');
+  item.className=`log-item ${msg.type}`;
+  item.innerHTML=`<span class="log-time">${t}</span><span class="log-text">${msg.text}</span>`;
+  ll.insertBefore(item,ll.firstChild);
+  if(ll.children.length>30) ll.removeChild(ll.lastChild);
+}
+
+// ─── Toggle interaction ────────────────────────────────────
+document.addEventListener('click', e=>{
+  if(e.target.classList.contains('toggle')) {
+    e.target.classList.toggle('on');
+    e.target.classList.toggle('off');
+  }
+  if(e.target.classList.contains('settings-nav-item')){
+    document.querySelectorAll('.settings-nav-item').forEach(i=>i.classList.remove('active'));
+    e.target.classList.add('active');
+  }
+});
+
+// ─── Boot ──────────────────────────────────────────────────
+initAll();
+setInterval(updateClock, 1000);
+setInterval(updateMetrics, 2800);
+setInterval(addLog, 2200);
+updateClock();
+updateMetrics();
+for(let i=0;i<12;i++) setTimeout(addLog, i*150);
+</script>
+</body>
+</html>

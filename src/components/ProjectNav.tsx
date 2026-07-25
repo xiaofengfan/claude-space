@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ProjectInfo } from '../types/project'
 import type { IdeConfig } from '../types/settings'
-import { TemplateManagerDialog } from './TemplateManagerDialog'
+import { UnifiedTemplateManagerDialog } from './UnifiedTemplateManagerDialog'
 
 export function ProjectNav({
   project, leftView, onLeftViewChange, onGitClick, onConnectionClick, onSshClick, onConsoleClick, onWorkspaceChange, theme, onOpenSettings,
@@ -148,13 +148,17 @@ export function ProjectNav({
           )}
         </div>
 
-        <button className="nav-action-btn" disabled title="即将推出">▶ 运行</button>
+        <button
+          className="nav-action-btn"
+          title="打开 AI 编排工坊"
+          onClick={() => { if (onLeftViewChange) onLeftViewChange('orchestrator'); }}
+        >▶ 运行</button>
         <button className="nav-action-btn" disabled title="即将推出">🐛 调试</button>
       </div>
       {wsDropdownOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setWsDropdownOpen(false)} />}
       {ideDropdownOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setIdeDropdownOpen(false)} />}
       {showTemplateManager && (
-        <TemplateManagerDialog theme={theme} activeProjectPath={project?.path} onClose={() => setShowTemplateManager(false)} />
+        <UnifiedTemplateManagerDialog theme={theme} activeProjectPath={project?.path} onClose={() => setShowTemplateManager(false)} onOrchestrationCreated={() => { if (onLeftViewChange) onLeftViewChange('orchestrator'); }} />
       )}
     </div>
   )

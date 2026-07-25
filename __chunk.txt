@@ -1,0 +1,1931 @@
+}
+
+/** 初始化 claude settings.json 文件监视 */
+let _claudeSettingsWatcher: fs.FSWatcher | null = null
+function initClaudeSettingsWatcher() {
+  const CLAUDE_SETTINGS_PATH_2 = path.join(os.homedir(), '.claude', 'settings.json')
+  try {
+    if (!fs.existsSync(CLAUDE_SETTINGS_PATH_2)) { console.log('[claude-env] settings.json 不存在，跳过文件监视'); return }
+    _claudeSettingsWatcher = fs.watch(CLAUDE_SETTINGS_PATH_2, (eventType) => {
+      if (eventType === 'change') {
+        setTimeout(() => {
+          const config = getClaudeEnvConfig()
+          let mtime = ''
+          try { mtime = fs.statSync(CLAUDE_SETTINGS_PATH_2).mtime.toISOString() } catch {}
+          // 后台自动同步：补充缺失的 claude 模型 + 迁移 activeModelId
+          try {
+            const raw = loadSettings()
+            if (raw) {
+              const existingIds = new Set(raw.models.map(m => m.id))
+              let changed = false
+              for (const m of config.models) {
+                const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+                if (!existingIds.has(sid)) {
+                  raw.models.push({ id: sid, name: m.name || m.model, provider: 'Custom', apiKey: '', baseUrl: '', model: m.model, apiKeySource: 'env' })
+                  existingIds.add(sid)
+                  changed = true
+                }
+              }
+              // 迁移后通知前端刷新
+              let migrated = false
+              if (changed) { saveSettings(raw); migrated = true }
+              if (migrateActiveModel(raw, config)) migrated = true
+              if (migrated) {
+                // 通知前端重新加载 settings
+                const freshSettings = loadSettings()
+                for (const w of windows) {
+                  try { if (!w.isDestroyed()) w.webContents.send('settings:migrated', freshSettings ? { activeModelId: freshSettings.activeModelId } : null) } catch {}
+                }
+              }
+            }
+          } catch (_e) { /* 非关键，不影响前端通知 */ }
+          for (const w of windows) {
+            try { if (!w.isDestroyed()) w.webContents.send('claude-env:changed', { ...config, mtime }) } catch {}
+          }
+        }, 500)
+      }
+    })
+  } catch (err) {
+    console.warn('[claude-env] 文件监视启动失败:', err)
+  }
+}
+
+  // 文件操作
+  ipcMain.handle('file:read', async (_event, filePath: string) => {
+    try {
+      const buf = fs.readFileSync(filePath)
+      const sample = buf.length > 0 ? buf.slice(0, Math.min(buf.length, 8192)) : Buffer.alloc(0)
+      const isBinary = sample.includes(0x00) || isBinaryExtension(filePath)
+      let content = ''
+      if (!isBinary) {
+        try { content = buf.toString('utf-8') } catch { content = '' }
+      }
+      return { success: true, content, size: buf.length, isBinary }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:write', async (_event, opts: { filePath: string; content: string }) => {
+    try {
+      fs.writeFileSync(opts.filePath, opts.content, 'utf-8')
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 图片临时存储 ──────────────────────────────────────
+  ipcMain.handle('image:save-temp', async (_event, opts: {
+    projectPath: string; images: Array<{ base64: string; mediaType: string }>
+  }) => {
+    const saved: string[] = []
+    try {
+      const tempDir = path.join(opts.projectPath, '.claude-temp-images')
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+      for (const img of opts.images) {
+        const ext = img.mediaType === 'image/png' ? '.png' : img.mediaType === 'image/jpeg' ? '.jpg' : img.mediaType === 'image/gif' ? '.gif' : img.mediaType === 'image/webp' ? '.webp' : '.png'
+        const fileName = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}${ext}`
+        const filePath = path.join(tempDir, fileName)
+        fs.writeFileSync(filePath, Buffer.from(img.base64, 'base64'))
+        saved.push(filePath)
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message, paths: saved }
+    }
+    return { success: true, paths: saved }
+  })
+
+  ipcMain.handle('file:create', async (_event, opts: { dirPath: string; fileName: string; content?: string }) => {
+    try {
+      const filePath = path.join(opts.dirPath, opts.fileName)
+      // ensure the directory exists
+      const dir = path.dirname(filePath)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      fs.writeFileSync(filePath, opts.content || '', 'utf-8')
+      return { success: true, filePath }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:delete', async (_event, filePath: string) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: '文件不存在' }
+      }
+      // Safety: prevent deleting critical system directories
+      const normalized = path.normalize(filePath)
+      const homedir = path.normalize(os.homedir())
+      if (normalized === homedir || normalized === path.normalize(process.cwd())) {
+        return { success: false, error: '不允许删除此路径' }
+      }
+      // Prevent deleting directories (only allow file deletion)
+      const stat = fs.statSync(filePath)
+      if (stat.isDirectory()) {
+        return { success: false, error: '不允许删除目录' }
+      }
+      fs.unlinkSync(filePath)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('file:open-in-new-window', async (_event, opts: {
+    filePath: string; fileName: string; projectPath?: string
+  }) => {
+    createFileViewerWindow(opts.filePath, opts.fileName, opts.projectPath)
+    return { success: true }
+  })
+
+  ipcMain.handle('file:open-dialog', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: '所有文件', extensions: ['*'] }],
+    })
+    if (result.canceled) return { canceled: true }
+    return { canceled: false, filePath: result.filePaths[0] }
+  })
+
+  ipcMain.handle('dialog:open-directory', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+    })
+    if (result.canceled) return { canceled: true }
+    return { canceled: false, dirPath: result.filePaths[0] }
+  })
+
+  // 会话管理
+  ipcMain.handle('session:list', async (_event, projectPath?: string) => {
+    return listSessions(projectPath)
+  })
+
+  ipcMain.handle('session:list-all', async () => {
+    return listSessions()
+  })
+
+  ipcMain.handle('session:recent', async (_event, projectPath: string) => {
+    const sessions = listSessions(projectPath)
+    if (sessions.length === 0) return null
+    // 取最近一条会话
+    const recent = sessions[0]
+    try {
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const jsonlFile = path.join(CLAUDE_HOME, 'projects', encodedPath, `${recent.sessionId}.jsonl`)
+      if (fs.existsSync(jsonlFile)) {
+        const events = readJsonlSafe(jsonlFile)
+        const msgs: any[] = []
+        for (const ev of events) {
+          if (ev.type === 'user' || (ev.type === 'assistant' && ev.message?.content)) {
+            msgs.push(ev)
+          }
+        }
+        return {
+          sessionId: recent.sessionId,
+          modifiedAt: recent.modifiedAt,
+          messages: msgs.slice(-10), // 最近10条
+        }
+      }
+    } catch (_e) { /* silent */ }
+    return null
+  })
+
+  ipcMain.handle('session:transcript', async (_event, sessionId: string) => {
+    // 搜索所有项目目录找到对应 session
+    const projectsDir = path.join(CLAUDE_HOME, 'projects')
+    if (!fs.existsSync(projectsDir)) return { events: [] }
+
+    for (const encoded of fs.readdirSync(projectsDir)) {
+      const jsonlFile = path.join(projectsDir, encoded, `${sessionId}.jsonl`)
+      if (fs.existsSync(jsonlFile)) {
+        const events = readJsonlSafe(jsonlFile)
+        return { events }
+      }
+    }
+    return { events: [] }
+  })
+
+  // Extract historical tasks from session JSONL files
+  ipcMain.handle('session:extract-tasks', async (_event, projectPath: string) => {
+    const tasks: any[] = []
+    try {
+      const encodedPath = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+      if (!fs.existsSync(sessionDir)) return tasks
+
+      const jsonlFiles = fs.readdirSync(sessionDir)
+        .filter(f => f.endsWith('.jsonl'))
+        .sort((a, b) => {
+          const statA = fs.statSync(path.join(sessionDir, a))
+          const statB = fs.statSync(path.join(sessionDir, b))
+          return statB.mtime.getTime() - statA.mtime.getTime()
+        })
+
+      const seenIds = new Set<string>()
+      for (const file of jsonlFiles.slice(0, 5)) { // Last 5 sessions
+        const events = readJsonlSafe(path.join(sessionDir, file))
+        for (const ev of events) {
+          if (ev.type !== 'assistant' || !ev.message?.content) continue
+            for (const block of ev.message.content) {
+              if (block.type !== 'tool_use') continue
+              const toolId = block.id
+              if (seenIds.has(toolId)) continue
+              seenIds.add(toolId)
+
+              if (block.name === 'TaskCreate') {
+                tasks.push({
+                  title: block.input?.subject || block.input?.title || '历史任务',
+                  description: (block.input?.description || '').slice(0, 200),
+                  status: 'done' as const,
+                  category: 'task' as const,
+                  toolCallId: toolId,
+                  agentType: block.input?.agentType,
+                  createdAt: new Date(ev.uuid ? Date.now() - 86400000 : Date.now()).toISOString(),
+                  updatedAt: new Date().toISOString(),
+                })
+              }
+              if (block.name === 'TaskUpdate') {
+                // Find and update existing task
+                const targetId = block.input?.taskId
+                const existing = tasks.find(t => t.toolCallId === targetId)
+                if (existing) {
+                  const statusMap: Record<string, string> = {
+                    in_progress: 'in_progress', completed: 'done', done: 'done',
+                  }
+                  existing.status = statusMap[block.input?.status] || existing.status
+                  existing.updatedAt = new Date().toISOString()
+                }
+              }
+            }
+        }
+      }
+    } catch (err) { console.error('提取历史任务失败:', err) }
+    return tasks.slice(0, 50) // Max 50 historical tasks
+  })
+
+  // Team management
+  ipcMain.handle('team:load', async () => {
+    const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
+    try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) } catch (_e) { /* silent */ }
+    return null
+  })
+  ipcMain.handle('team:save', async (_event, team: any[]) => {
+    const file = path.join(os.homedir(), '.claude', 'claude-space-team.json')
+    enqueueFileWrite(file, () => {
+      const dir = path.dirname(file)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const tmp = file + '.tmp'
+      fs.writeFileSync(tmp, JSON.stringify(team, null, 2), 'utf-8')
+      fs.renameSync(tmp, file)
+    })
+    return { success: true }
+  })
+
+  // 设置管理 — 返回脱敏版本
+  ipcMain.handle('settings:load', async () => {
+    const raw = loadSettings()
+    if (!raw) {
+      // 首次使用：无持久化配置，生成空占位（不再读环境变量）
+      const placeholderModel: ModelConfigSafe = {
+        id: 'placeholder',
+        name: '未配置 — 请在设置中添加模型',
+        provider: 'Custom',
+        apiKeyHint: '未设置',
+        baseUrl: '',
+        model: '',
+        apiKeySource: 'user',
+      }
+      const defaultSettings: AppSettingsSafe = {
+        version: 1,
+        activeModelId: null,
+        models: [placeholderModel],
+        autoApproval: false,
+        sshServers: [],
+        deployTargets: [],
+        workspaces: [{
+          id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
+          createdAt: new Date().toISOString(),
+        }],
+      }
+      // 同时写入文件
+      saveSettings({
+        version: 1,
+        activeModelId: null,
+        models: [{
+          id: 'placeholder', name: placeholderModel.name, provider: 'Custom',
+          apiKey: '',
+          baseUrl: '', model: '',
+          apiKeySource: 'user',
+        }],
+        autoApproval: false,
+        sshServers: [],
+        deployTargets: [],
+        workspaces: [{
+          id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
+          createdAt: new Date().toISOString(),
+        }],
+      })
+      // 首次加载：同步默认工作空间到内存
+      _workspaces = [{ id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true, createdAt: new Date().toISOString() }]
+      return defaultSettings
+    }
+    // 同步工作空间到内存
+    syncWorkspaceRootFromSettings(raw)
+    // 自动补充 claude 原生模型（确保 claude-* 模型存在）
+    try {
+      const claudeCfg = getClaudeEnvConfig()
+      if (claudeCfg.baseUrl && claudeCfg.models.length > 0) {
+        const existingIds = new Set(raw.models.map(m => m.id))
+        let modelsAdded = false
+        for (const m of claudeCfg.models) {
+          const sid = 'claude-' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30)
+          if (!existingIds.has(sid)) {
+            raw.models.push({ id: sid, name: m.name || m.model, provider: 'Custom', apiKey: '', baseUrl: '', model: m.model, apiKeySource: 'env' as const })
+            existingIds.add(sid)
+            modelsAdded = true
+          }
+        }
+        if (modelsAdded) saveSettings(raw)
+      }
+    } catch (_e) { /* 非关键 */ }
+    // 自动迁移 activeModelId（将旧模型指向匹配的 claude 原生模型）
+    try { migrateActiveModel(raw) } catch (_e) { /* 非关键 */ }
+    // 返回脱敏版本
+    return {
+      version: raw.version || 1,
+      activeModelId: raw.activeModelId,
+      models: raw.models.map(m => ({
+        id: m.id, name: m.name, provider: m.provider,
+        apiKeyHint: m.apiKeySource === 'env' ? (m.apiKey ? '来自环境变量' : '来自 ~/.claude/settings.json') : maskApiKey(m.apiKey),
+        baseUrl: m.baseUrl, model: m.model,
+        apiKeySource: m.apiKeySource || 'user',
+      })),
+      autoApproval: raw.autoApproval ?? false,
+      sshServers: (raw.sshServers || []).map(s => ({
+        id: s.id, name: s.name,
+        host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+        port: s.port || 22,
+        username: s.username, authMethod: s.authMethod,
+        passwordHint: s.password ? '****' : '未设置',
+        privateKeyPath: s.privateKeyPath || '',
+        privateKeyHint: s.privateKeyContent ? '已配置 (内联密钥)' : (s.privateKeyPath ? `已配置 (${path.basename(s.privateKeyPath)})` : '未设置'),
+        fingerprint: s.fingerprint,
+        createdAt: s.createdAt || new Date().toISOString(),
+        updatedAt: s.updatedAt || new Date().toISOString(),
+      })),
+      deployTargets: raw.deployTargets || [],
+      workspaces: raw.workspaces || [],
+      // IDE 配置：合并用户配置与默认预设，用户配置覆盖同名预设
+      ides: mergeIdeConfigs(raw.ides || []),
+    } as AppSettingsSafe
+  })
+
+  ipcMain.handle('settings:save', async (_event, settings: AppSettingsSafe) => {
+    // 整个读-改-写周期持有文件锁，防止并发保存覆盖
+    return withFileLock(SETTINGS_FILE, () => {
+      const existing = loadSettings()
+      const existingModels = existing?.models || []
+
+      const models: ModelConfig[] = settings.models.map(m => {
+        const existingModel = existingModels.find(em => em.id === m.id)
+        const apiKey = (m as any).apiKey
+          ? (m as any).apiKey
+          : (existingModel?.apiKey || '')
+        return {
+          id: m.id, name: m.name, provider: m.provider as ModelConfig['provider'],
+          apiKey, baseUrl: m.baseUrl, model: m.model,
+          apiKeySource: (apiKey && apiKey !== existingModel?.apiKey) ? 'user' as const : m.apiKeySource,
+        }
+      })
+
+      const existingServers = existing?.sshServers || []
+      const mergedSshServers: SshServerConfig[] = (settings.sshServers || []).map((s: any) => {
+        const existing = existingServers.find((es: any) => es.id === s.id)
+        return {
+          id: s.id, name: s.name,
+          host: (s.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+          port: s.port || 22,
+          username: s.username, authMethod: s.authMethod,
+          password: s.newPassword || existing?.password || '',
+          privateKeyPath: s.privateKeyPath || existing?.privateKeyPath || '',
+          privateKeyContent: s.newPrivateKeyContent || existing?.privateKeyContent || '',
+          fingerprint: s.fingerprint || existing?.fingerprint || undefined,
+          createdAt: s.createdAt || existing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      })
+
+      saveSettings({
+        version: settings.version || 1,
+        activeModelId: settings.activeModelId,
+        models,
+        autoApproval: settings.autoApproval ?? false,
+        sshServers: mergedSshServers,
+        deployTargets: settings.deployTargets || [],
+        // 工作空间由专用 IPC (workspace:add/remove/set-active) 管理并实时持久化
+        // settings.workspaces 来自前端 state 可能过时，优先使用文件中的最新值
+        workspaces: existing?.workspaces || settings.workspaces || [],
+        // IDE 配置直接持久化用户提交的部分
+        ides: settings.ides || [],
+      })
+      return { success: true }
+    })
+  })
+
+  ipcMain.handle('settings:get-model', async (_event, modelId: string) => {
+    const raw = loadSettings()
+    if (!raw) return null
+    const m = raw.models.find(m => m.id === modelId)
+    if (!m) return null
+    return {
+      id: m.id, name: m.name, provider: m.provider,
+      apiKeyHint: m.apiKeySource === 'env' ? (m.apiKey ? '来自环境变量' : '来自 ~/.claude/settings.json') : maskApiKey(m.apiKey),
+      baseUrl: m.baseUrl, model: m.model, apiKeySource: m.apiKeySource,
+    } as ModelConfigSafe
+  })
+
+  // 任务管理
+  // ── 任务防抖：高频 tool_use 事件不立即写盘 ──
+  let taskSaveTimer: ReturnType<typeof setTimeout> | null = null
+  let latestTasks: any[] | null = null
+
+  ipcMain.handle('task:load', async () => loadTasks())
+  ipcMain.handle('task:save', async (_event, tasks: any[]) => {
+    latestTasks = tasks
+    if (taskSaveTimer) return { success: true } // 已有待处理的保存，跳过
+    taskSaveTimer = setTimeout(() => {
+      taskSaveTimer = null
+      if (latestTasks) {
+        saveTasks(latestTasks)
+        latestTasks = null
+      }
+    }, 200) // 200ms 窗口内合并多次保存
+    return { success: true }
+  })
+
+  // ── 连接管理 ────────────────────────────────────────────
+
+  ipcMain.handle('connection:check-cli', async () => {
+    return detectCli()
+  })
+
+  ipcMain.handle('connection:test-api', async (_event, opts: {
+    baseUrl: string; apiKey: string; timeoutMs?: number
+  }) => {
+    return testApiEndpoint(opts.baseUrl, opts.apiKey, opts.timeoutMs || 10000)
+  })
+
+  ipcMain.handle('connection:health-check', async (_event, opts: {
+    modelId: string; modelName: string; provider: string;
+    apiKey: string; baseUrl: string; model: string;
+  }) => {
+    const activeSessionId = claudeProcess?.sessionId
+    return runHealthCheck(opts, activeSessionId)
+  })
+
+  ipcMain.handle('connection:env-config', async () => {
+    return getEnvConfig()
+  })
+
+  // 审批日志
+  const APPROVAL_LOG = path.join(os.homedir(), '.claude', 'claude-space-approval-log.jsonl')
+  ipcMain.handle('approval:log', async (_event, entry: {
+    timestamp: string; question: string; optionChosen: string; auto: boolean; modelId?: string
+  }) => {
+    const dir = path.dirname(APPROVAL_LOG)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(APPROVAL_LOG, JSON.stringify(entry) + '\n', 'utf-8')
+    return { success: true }
+  })
+  ipcMain.handle('approval:history', async () => {
+    try {
+      if (!fs.existsSync(APPROVAL_LOG)) return []
+      const lines = fs.readFileSync(APPROVAL_LOG, 'utf-8').split('\n').filter(Boolean)
+      return lines.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean).slice(-100)
+    } catch (e) {
+      console.warn('[approval:history] 读取审批日志失败:', e)
+      return []
+    }
+  })
+
+  // ── Git 操作 ────────────────────────────────────────────
+
+  function runGit(projectPath: string, args: string[], retried?: boolean): Promise<{ success: boolean; output: string; error?: string }> {
+    return new Promise((resolve) => {
+      let out = '', err = ''
+      const child = spawn('git', args, { cwd: projectPath, windowsHide: true, timeout: 30000 })
+      child.stdout?.on('data', (d: Buffer) => { out += d.toString() })
+      child.stderr?.on('data', (d: Buffer) => { err += d.toString() })
+      child.on('close', (code) => {
+        const output = out.trim()
+        const error = err.trim() || undefined
+        // 自动清理 index.lock 后重试一次
+        if (code !== 0 && error?.includes('index.lock') && !retried) {
+          const lockFile = path.join(projectPath, '.git', 'index.lock')
+          try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile) } catch { /* ignore */ }
+          resolve(runGit(projectPath, args, true))
+          return
+        }
+        resolve({ success: code === 0, output, error })
+      })
+      child.on('error', (e) => resolve({ success: false, output: '', error: e.message }))
+    })
+  }
+
+  ipcMain.handle('git:init', async (_e, projectPath: string) => {
+    // Check if git repo already exists
+    try {
+      if (fs.existsSync(path.join(projectPath, '.git'))) return { success: true, output: 'Already a git repository' }
+    } catch (_e) { /* silent */ }
+    return runGit(projectPath, ['init'])
+  })
+  ipcMain.handle('git:status', async (_e, projectPath: string) => runGit(projectPath, ['status', '--porcelain', '--branch']))
+  ipcMain.handle('git:log', async (_e, projectPath: string) => runGit(projectPath, ['log', '--oneline', '-20']))
+  ipcMain.handle('git:branch', async (_e, projectPath: string) => runGit(projectPath, ['branch', '-a']))
+  ipcMain.handle('git:pull', async (_e, projectPath: string) => runGit(projectPath, ['pull']))
+  ipcMain.handle('git:push', async (_e, projectPath: string) => runGit(projectPath, ['push']))
+  ipcMain.handle('git:commit', async (_e, opts: { projectPath: string; message: string }) => runGit(opts.projectPath, ['commit', '-am', opts.message]))
+  ipcMain.handle('git:add', async (_e, opts: { projectPath: string; files: string[] }) => runGit(opts.projectPath, ['add', ...opts.files]))
+  ipcMain.handle('git:config', async (_e, projectPath: string) => {
+    const cfg = await runGit(projectPath, ['config', '--list'])
+    if (cfg.success) {
+      const parsed: Record<string, string> = {}
+      cfg.output.split('\n').forEach(line => {
+        const [k, ...v] = line.split('=')
+        if (k) parsed[k.trim()] = v.join('=').trim()
+      })
+      return { success: true, config: parsed }
+    }
+    return cfg
+  })
+  ipcMain.handle('git:config-set', async (_e, opts: { projectPath: string; key: string; value: string }) =>
+    runGit(opts.projectPath, ['config', opts.key, opts.value]))
+  ipcMain.handle('git:remote', async (_e, projectPath: string) => runGit(projectPath, ['remote', '-v']))
+  ipcMain.handle('git:remote-set', async (_e, opts: { projectPath: string; name: string; url: string }) =>
+    runGit(opts.projectPath, ['remote', 'add', opts.name, opts.url]))
+  ipcMain.handle('git:log-detail', async (_e, projectPath: string) =>
+    runGit(projectPath, ['log', '--format=%H|%ai|%an|%s', '-50']))
+  ipcMain.handle('git:show-commit', async (_e, opts: { projectPath: string; hash: string }) =>
+    runGit(opts.projectPath, ['log', '--format=╔HASH╗%H╔AUTHOR╗%an╔DATE╗%ai╔MSG╗%B╔DIFF╗', '-1', '--stat', opts.hash]))
+  ipcMain.handle('git:diff', async (_e, opts: { projectPath: string; file?: string }) =>
+    runGit(opts.projectPath, opts.file ? ['diff', opts.file] : ['diff', '--stat']))
+  ipcMain.handle('git:show', async (_e, opts: { projectPath: string; file: string }) =>
+    runGit(opts.projectPath, ['show', 'HEAD:' + opts.file]))
+  ipcMain.handle('git:diff-staged', async (_e, projectPath: string) =>
+    runGit(projectPath, ['diff', '--staged', '--stat']))
+  ipcMain.handle('git:remote-info', async (_e, projectPath: string) => {
+    const [remoteV, branchesR] = await Promise.all([
+      runGit(projectPath, ['remote', '-v']),
+      runGit(projectPath, ['branch', '-r']),
+    ])
+    return { success: remoteV.success || branchesR.success, output: remoteV.output, branches: branchesR.output, error: remoteV.error || branchesR.error }
+  })
+  ipcMain.handle('git:remote-log', async (_e, opts: { projectPath: string; remoteBranch?: string }) =>
+    runGit(opts.projectPath, ['log', '--oneline', '-15', '--remotes']))
+  ipcMain.handle('git:fetch', async (_e, projectPath: string) =>
+    runGit(projectPath, ['fetch', '--all', '--quiet']))
+
+  // ── 记忆管理（项目隔离：{projectPath}/.claude/memory/）───
+
+  function getMemoryDir(projectPath: string): string {
+    const encoded = encodeClaudePath(projectPath)
+    return path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
+  }
+
+  ipcMain.handle('memory:list', async (_e, projectPath: string) => {
+    try {
+      const memDir = getMemoryDir(projectPath)
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
+      const indexContent = fs.readFileSync(indexPath, 'utf-8')
+      const entries: { name: string; description: string; fileName: string; type?: string; mtime?: string }[] = []
+      const linkRegex = /-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/
+      for (const line of indexContent.split('\n')) {
+        const m = line.match(linkRegex)
+        if (m) {
+          const fileName = m[2].trim()
+          const description = m[3].trim()
+          let type = ''
+          let mtime = ''
+          try {
+            const filePath = path.join(memDir, fileName)
+            if (fs.existsSync(filePath)) {
+              const stat = fs.statSync(filePath)
+              mtime = stat.mtime.toISOString()
+              const raw = fs.readFileSync(filePath, 'utf-8')
+              const typeMatch = raw.match(/^\s*type:\s*(\S+)/m)
+              if (typeMatch) type = typeMatch[1]
+            }
+          } catch { /* ignore */ }
+          entries.push({ name: m[1].trim(), description, fileName, type: type || undefined, mtime: mtime || undefined })
+        }
+      }
+      // Sort by mtime descending (newest first)
+      entries.sort((a, b) => {
+        if (!a.mtime) return 1
+        if (!b.mtime) return -1
+        return b.mtime.localeCompare(a.mtime)
+      })
+      return { success: true, entries }
+    } catch (e: any) {
+      return { success: false, entries: [], error: e.message }
+    }
+  })
+
+  ipcMain.handle('memory:read', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      const filePath = path.join(memDir, opts.fileName)
+      if (!fs.existsSync(filePath)) return { success: false, content: '', error: '文件不存在' }
+      const content = fs.readFileSync(filePath, 'utf-8')
+      return { success: true, content }
+    } catch (e: any) {
+      return { success: false, content: '', error: e.message }
+    }
+  })
+
+  ipcMain.handle('memory:write', async (_e, opts: { projectPath: string; fileName: string; content: string }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
+      const filePath = path.join(memDir, opts.fileName)
+      fs.writeFileSync(filePath, opts.content, 'utf-8')
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('memory:create', async (_e, opts: {
+    projectPath: string; fileName: string; name: string; description: string; type: string; content: string
+  }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
+      const sessionId = 'manual_' + Date.now().toString(36)
+      const slug = opts.name.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '') || 'untitled'
+      const fullContent = `---\nname: ${slug}\ndescription: ${opts.description}\nmetadata:\n  type: ${opts.type}\n  originSessionId: ${sessionId}\n---\n\n${opts.content}`
+      const filePath = path.join(memDir, opts.fileName)
+      fs.writeFileSync(filePath, fullContent, 'utf-8')
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      let indexContent = ''
+      if (fs.existsSync(indexPath)) indexContent = fs.readFileSync(indexPath, 'utf-8')
+      const newLine = `- [${opts.name}](${opts.fileName}) — ${opts.description}\n`
+      if (indexContent.trim()) {
+        const fmEnd = indexContent.indexOf('---\n', 4)
+        if (indexContent.startsWith('---') && fmEnd > 0) {
+          indexContent = indexContent.slice(0, fmEnd + 4) + '\n' + newLine + indexContent.slice(fmEnd + 4)
+        } else { indexContent += '\n' + newLine }
+      } else { indexContent = `# 记忆索引\n\n${newLine}` }
+      fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      return { success: true, filePath }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('memory:auto-create', async (_e, opts: {
+    projectPath: string; title: string; content: string; type?: string
+  }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      if (!fs.existsSync(memDir)) fs.mkdirSync(memDir, { recursive: true })
+      const timestamp = Date.now()
+      const fileName = `auto-${timestamp.toString(36)}.md`
+      const slug = opts.title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'auto-memory'
+      const desc = opts.title.length > 60 ? opts.title.slice(0, 60) + '...' : opts.title
+      const fullContent = `---\nname: ${slug}\ndescription: ${desc}\nmetadata:\n  type: ${opts.type || 'project'}\n  origin: auto-save\n  originSessionId: auto_${timestamp.toString(36)}\n---\n\n# ${opts.title}\n\n> 自动保存时间：${new Date().toLocaleString('zh-CN')}\n\n${opts.content}`
+      fs.writeFileSync(path.join(memDir, fileName), fullContent, 'utf-8')
+      // Update MEMORY.md index
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      let indexContent = ''
+      if (fs.existsSync(indexPath)) indexContent = fs.readFileSync(indexPath, 'utf-8')
+      const newLine = `- [${opts.title}](${fileName}) — ${desc}\n`
+      if (indexContent.trim()) {
+        const fmEnd = indexContent.indexOf('---\n', 4)
+        if (indexContent.startsWith('---') && fmEnd > 0) {
+          indexContent = indexContent.slice(0, fmEnd + 4) + '\n' + newLine + indexContent.slice(fmEnd + 4)
+        } else { indexContent += '\n' + newLine }
+      } else { indexContent = `# 记忆索引\n\n${newLine}` }
+      fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      return { success: true, fileName }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('memory:delete', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const memDir = getMemoryDir(opts.projectPath)
+      const filePath = path.join(memDir, opts.fileName)
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      const indexPath = path.join(memDir, 'MEMORY.md')
+      if (fs.existsSync(indexPath)) {
+        let indexContent = fs.readFileSync(indexPath, 'utf-8')
+        const escaped = opts.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        indexContent = indexContent.replace(new RegExp(`^- \\[.+?\\]\\(${escaped}\\) — .+$`, 'gm'), '').replace(/\n{3,}/g, '\n\n')
+        fs.writeFileSync(indexPath, indexContent, 'utf-8')
+      }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 知识管理（{projectPath}/.claude/knowledge/）───────
+  function getKnowledgeDir(projectPath: string): string {
+    return path.join(projectPath, '.claude', 'knowledge')
+  }
+
+  ipcMain.handle('knowledge:read', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const fp = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
+      if (!fs.existsSync(fp)) return { success: false, content: '', error: '文件不存在' }
+      return { success: true, content: fs.readFileSync(fp, 'utf-8') }
+    } catch (e: any) { return { success: false, content: '', error: e.message } }
+  })
+
+  ipcMain.handle('knowledge:list', async (_e, projectPath: string) => {
+    try {
+      const knDir = getKnowledgeDir(projectPath)
+      const indexPath = path.join(knDir, 'KNOWLEDGE.md')
+      if (!fs.existsSync(indexPath)) return { success: true, entries: [] }
+      const content = fs.readFileSync(indexPath, 'utf-8')
+      const entries: any[] = []
+      for (const line of content.split('\n')) {
+        const m = line.match(/-\s*\[(.+?)\]\((.+?)\)\s*—\s*(.+)/)
+        if (m) {
+          const fileName = m[2].trim()
+          const filePath = path.join(knDir, fileName)
+          let type = 'general', tags = '', status = 'draft', mtime = '', sources = ''
+          try {
+            if (fs.existsSync(filePath)) {
+              const raw = fs.readFileSync(filePath, 'utf-8')
+              const st = fs.statSync(filePath); mtime = st.mtime.toISOString()
+              const t = raw.match(/^type:\s*(\S+)/m); if (t) type = t[1]
+              const tg = raw.match(/^tags:\s*(.+)/m); if (tg) tags = tg[1]
+              const s = raw.match(/^status:\s*(\S+)/m); if (s) status = s[1]
+              const src = raw.match(/^sources:\s*(.+)/m); if (src) sources = src[1]
+            }
+          } catch { /* ignore */ }
+          entries.push({ name: m[1].trim(), fileName, description: m[3].trim(), type, tags, status, mtime, sources })
+        }
+      }
+      entries.sort((a: any, b: any) => (b.mtime || '').localeCompare(a.mtime || ''))
+      return { success: true, entries }
+    } catch (e: any) { return { success: false, entries: [], error: e.message } }
+  })
+
+  ipcMain.handle('knowledge:create', async (_e, opts: {
+    projectPath: string; title: string; content: string; type: string; tags: string; sources?: string
+  }) => {
+    try {
+      const knDir = getKnowledgeDir(opts.projectPath)
+      if (!fs.existsSync(knDir)) fs.mkdirSync(knDir, { recursive: true })
+      const fileName = opts.title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) + '.md'
+      const now = new Date().toISOString().split('T')[0]
+      const fullContent = `---\ntitle: ${opts.title}\ntype: ${opts.type}\ntags: ${opts.tags}\nstatus: draft\ncreated: ${now}\nupdated: ${now}\nsources: ${opts.sources || ''}\n---\n\n${opts.content}`
+      fs.writeFileSync(path.join(knDir, fileName), fullContent, 'utf-8')
+      const indexPath = path.join(knDir, 'KNOWLEDGE.md')
+      let idx = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf-8') : '# 知识索引\n\n'
+      idx += `- [${opts.title}](${fileName}) — ${opts.type} | ${opts.tags}\n`
+      fs.writeFileSync(indexPath, idx, 'utf-8')
+      return { success: true, fileName }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('knowledge:delete', async (_e, opts: { projectPath: string; fileName: string }) => {
+    try {
+      const fp = path.join(getKnowledgeDir(opts.projectPath), opts.fileName)
+      if (fs.existsSync(fp)) fs.unlinkSync(fp)
+      const indexPath = path.join(getKnowledgeDir(opts.projectPath), 'KNOWLEDGE.md')
+      if (fs.existsSync(indexPath)) {
+        let c = fs.readFileSync(indexPath, 'utf-8')
+        const esc = opts.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        c = c.replace(new RegExp(`^- \\[.+?\\]\\(${esc}\\) — .+$`, 'gm'), '').replace(/\n{3,}/g, '\n\n')
+        fs.writeFileSync(indexPath, c, 'utf-8')
+      }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  
+  ipcMain.handle('console:get-log-history', async () => { return { success: true, lines: [...logBuffer] } })
+
+
+  // ── 技能管理 ────────────────────────────────────────
+  const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+
+  function getSkillManifest(filePath: string, includeContent?: boolean): any {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8')
+      const m = raw.match(/^---\n([\s\S]*?)\n---/)
+      if (!m) return null
+      const fm: Record<string, string> = {}
+      for (const line of m[1].split('\n')) {
+        const sep = line.indexOf(': ')
+        if (sep > 0) fm[line.slice(0, sep).trim()] = line.slice(sep + 2).trim()
+      }
+      const manifest: any = {
+        name: fm.name || '',
+        description: fm.description || '',
+        version: fm.version || '1.0.0',
+        author: fm.author || 'unknown',
+        category: fm.category || 'general',
+        tags: fm.tags || '',
+        icon: fm.icon || '📦',
+        level: fm.level || 'global',
+        enabled: fm.enabled !== 'false',
+        created: fm.created || '',
+        updated: fm.updated || '',
+        fileName: path.basename(filePath),
+        filePath,
+      }
+      if (includeContent) manifest.content = raw
+      return manifest
+    } catch { return null }
+  }
+
+  ipcMain.handle('skill:list', async () => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) return { success: true, skills: [] }
+      const skills: any[] = []
+      for (const f of fs.readdirSync(SKILLS_DIR)) {
+        if (!f.endsWith('.md')) continue
+        const m = getSkillManifest(path.join(SKILLS_DIR, f))
+        if (m) skills.push(m)
+      }
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      return { success: true, skills }
+    } catch (e: any) { return { success: false, skills: [], error: e.message } }
+  })
+
+  ipcMain.handle('skill:read', async (_e: any, name: string) => {
+    try {
+      const fp = path.join(SKILLS_DIR, name + '.md')
+      if (!fs.existsSync(fp)) return { success: false, content: '', error: 'Skill not found' }
+      return { success: true, content: fs.readFileSync(fp, 'utf-8') }
+    } catch (e: any) { return { success: false, content: '', error: e.message } }
+  })
+
+  ipcMain.handle('skill:install', async (_e: any, opts: { name: string; content: string }) => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      fs.writeFileSync(path.join(SKILLS_DIR, opts.name + '.md'), opts.content, 'utf-8')
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:install-batch', async (_e: any, opts: { skills: Array<{ name: string; content: string }> }) => {
+    try {
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      let count = 0
+      const errors: Array<{ name: string; error: string }> = []
+      for (const s of opts.skills) {
+        try {
+          fs.writeFileSync(path.join(SKILLS_DIR, safeSkillName(s.name) + '.md'), s.content, 'utf-8')
+          count++
+        } catch (e: any) { errors.push({ name: s.name, error: e.message }) }
+      }
+      return { success: errors.length === 0, count, errors: errors.length > 0 ? errors : undefined }
+    } catch (e: any) { return { success: false, count: 0, error: e.message } }
+  })
+
+  ipcMain.handle('skill:uninstall', async (_e: any, name: string) => {
+    try {
+      const fp = path.join(SKILLS_DIR, name + '.md')
+      if (fs.existsSync(fp)) fs.unlinkSync(fp)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 内置技能列表（打包在 assets/skills/）───────────────
+  const BUILTIN_SKILL_ITEMS = [
+    { id: 'code-review', name: '代码审查', description: '全面的代码审查检查清单', version: '1.0.0', author: 'Claude Space', category: 'code-review', icon: '🔍', tags: ['code-review','审查'], downloads: 999, rating: 4.5, source: 'builtin' },
+    { id: 'security-audit', name: '安全审计', description: '基于 OWASP Top 10 的安全扫描与审计', version: '1.0.0', author: 'Claude Space', category: 'security', icon: '🛡️', tags: ['security','owasp'], downloads: 998, rating: 4.8, source: 'builtin' },
+    { id: 'api-design', name: 'API 设计', description: 'RESTful API 设计与审查标准', version: '1.0.0', author: 'Claude Space', category: 'api-design', icon: '🔌', tags: ['api','rest'], downloads: 997, rating: 4.6, source: 'builtin' },
+    { id: 'ts-expert', name: 'TypeScript 专家', description: 'TypeScript 类型安全和最佳实践', version: '1.0.0', author: 'Claude Space', category: 'code-review', icon: '🔷', tags: ['typescript'], downloads: 996, rating: 4.7, source: 'builtin' },
+    { id: 'test-writer', name: '测试编写', description: '自动生成单元测试和集成测试', version: '1.0.0', author: 'Claude Space', category: 'testing', icon: '🧪', tags: ['测试'], downloads: 995, rating: 4.4, source: 'builtin' },
+    { id: 'git-manager', name: 'Git 工作流', description: 'Git 操作与工作流管理助手', version: '1.0.0', author: 'Claude Space', category: 'git', icon: '📦', tags: ['git'], downloads: 994, rating: 4.3, source: 'builtin' },
+    { id: 'doc-generator', name: '文档生成', description: '自动生成项目文档和 API 文档', version: '1.0.0', author: 'Claude Space', category: 'documentation', icon: '📝', tags: ['文档'], downloads: 993, rating: 4.5, source: 'builtin' },
+    { id: 'perf-audit', name: '性能审计', description: '代码性能分析与优化建议', version: '1.0.0', author: 'Claude Space', category: 'performance', icon: '⚡', tags: ['性能'], downloads: 992, rating: 4.6, source: 'builtin' },
+    { id: 'conventions-check', name: '规范检查', description: '代码风格和项目规范一致性检查', version: '1.0.0', author: 'Claude Space', category: 'conventions', icon: '📏', tags: ['规范'], downloads: 991, rating: 4.2, source: 'builtin' },
+    { id: 'db-designer', name: '数据库设计', description: '数据库表结构设计与优化建议', version: '1.0.0', author: 'Claude Space', category: 'api-design', icon: '🗄️', tags: ['数据库'], downloads: 990, rating: 4.4, source: 'builtin' },
+  ]
+
+  ipcMain.handle('skill:marketplace-list', async () => {
+    try {
+      return { success: true, items: BUILTIN_SKILL_ITEMS }
+    } catch (e: any) { return { success: false, items: [], error: e.message } }
+  })
+
+
+  // ── 技能市场配置 ──────────────────────────────────
+  const MARKET_CONFIG_FILE = path.join(os.homedir(), '.claude', 'skill-market-config.json')
+
+  interface MarketSource {
+    name: string; url: string; enabled: boolean; autoScan: boolean
+  }
+
+  const DEFAULT_MARKETPLACES: MarketSource[] = [
+    { name: 'Claude 官方技能', url: 'https://github.com/anthropics/skills.git', enabled: true, autoScan: true },
+    { name: 'Claude 官方插件', url: 'https://github.com/anthropics/claude-plugins-official.git', enabled: true, autoScan: true },
+    { name: '社区插件', url: 'https://github.com/anthropics/claude-plugins-community.git', enabled: true, autoScan: true },
+  ]
+
+  function loadMarketConfig() {
+    try {
+      if (fs.existsSync(MARKET_CONFIG_FILE)) {
+        const cfg = JSON.parse(fs.readFileSync(MARKET_CONFIG_FILE, 'utf-8'))
+        // Migrate legacy format { gitUrl: string } → { marketplaces }
+        if (cfg.gitUrl && !cfg.marketplaces) {
+          cfg.marketplaces = [
+            ...DEFAULT_MARKETPLACES,
+            ...(cfg.gitUrl ? [{ name: '自定义市场', url: cfg.gitUrl, enabled: true, autoScan: false }] : []),
+          ]
+          delete cfg.gitUrl
+          saveMarketConfig(cfg)
+        }
+        return cfg
+      }
+    } catch {}
+    return { marketplaces: [...DEFAULT_MARKETPLACES], localPaths: [] }
+  }
+
+  function saveMarketConfig(cfg: { marketplaces?: MarketSource[]; localPaths?: string[]; gitUrl?: string }) { fs.writeFileSync(MARKET_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8') }
+
+  ipcMain.handle('skill:get-market-config', async () => ({ success: true, config: loadMarketConfig() }))
+
+  ipcMain.handle('skill:save-market-config', async (_e, cfg) => {
+    try { saveMarketConfig(cfg); return { success: true } } catch (e) { return { success: false, error: e.message } }
+  })
+
+  // ── 市场源管理 ──────────────────────────────────
+  const MARKET_REPOS_DIR = path.join(os.homedir(), '.claude', 'skill-repos')
+
+  function ensureDir(d: string) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }) }
+
+  ipcMain.handle('skill:marketplace-scan', async () => {
+    try {
+      const cfg = loadMarketConfig()
+      const sources = (cfg.marketplaces || []).filter((s: MarketSource) => s.enabled && s.autoScan)
+      const allSkills: any[] = []
+      ensureDir(MARKET_REPOS_DIR)
+      for (const src of sources) {
+        const repoHash = Buffer.from(src.url).toString('base64url').slice(0, 32)
+        const repoDir = path.join(MARKET_REPOS_DIR, repoHash)
+        // Clone or pull
+        await new Promise<void>((resolve, reject) => {
+          if (fs.existsSync(repoDir)) {
+            const p = spawn('git', ['-C', repoDir, 'pull', '--ff-only'], { timeout: 30000 })
+            p.on('close', (code) => code === 0 ? resolve() : reject(new Error('git pull failed')))
+            p.on('error', reject)
+          } else {
+            const p = spawn('git', ['clone', '--depth=1', src.url, repoDir], { timeout: 60000 })
+            p.on('close', (code) => code === 0 ? resolve() : reject(new Error('git clone failed')))
+            p.on('error', reject)
+          }
+        })
+        // Scan for skills
+        const scanned = scanDirForSkills(repoDir, src.name)
+        for (const s of scanned) { s.sourceName = src.name; s.sourceUrl = src.url }
+        allSkills.push(...scanned)
+      }
+      allSkills.sort((a, b) => a.name.localeCompare(b.name))
+      return { success: true, skills: allSkills }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:marketplace-source-add', async (_e, src: MarketSource) => {
+    try {
+      const cfg = loadMarketConfig()
+      if (!cfg.marketplaces) cfg.marketplaces = []
+      if (cfg.marketplaces.find((s: MarketSource) => s.url === src.url)) return { success: false, error: '该市场已存在' }
+      cfg.marketplaces.push(src)
+      saveMarketConfig(cfg)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:marketplace-source-remove', async (_e, url: string) => {
+    try {
+      const cfg = loadMarketConfig()
+      cfg.marketplaces = (cfg.marketplaces || []).filter((s: MarketSource) => s.url !== url)
+      saveMarketConfig(cfg)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:marketplace-source-update', async (_e, url: string, updates: Partial<MarketSource>) => {
+    try {
+      const cfg = loadMarketConfig()
+      const src = (cfg.marketplaces || []).find((s: MarketSource) => s.url === url)
+      if (!src) return { success: false, error: '未找到该市场' }
+      Object.assign(src, updates)
+      saveMarketConfig(cfg)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  function scanDirForSkills(dir: string, sourceName: string): any[] {
+    const results: any[] = []
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, f)
+        if (fs.statSync(fullPath).isDirectory()) {
+          // Check for SKILL.md inside (Claude Code format)
+          const skillMd = path.join(fullPath, 'SKILL.md')
+          if (fs.existsSync(skillMd)) {
+            const m = getSkillManifest(skillMd, true)
+            if (m) { m.fileName = f; results.push(m) }
+          }
+          // Also scan flat .md files
+          for (const sf of fs.readdirSync(fullPath)) {
+            if (sf.endsWith('.md') && sf !== 'SKILL.md') {
+              const m = getSkillManifest(path.join(fullPath, sf), true)
+              if (m) results.push(m)
+            }
+          }
+        } else if (f.endsWith('.md')) {
+          const m = getSkillManifest(fullPath, true)
+          if (m) results.push(m)
+        }
+      }
+    } catch { /* skip dirs with errors */ }
+    return results
+  }
+
+  // Deeper recursive scan for nested plugin repos (plugins/name/skills/name/SKILL.md)
+  function deepScanDirForSkills(dir: string, sourceName: string): any[] {
+    const results: any[] = []
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, f)
+        try {
+          if (fs.statSync(fullPath).isDirectory()) {
+            const skillMd = path.join(fullPath, 'SKILL.md')
+            const hasDirectSkill = fs.existsSync(skillMd)
+            if (hasDirectSkill) {
+              const m = getSkillManifest(skillMd, true)
+              if (m) { m.fileName = path.relative(dir, fullPath); results.push(m) }
+            }
+            // Check flat .md files in this dir
+            for (const sf of fs.readdirSync(fullPath)) {
+              if (sf.endsWith('.md') && sf !== 'SKILL.md') {
+                const m = getSkillManifest(path.join(fullPath, sf), true)
+                if (m) results.push(m)
+              }
+            }
+            // Recurse deeper if no SKILL.md found at this level
+            if (!hasDirectSkill) {
+              const deeper = deepScanDirForSkills(fullPath, sourceName)
+              results.push(...deeper)
+            }
+          }
+        } catch { /* skip individual entries */ }
+      }
+    } catch { /* skip dirs */ }
+    return results
+  }
+
+  // Use deep scan for marketplace repos, shallow scan for local files
+  function scanDirForSkills(dir: string, sourceName: string): any[] {
+    const isLocalFile = sourceName === '本地文件'
+    return isLocalFile ? shallowScanDirForSkills(dir, sourceName) : deepScanDirForSkills(dir, sourceName)
+  }
+
+  function shallowScanDirForSkills(dir: string, sourceName: string): any[] {
+    const results: any[] = []
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, f)
+        try {
+          if (fs.statSync(fullPath).isDirectory()) {
+            const skillMd = path.join(fullPath, 'SKILL.md')
+            if (fs.existsSync(skillMd)) {
+              const m = getSkillManifest(skillMd, true)
+              if (m) { m.fileName = f; results.push(m) }
+            }
+            for (const sf of fs.readdirSync(fullPath)) {
+              if (sf.endsWith('.md') && sf !== 'SKILL.md') {
+                const m = getSkillManifest(path.join(fullPath, sf), true)
+                if (m) results.push(m)
+              }
+            }
+          } else if (f.endsWith('.md')) {
+            const m = getSkillManifest(fullPath, true)
+            if (m) results.push(m)
+          }
+        } catch { /* skip individual entries */ }
+      }
+    } catch { /* skip dirs */ }
+    return results
+  }
+
+  
+  ipcMain.handle('skill:load-from-local-dir', async (_e, dir: string) => {
+    try {
+      if (!dir || !fs.existsSync(dir)) return { success: false, error: 'not found' }
+      const skills = deepScanDirForSkills(dir, '本地文件')
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      return { success: true, skills }
+    } catch (e) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:load-from-local', async () => {
+    try {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+      if (result.canceled || !result.filePaths[0]) return { success: false, error: 'cancelled' }
+      const dir = result.filePaths[0]
+      if (!fs.existsSync(dir)) return { success: false, error: 'not found' }
+      // Recursive scan: traverse subdirectories for SKILL.md + .md files
+      const skills = deepScanDirForSkills(dir, '本地文件')
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      // Still remember the dir for future reloads
+      const cfg = loadMarketConfig()
+      if (!cfg.localPaths.includes(dir)) cfg.localPaths.push(dir)
+      saveMarketConfig(cfg)
+      return { success: true, skills }
+    } catch (e) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:load-from-git', async (_e, gitUrl) => {
+    return new Promise((resolve) => {
+      try {
+        if (!gitUrl) { resolve({ success: false, error: 'no url' }); return }
+        const td = path.join(os.homedir(), '.claude', 'skill-repos', Date.now().toString(36))
+        const gitProc = spawn('git', ['clone', '--depth=1', gitUrl, td], { timeout: 60000 })
+        let stderr = ''
+        gitProc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+        gitProc.on('close', (code) => {
+          try {
+            if (code !== 0) { resolve({ success: false, error: stderr || 'Git clone failed' }); return }
+            if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+            let count = 0
+            for (const f of fs.readdirSync(td)) { if (f.endsWith('.md')) { fs.copyFileSync(path.join(td, f), path.join(SKILLS_DIR, f)); count++ } }
+            const cfg = loadMarketConfig()
+            cfg.gitUrl = gitUrl
+            saveMarketConfig(cfg)
+            resolve({ success: true, count })
+          } catch (e: any) { resolve({ success: false, error: e.message }) }
+        })
+        gitProc.on('error', (err) => { resolve({ success: false, error: err.message }) })
+      } catch (e: any) { resolve({ success: false, error: e.message }) }
+    })
+  })
+
+  ipcMain.handle('skill:marketplace-install', async (_e: any, item: { id: string }) => {
+    try {
+      const skillFile = path.join(__dirname, '..', 'assets', 'skills', item.id + '.md')
+      if (!fs.existsSync(skillFile)) return { success: false, error: 'Skill not found in bundle' }
+      if (!fs.existsSync(SKILLS_DIR)) fs.mkdirSync(SKILLS_DIR, { recursive: true })
+      fs.copyFileSync(skillFile, path.join(SKILLS_DIR, item.id + '.md'))
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+  // ── 开发进程管理 ────────────────────────────────────
+  let devProcess: any = null
+
+  ipcMain.handle('dev:start', async (_e: any, opts: { command: string; name: string }) => {
+    if (devProcess) { try { devProcess.kill() } catch {}; devProcess = null }
+    try {
+      const { spawn } = require('child_process')
+      devProcess = spawn(opts.command, [], { shell: true, cwd: process.cwd(), env: { ...process.env } })
+      devProcess.stdout?.on('data', (d: Buffer) => { broadcastToAllWindows('dev:output', d.toString()) })
+      devProcess.stderr?.on('data', (d: Buffer) => { broadcastToAllWindows('dev:error', d.toString()) })
+      devProcess.on('exit', () => { devProcess = null; broadcastToAllWindows('dev:status', { running: false, name: opts.name }) })
+      broadcastToAllWindows('dev:status', { running: true, name: opts.name })
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('dev:stop', async () => {
+    if (devProcess) { try { devProcess.kill() } catch {}; devProcess = null; return { success: true } }
+    return { success: false, error: 'No running process' }
+  })
+
+  function broadcastToAllWindows(channel: string, ...args: any[]) {
+    for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, ...args) } catch {} }
+  }
+
+  // ── 控制台窗口 ────────────────────────────────────
+  ipcMain.handle('console:open-window', async () => {
+    try {
+      const win = new BrowserWindow({
+        width: 1200, height: 700,
+        title: '开发者控制台',
+        backgroundColor: '#0d0d0d',
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }
+      })
+      if (process.env.VITE_DEV_SERVER_URL) {
+        win.loadURL(process.env.VITE_DEV_SERVER_URL + '?consoleWindow=1')
+      } else {
+        win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { consoleWindow: '1' } })
+      }
+      win.on('closed', () => { const idx = windows.indexOf(win); if (idx >= 0) windows.splice(idx, 1) })
+      windows.push(win)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 终端管理（多窗口隔离）───────────────────────────
+
+  // 根据事件来源窗口查找对应终端（h: windowTerminals → terminalProcesses → terminalProcess）
+  function findTerminal(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): TerminalProcess | undefined {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) {
+      const sid = windowTerminals.get(win.id)
+      if (sid) {
+        const tp = terminalProcesses.get(sid)
+        if (tp) return tp
+      }
+    }
+    return terminalProcess ?? undefined
+  }
+
+  ipcMain.handle('terminal:start', async (event, opts: {
+    cwd?: string; sessionId?: string; cols?: number; rows?: number;
+    autoApproval?: boolean;
+  }) => {
+    // 调试日志写到文件（打包版 GUI 无控制台输出）
+    fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'), `[${new Date().toISOString()}] terminal:start called sessionId=${opts.sessionId} cwd=${opts.cwd} autoApproval=${opts.autoApproval}\n`, 'utf-8')
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const winId = win?.id ?? 0
+    const sid = opts.sessionId || 'default'
+
+    // 记录窗口→会话映射（向后兼容）
+    if (winId) {
+      windowTerminals.set(winId, sid)
+      // 注册窗口为终端事件广播目标
+      registerTerminalWindow(sid, winId)
+    }
+
+    // 检查是否已有该会话的终端进程 → 复用
+    const existing = terminalProcesses.get(sid)
+    if (existing) {
+      terminalProcess = existing
+      // 发送当前状态到此窗口（后续事件通过 broadcastTerminalEvent 广播到所有绑定窗口）
+      const target = win ?? mainWindow
+      target?.webContents.send('terminal:status', {
+        running: existing.isRunning,
+        shellRunning: existing.isRunning,
+        claudeRunning: existing.isClaudeRunning,
+        connected: existing.isClaudeRunning,
+        sessionId: sid,
+        error: '',
+      })
+      return { success: true }
+    }
+
+    // 获取 claude 绝对路径
+    const cliInfo = await detectCli()
+    const claudePath = cliInfo.found ? cliInfo.path : undefined
+
+    // 校验 session 文件是否存在 — 不存在则放弃 resume，启动全新会话
+    const encodedPath = encodeClaudePath((opts.cwd || '').replace(/\\/g, '/'))
+    const sessionDir = path.join(CLAUDE_HOME, 'projects', encodedPath)
+    let validSessionId: string | undefined = undefined
+    if (opts.sessionId) {
+      const jsonlFile = path.join(sessionDir, `${opts.sessionId}.jsonl`)
+      if (fs.existsSync(jsonlFile)) {
+        validSessionId = opts.sessionId
+      } else {
+        console.log(`[terminal:start] session file not found: ${jsonlFile}, starting fresh session`)
+      }
+    }
+
+    // 终端模式 Claude 完全由 ~/.claude/settings.json 控制，不传入模型配置
+    const proc = new TerminalProcess({
+      cwd: opts.cwd,
+      sessionId: validSessionId,
+      claudePath,
+      cols: opts.cols || 120,
+      rows: opts.rows || 40,
+      permissionMode: opts.autoApproval ? 'auto' : 'manual',
+    })
+
+    // 事件广播到所有绑定此终端的窗口（支持多窗口共享终端）
+    proc.on('terminal-data', (data: string) => {
+      broadcastTerminalEvent(sid, 'terminal:data', data); pushLog(data, 'terminal'); if (devProcess) pushLog(data, 'dev')
+    })
+    proc.on('event', (event: any) => {
+      if (event.type === 'assistant' || event.type === 'user') {
+        const boundWins = terminalWindowBindings.get(sid)
+        fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
+          `[${new Date().toISOString()}] main: broadcast event type=${event.type} sid=${sid?.slice(0,8)} boundWindows=${boundWins?.size || 0}\n`, 'utf-8')
+      }
+      broadcastTerminalEvent(sid, 'claude:event', event)
+    })
+    proc.on('status', (s: any) => {
+      broadcastTerminalEvent(sid, 'claude:status-update', s)
+      broadcastTerminalEvent(sid, 'terminal:status', s)
+      // 终端错误 → 转发到 Chat stderr 通道展示
+      if (s.error) {
+        broadcastTerminalEvent(sid, 'claude:stderr', `[终端] ${s.error}`)
+      }
+    })
+    proc.on('permission-prompt', (prompt: { text: string; timestamp: number }) => {
+      broadcastTerminalEvent(sid, 'claude:permission-prompt', prompt)
+    })
+
+    terminalProcess = proc
+    terminalProcesses.set(sid, proc)
+    proc.start()
+    return { success: true }
+  })
+
+  ipcMain.handle('terminal:restart', async (event) => {
+    findTerminal(event)?.restart()
+    return { success: true }
+  })
+
+  ipcMain.on('terminal:input', (event, data: string) => {
+    const tp = findTerminal(event)
+    if (tp) {
+      fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
+        `[${new Date().toISOString()}] terminal:input write dataLen=${data.length} running=${tp.isRunning}\n`, 'utf-8')
+      tp.write(data)
+    } else {
+      fs.appendFileSync(path.join(os.homedir(), 'claude-space-debug.log'),
+        `[${new Date().toISOString()}] terminal:input NO TERMINAL FOUND\n`, 'utf-8')
+    }
+  })
+
+  ipcMain.on('terminal:resize', (event, opts: { cols: number; rows: number }) => {
+    findTerminal(event)?.resize(opts.cols, opts.rows)
+  })
+
+  ipcMain.handle('terminal:kill', async (event) => {
+    const tp = findTerminal(event)
+    if (tp) {
+      for (const [id, p] of terminalProcesses) {
+        if (p === tp) { terminalProcesses.delete(id); break }
+      }
+      tp.kill()
+      if (terminalProcess === tp) terminalProcess = null
+    }
+    return { success: true }
+  })
+
+  ipcMain.handle('terminal:set-permission-mode', async (event, mode: 'auto' | 'manual') => {
+    const tp = findTerminal(event)
+    if (tp) {
+      tp.updatePermissionMode(mode)
+      return { success: true }
+    }
+    // 也更新所有已注册终端进程
+    for (const [, proc] of terminalProcesses) {
+      proc.updatePermissionMode(mode)
+    }
+    return { success: true }
+  })
+
+  ipcMain.handle('terminal:status', async (event) => {
+    const tp = findTerminal(event)
+    return {
+      running: tp?.isRunning || false,
+      claudeRunning: tp?.isClaudeRunning || false,
+      sessionId: tp?.sessionId || null,
+      error: tp?.lastError || '',
+    }
+  })
+
+  // ── SSH 远程管理 ──────────────────────────────────────
+
+  ipcMain.handle('ssh:connect', async (_event, serverId: string) => {
+    const raw = loadSettings()
+    const cfg = raw?.sshServers?.find(s => s.id === serverId)
+    if (!cfg) return { success: false, error: 'SSH 服务器配置未找到' }
+    // 清理主机地址：去掉 http:// https:// 和尾部斜杠
+    const cleanCfg = { ...cfg, host: cfg.host.replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim() }
+    return sshService.connect(cleanCfg)
+  })
+
+  ipcMain.handle('ssh:disconnect', async (_event, serverId: string) => {
+    sshService.disconnect(serverId)
+    // 同时关闭该服务器的远程终端
+    const term = sshTerminals.get(serverId)
+    if (term) { term.kill(); sshTerminals.delete(serverId) }
+    if (activeSshTerminal && activeSshTerminal === term) activeSshTerminal = null
+    return { success: true }
+  })
+
+  ipcMain.handle('ssh:status', async () => {
+    if (activeSshTerminal) {
+      return {
+        serverId: activeSshTerminal['options']?.serverId || null,
+        status: activeSshTerminal.isConnected ? 'connected' : 'disconnected',
+        error: activeSshTerminal.lastError,
+        connectedAt: null,
+      }
+    }
+    return { serverId: null, status: 'disconnected', error: '', connectedAt: null }
+  })
+
+  ipcMain.handle('ssh:test-connection', async (_event, config: any) => {
+    const testConfig: SshServerConfig = {
+      id: 'test-' + Date.now().toString(36),
+      name: config.name || 'Test',
+      host: (config.host || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').trim(),
+      port: config.port || 22,
+      username: config.username,
+      authMethod: config.authMethod || 'password',
+      password: config.newPassword || config.password || '',
+      privateKeyPath: config.privateKeyPath || '',
+      privateKeyContent: config.newPrivateKeyContent || '',
+      fingerprint: config.fingerprint,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    return sshService.testConnection(testConfig)
+  })
+
+  ipcMain.handle('ssh:list-remote-files', async (_event, opts: { serverId: string; remotePath: string; maxDepth?: number }) => {
+    try {
+      const files = await sshService.listDirectory(opts.serverId, opts.remotePath, opts.maxDepth || 3)
+      return files
+    } catch (err: any) {
+      return []
+    }
+  })
+
+  ipcMain.handle('ssh:read-remote-file', async (_event, opts: { serverId: string; remotePath: string }) => {
+    return sshService.readFile(opts.serverId, opts.remotePath)
+  })
+
+  ipcMain.handle('ssh:write-remote-file', async (_event, opts: { serverId: string; remotePath: string; content: string }) => {
+    return sshService.writeFile(opts.serverId, opts.remotePath, opts.content)
+  })
+
+  ipcMain.handle('ssh:exec-command', async (_event, opts: { serverId: string; command: string; timeoutMs?: number }) => {
+    return sshService.execCommand(opts.serverId, opts.command, opts.timeoutMs || 30000)
+  })
+
+  // ── 远程终端 ──
+
+  ipcMain.handle('ssh:start-terminal', async (_event, opts: { serverId: string; cols?: number; rows?: number }) => {
+    // 先关闭旧终端
+    const existing = sshTerminals.get(opts.serverId)
+    if (existing) existing.kill()
+
+    console.log('[main] ssh:start-terminal serverId:', opts.serverId)
+    const term = new SshTerminalProcess({
+      serverId: opts.serverId,
+      sshService,
+      cols: opts.cols || 120,
+      rows: opts.rows || 40,
+    })
+
+    // 事件转发
+    term.on('terminal-data', (data: string) => {
+      if (term === activeSshTerminal) {
+        mainWindow?.webContents.send('ssh:terminal-data', data)
+      }
+    })
+    term.on('status', (s: any) => {
+      console.log('[main] ssh-terminal status:', JSON.stringify(s))
+      if (term === activeSshTerminal) {
+        mainWindow?.webContents.send('ssh:terminal-status', s)
+      }
+    })
+
+    sshTerminals.set(opts.serverId, term)
+    activeSshTerminal = term
+    term.start()
+    return { success: true }
+  })
+
+  ipcMain.on('ssh:terminal-input', (_event, data: string) => {
+    activeSshTerminal?.write(data)
+  })
+
+  ipcMain.on('ssh:terminal-resize', (_event, opts: { cols: number; rows: number }) => {
+    activeSshTerminal?.resize(opts.cols, opts.rows)
+  })
+
+  ipcMain.handle('ssh:terminal-kill', async () => {
+    if (activeSshTerminal) {
+      const serverId = (activeSshTerminal as any).options?.serverId
+      activeSshTerminal.kill()
+      if (serverId) sshTerminals.delete(serverId)
+      activeSshTerminal = null
+    }
+    return { success: true }
+  })
+
+  // ── 部署 ──
+
+  ipcMain.handle('ssh:deploy', async (_event, opts: { projectPath: string; deployTargetId: string }) => {
+    const raw = loadSettings()
+    const target = raw?.deployTargets?.find(t => t.id === opts.deployTargetId)
+    if (!target) return { success: false, error: '部署目标配置未找到' }
+
+    // 检查 SSH 连接
+    const connStatus = sshService.getStatus(target.sshServerId)
+    if (!connStatus.connected) return { success: false, error: `未连接到 SSH 服务器，请先在 SSH 面板连接` }
+
+    // 执行部署前命令
+    for (const cmd of target.preDeployCommands) {
+      mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'pre-command', command: cmd })
+      try { await sshService.execCommand(target.sshServerId, cmd) } catch (_e) { /* silent */ }
+    }
+
+    // 上传文件
+    mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'upload', currentFile: '', progress: 0 })
+    const excludes = target.excludePatterns?.length ? target.excludePatterns : ['node_modules', '.git', '.env', 'dist']
+    const result = await sshService.uploadDirectory(
+      target.sshServerId, opts.projectPath, target.remotePath,
+      excludes, (msg: string) => {
+        mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'upload', currentFile: msg, progress: 0 })
+      }
+    )
+
+    if (!result.success) return { success: false, error: result.error, uploaded: result.uploaded }
+
+    // 执行部署后命令
+    for (const cmd of target.postDeployCommands) {
+      mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'post-command', command: cmd })
+      try { await sshService.execCommand(target.sshServerId, cmd) } catch (_e) { /* silent */ }
+    }
+
+    mainWindow?.webContents.send('ssh:deploy-status', { targetId: target.id, phase: 'completed', uploaded: result.uploaded })
+    return { success: true, uploaded: result.uploaded }
+  })
+
+  // 窗口控制 — 使用 event.sender 定位正确的窗口
+  ipcMain.handle('win:minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+  ipcMain.handle('win:maximize', (event) => {
+    const w = BrowserWindow.fromWebContents(event.sender)
+    if (w?.isMaximized()) w.unmaximize()
+    else w?.maximize()
+  })
+  ipcMain.handle('win:close', (event) => {
+    const w = BrowserWindow.fromWebContents(event.sender)
+    w?.close()
+  })
+  ipcMain.handle('win:is-maximized', (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+  })
+    ipcMain.handle('app:workspace-root', async () => getActiveWorkspaceRoot())
+
+  // ── 项目技能管理 ──────────────────────────────────
+  const PROJECT_SKILLS_FILE = '.claude/project-skills.json'
+
+  function getProjectSkillsPath(): string {
+    return path.join(getActiveWorkspaceRoot(), PROJECT_SKILLS_FILE)
+  }
+
+  function loadProjectSkills(): string[] {
+    try {
+      const fp = getProjectSkillsPath()
+      if (fs.existsSync(fp)) return JSON.parse(fs.readFileSync(fp, 'utf-8'))
+    } catch {}
+    return []
+  }
+
+  function saveProjectSkills(skills: string[]) {
+    const fp = getProjectSkillsPath()
+    const dir = path.dirname(fp)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(fp, JSON.stringify(skills, null, 2), 'utf-8')
+  }
+
+  ipcMain.handle('skill:list-project', async () => {
+    try { return { success: true, skills: loadProjectSkills() } } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:install-to-project', async (_e, skillName: string) => {
+    try {
+      const list = loadProjectSkills()
+      if (!list.includes(skillName)) { list.push(skillName); saveProjectSkills(list) }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:remove-from-project', async (_e, skillName: string) => {
+    try {
+      const list = loadProjectSkills()
+      const idx = list.indexOf(skillName)
+      if (idx >= 0) { list.splice(idx, 1); saveProjectSkills(list) }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  ipcMain.handle('skill:clear-project', async () => {
+    try { saveProjectSkills([]); return { success: true } } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 自动化工坊：循环任务 ────────────────────────────
+  const LOOPS_FILE = path.join(os.homedir(), '.claude', 'loops.json')
+  /** 定时器映射：loopId → { timer: NodeJS.Timeout, intervalMs: number, running: boolean } */
+  const loopTimers = new Map<string, { timer: NodeJS.Timeout; intervalMs: number; running: boolean }>()
+
+  function parseInterval(interval: string): number {
+    const m = interval.match(/^(\d+)\s*(m|min|h|d|s)?$/)
+    if (!m) return 600000 // 默认 10 分钟
+    const num = parseInt(m[1])
+    switch (m[2] || 'm') {
+      case 's': return num * 1000
+      case 'm': case 'min': return num * 60000
+      case 'h': return num * 3600000
+      case 'd': return num * 86400000
+      default: return num * 60000
+    }
+  }
+
+  /** 广播 loop 状态到前端 */
+  function broadcastLoopStatus(loop: any) {
+    for (const w of windows) {
+      try { if (!w.isDestroyed()) w.webContents.send('loop:status', { id: loop.id, status: loop.status, lastRun: loop.lastRun }) } catch {}
+    }
+  }
+
+  /** 真正执行一次循环任务：spawn Claude CLI 子进程执行 prompt */
+  const CLAUDE_BIN = resolveClaudePath()
+  function executeLoopOnce(loop: any): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const args = ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'bypassPermissions']
+      const child = spawn(CLAUDE_BIN, args, {
+        cwd: undefined,
+        windowsHide: true,
+        timeout: 300000, // 5 分钟超时
+      })
+
+      let output = ''
+      let errorOutput = ''
+
+      child.stdout?.on('data', (d: Buffer) => { output += d.toString() })
+      child.stderr?.on('data', (d: Buffer) => { errorOutput += d.toString() })
+
+      child.on('close', (code) => {
+        if (code === 0) resolve(output || '(无输出)')
+        else reject(new Error(errorOutput || `exit code ${code}`))
+      })
+      child.on('error', (e) => reject(e))
+
+      // 发送提示词
+      const msg = JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: loop.prompt }] } }) + '\n'
+      child.stdin?.write(msg)
+      child.stdin?.end()
+    })
+  }
+
+  /** 调度一个循环任务（启动定时器） */
+  function scheduleLoop(loop: any) {
+    // 清除旧的定时器
+    const existing = loopTimers.get(loop.id)
+    if (existing) { clearInterval(existing.timer); loopTimers.delete(loop.id) }
+
+    const intervalMs = parseInterval(loop.interval)
+    const timer = setInterval(async () => {
+      const entry = loopTimers.get(loop.id)
+      if (!entry || entry.running) return // 正在执行则跳过
+
+      entry.running = true
+      const loops = loadLoops()
+      const l = loops.find((x: any) => x.id === loop.id)
+      if (!l) { clearInterval(entry.timer); loopTimers.delete(loop.id); return }
+
+      l.status = 'running'
+      l.lastRun = new Date().toISOString()
+      saveLoops(loops)
+      broadcastLoopStatus(l)
+
+      try {
+        await executeLoopOnce(l)
+        l.status = 'idle'
+      } catch (err: any) {
+        l.status = 'error'
+        l.lastError = err.message?.slice(0, 200)
+      }
+      saveLoops(loops)
+      broadcastLoopStatus(l)
+      entry.running = false
+    }, intervalMs)
+
+    loopTimers.set(loop.id, { timer, intervalMs, running: false })
+  }
+
+  function loadLoops(): any[] { try { if (fs.existsSync(LOOPS_FILE)) return JSON.parse(fs.readFileSync(LOOPS_FILE, 'utf-8')) } catch {} return [] }
+  function saveLoops(loops: any[]) { const dir = path.dirname(LOOPS_FILE); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(LOOPS_FILE, JSON.stringify(loops, null, 2), 'utf-8') }
+
+  ipcMain.handle('loop:list', async () => { try { return { success: true, loops: loadLoops() } } catch (e: any) { return { success: false, error: e.message } } })
+  ipcMain.handle('loop:create', async (_e, opts: { name: string; prompt: string; interval: string }) => {
+    try {
+      const loops = loadLoops()
+      const loop = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: opts.name, prompt: opts.prompt, interval: opts.interval || '10m', status: 'idle', lastRun: null, lastError: null, createdAt: new Date().toISOString() }
+      loops.push(loop)
+      saveLoops(loops)
+      // 自动调度
+      scheduleLoop(loop)
+      return { success: true, loop }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+  ipcMain.handle('loop:delete', async (_e, id: string) => {
+    try {
+      const loops = loadLoops()
+      saveLoops(loops.filter((l: any) => l.id !== id))
+      const existing = loopTimers.get(id)
+      if (existing) { clearInterval(existing.timer); loopTimers.delete(id) }
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+  ipcMain.handle('loop:run-now', async (_e, id: string) => {
+    try {
+      const loops = loadLoops()
+      const loop = loops.find((l: any) => l.id === id)
+      if (!loop) return { success: false, error: 'not found' }
+      // 不阻塞 IPC 返回，后台执行
+      setImmediate(async () => {
+        loop.status = 'running'
+        loop.lastRun = new Date().toISOString()
+        saveLoops(loops)
+        broadcastLoopStatus(loop)
+        try {
+          await executeLoopOnce(loop)
+          loop.status = 'idle'
+        } catch (err: any) {
+          loop.status = 'error'
+          loop.lastError = err.message?.slice(0, 200)
+        }
+        saveLoops(loops)
+        broadcastLoopStatus(loop)
+      })
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+  ipcMain.handle('loop:update', async (_e, opts: { id: string; name?: string; prompt?: string; interval?: string }) => {
+    try {
+      const loops = loadLoops()
+      const loop = loops.find((l: any) => l.id === opts.id)
+      if (!loop) return { success: false, error: 'not found' }
+      if (opts.name !== undefined) loop.name = opts.name
+      if (opts.prompt !== undefined) loop.prompt = opts.prompt
+      if (opts.interval !== undefined) { loop.interval = opts.interval; loop.status = 'idle' }
+      saveLoops(loops)
+      // 重新调度（如果 interval 或启动状态变化）
+      if (opts.interval !== undefined) scheduleLoop(loop)
+      return { success: true }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 工作流执行 ────────────────────────────────────
+  const WFRUNS_FILE = path.join(os.homedir(), '.claude', 'workflow-runs.json')
+  function loadRuns(): any[] { try { if (fs.existsSync(WFRUNS_FILE)) return JSON.parse(fs.readFileSync(WFRUNS_FILE, 'utf-8')) } catch {} return [] }
+  function saveRuns(runs: any[]) { const dir = path.dirname(WFRUNS_FILE); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(WFRUNS_FILE, JSON.stringify(runs, null, 2), 'utf-8') }
+
+  /** 更新运行记录并广播进度 */
+  function updateRunAndBroadcast(run: any) {
+    saveRuns(loadRuns().map((r: any) => r.id === run.id ? run : r))
+    for (const w of windows) {
+      try { if (!w.isDestroyed()) w.webContents.send('workflow:log', { runId: run.id, ...run }) } catch {}
+    }
+  }
+
+  /** 执行工作流的单个阶段：spawn Claude CLI 执行 prompt */
+  function executeWfPhase(prompt: string, model: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const args = ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'bypassPermissions']
+      const child = spawn(CLAUDE_BIN, args, { windowsHide: true, timeout: 600000 })
+      let output = ''
+      let errorOutput = ''
+      child.stdout?.on('data', (d: Buffer) => { output += d.toString() })
+      child.stderr?.on('data', (d: Buffer) => { errorOutput += d.toString() })
+      child.on('close', (code) => { code === 0 ? resolve(output || '(无输出)') : reject(new Error(errorOutput || `exit ${code}`)) })
+      child.on('error', (e) => reject(e))
+      const msg = JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: prompt }] } }) + '\n'
+      child.stdin?.write(msg)
+      child.stdin?.end()
+    })
+  }
+
+  /** 异步执行完整工作流 */
+  async function runWorkflowAsync(run: any, phases: Array<{ name: string; type: string; prompt: string; model: string }>) {
+    try {
+      run.status = 'running'
+      run.phases = phases.map(p => ({ name: p.name, type: p.type, status: 'pending', startedAt: null, completedAt: null, result: null }))
+      updateRunAndBroadcast(run)
+
+      for (let i = 0; i < phases.length; i++) {
+        const phase = phases[i]
+        const phaseMeta = run.phases[i]
+        phaseMeta.status = 'running'
+        phaseMeta.startedAt = new Date().toISOString()
+        updateRunAndBroadcast(run)
+
+        // 广播阶段开始
+        for (const w of windows) {
+          try { if (!w.isDestroyed()) w.webContents.send('workflow:status', { runId: run.id, phaseIndex: i, phase, status: 'running' }) } catch {}
+        }
+
+        if (phase.type === 'single' || phase.type === 'loop') {
+          try {
+            const result = await executeWfPhase(phase.prompt, phase.model)
+            phaseMeta.status = 'completed'
+            phaseMeta.completedAt = new Date().toISOString()
+            phaseMeta.result = result.slice(0, 500)
+          } catch (err: any) {
+            phaseMeta.status = 'error'
+            phaseMeta.completedAt = new Date().toISOString()
+            phaseMeta.result = `错误: ${err.message?.slice(0, 200)}`
+          }
+          updateRunAndBroadcast(run)
+        } else if (phase.type === 'parallel') {
+          // 并行执行：将 prompt 拆成多个独立子任务（按行或分割）
+          const subPrompts = phase.prompt.split('\n').filter((p: string) => p.trim().length > 0)
+          if (subPrompts.length === 0) subPrompts.push(phase.prompt)
+
+          const results = await Promise.allSettled(subPrompts.map((sp: string) => executeWfPhase(sp, phase.model)))
+          phaseMeta.status = 'completed'
+          phaseMeta.completedAt = new Date().toISOString()
+          phaseMeta.result = results.map((r: any, idx: number) =>
+            `[子任务 ${idx + 1}] ${r.status === 'fulfilled' ? r.value.slice(0, 200) : r.reason?.message?.slice(0, 200)}`
+          ).join('\n')
+          if (results.some((r: any) => r.status === 'rejected')) phaseMeta.status = 'error'
+          updateRunAndBroadcast(run)
+        }
+
+        // 广播阶段完成
+        for (const w of windows) {
+          try { if (!w.isDestroyed()) w.webContents.send('workflow:status', { runId: run.id, phaseIndex: i, phase, status: phaseMeta.status }) } catch {}
+        }
+      }
+
+      const allOk = run.phases.every((p: any) => p.status === 'completed')
+      run.status = allOk ? 'success' : 'failed'
+      run.completedAt = new Date().toISOString()
+      run.result = run.phases.map((p: any) => `[${p.name}] ${p.status}`).join('\n')
+      updateRunAndBroadcast(run)
+    } catch (err: any) {
+      run.status = 'failed'
+      run.completedAt = new Date().toISOString()
+      run.result = `工作流异常: ${err.message?.slice(0, 200)}`
+      updateRunAndBroadcast(run)
+    }
+  }
+
+  ipcMain.handle('workflow:list-runs', async () => { try { return { success: true, runs: loadRuns() } } catch (e: any) { return { success: false, error: e.message } } })
+  ipcMain.handle('workflow:run', async (_e, opts: { templateId: string; name: string; phases: Array<{ name: string; type: string; prompt: string; model: string }> }) => {
+    try {
+      const run = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), templateId: opts.templateId, name: opts.name, status: 'queued', startedAt: new Date().toISOString(), completedAt: null, result: null, phases: [] }
+      const runs = loadRuns(); runs.push(run); saveRuns(runs)
+      // 异步执行，不阻塞 IPC 返回
+      setImmediate(() => runWorkflowAsync(run, opts.phases || []))
+      return { success: true, run }
+    } catch (e: any) { return { success: false, error: e.message } }
+  })
+
+  // ── 工作空间管理 IPC ──────────────────────────────
+  ipcMain.handle('workspace:list', async () => {
+    // 首次调用且 _workspaces 为空时，自动创建默认空间并同步到内存
+    if (_workspaces.length === 0) {
+      _workspaces = [{
+        id: '_default', name: '默认工作空间', path: _workspaceRoot, isActive: true,
+        createdAt: new Date().toISOString(),
+      }]
+      // 持久化默认空间，确保后续 settings:load 也能加载到
+      const existing = loadSettings()
+      if (!existing?.workspaces?.length) {
+        saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+      }
+    }
+    return _workspaces
+  })
+
+  ipcMain.handle('workspace:add', async (_event, opts: { name: string; path: string }) => {
+    const id = 'ws_' + Date.now().toString(36)
+    const ws: WorkspaceConfig = { id, name: opts.name, path: opts.path, isActive: false, createdAt: new Date().toISOString() }
+    _workspaces.push(ws)
+    // 持久化到 settings
+    const existing = loadSettings()
+    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+    return { success: true, workspace: ws }
+  })
+
+  ipcMain.handle('workspace:remove', async (_event, workspaceId: string) => {
+    const idx = _workspaces.findIndex(w => w.id === workspaceId)
+    if (idx < 0) return { success: false, error: '工作空间不存在' }
+    const wasActive = _workspaces[idx].isActive
+    _workspaces.splice(idx, 1)
+    if (wasActive && _workspaces.length > 0) {
+      _workspaces[0].isActive = true
+      _workspaceRoot = _workspaces[0].path
+    } else if (_workspaces.length === 0) {
+      _workspaceRoot = getWorkspaceRoot()
+    }
+    const existing = loadSettings()
+    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:set-active', async (_event, workspaceId: string) => {
+    let found = false
+    _workspaces = _workspaces.map(w => {
+      if (w.id === workspaceId) { found = true; _workspaceRoot = w.path; return { ...w, isActive: true } }
+      return { ...w, isActive: false }
+    })
+    if (!found) return { success: false, error: '工作空间不存在' }
+    const existing = loadSettings()
+    saveSettings({ ...(existing || {} as any), workspaces: _workspaces, version: existing?.version || 1 })
+    return { success: true, path: _workspaceRoot }
+  })
+}
+
+// ── 应用生命周期 ────────────────────────────────────────

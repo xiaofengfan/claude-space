@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentOS — 多模型AI协作平台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0f1923;font-family:'SF Pro Display','Segoe UI',sans-serif}
+canvas{display:none}
+
+/* ── Background gradient ── */
+#bg{
+  position:fixed;inset:0;
+  background:radial-gradient(ellipse at 30% 20%,#0d2035 0%,#0a1520 40%,#080e18 100%);
+  z-index:0;
+}
+.bg-grid{
+  position:fixed;inset:0;z-index:1;
+  background-image:
+    linear-gradient(rgba(0,180,255,.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,180,255,.04) 1px,transparent 1px);
+  background-size:60px 60px;
+  transform:perspective(800px) rotateX(60deg) scale(2.5) translateY(-20%);
+  transform-origin:50% 0;
+  pointer-events:none;
+}
+.bg-glow1{position:fixed;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(0,120,255,.06) 0%,transparent 70%);top:-100px;left:100px;z-index:1;pointer-events:none}
+.bg-glow2{position:fixed;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(0,220,160,.05) 0%,transparent 70%);bottom:0;right:200px;z-index:1;pointer-events:none}
+
+/* ── Scene container ── */
+#scene{
+  position:fixed;inset:0;z-index:10;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+}
+#scene-inner{
+  position:relative;
+  transform-origin:center center;
+}
+
+/* ── UI Overlay ── */
+#ui-overlay{position:fixed;inset:0;z-index:100;pointer-events:none}
+
+/* Top bar */
+.topbar{
+  position:absolute;top:0;left:0;right:0;height:52px;
+  display:flex;align-items:center;padding:0 28px;gap:20px;
+  background:linear-gradient(180deg,rgba(8,14,24,.95) 0%,rgba(8,14,24,.6) 100%);
+  border-bottom:1px solid rgba(0,180,255,.12);
+  pointer-events:all;
+}
+.tb-logo{
+  font-size:16px;font-weight:800;letter-spacing:3px;color:#00d4ff;
+  display:flex;align-items:center;gap:8px;
+}
+.tb-logo-icon{
+  width:24px;height:24px;border-radius:50%;border:2px solid #00d4ff;
+  display:flex;align-items:center;justify-content:center;position:relative;
+}
+.tb-logo-icon::after{
+  content:'';width:8px;height:8px;border-radius:50%;background:#00d4ff;
+  animation:logoPulse 2s ease-in-out infinite;
+}
+@keyframes logoPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.6);opacity:.5}}
+.tb-nav{display:flex;gap:2px;margin-left:16px}
+.tb-nav a{
+  font-size:11px;padding:5px 12px;border-radius:5px;color:rgba(255,255,255,.4);
+  cursor:pointer;transition:all .2s;letter-spacing:.4px;pointer-events:all;text-decoration:none;
+}
+.tb-nav a:hover{color:#fff;background:rgba(255,255,255,.06)}
+.tb-nav a.active{color:#00d4ff;background:rgba(0,212,255,.08)}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.live-pill{
+  display:flex;align-items:center;gap:5px;font-size:10px;color:#00e5a0;
+  padding:4px 10px;border-radius:20px;background:rgba(0,229,160,.07);
+  border:1px solid rgba(0,229,160,.2);
+}
+.live-dot{width:5px;height:5px;border-radius:50%;background:#00e5a0;animation:blink 1.4s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.tb-clock{font-size:11px;color:rgba(255,255,255,.3);letter-spacing:1px;font-family:'SF Mono','JetBrains Mono',monospace}
+.tb-btn{
+  padding:6px 14px;border-radius:6px;font-size:10px;cursor:pointer;
+  background:rgba(0,212,255,.1);color:#00d4ff;border:1px solid rgba(0,212,255,.3);
+  pointer-events:all;transition:all .2s;letter-spacing:.3px;
+}
+.tb-btn:hover{background:rgba(0,212,255,.2)}
+
+/* Status cards */
+.stat-cards{
+  position:absolute;top:66px;right:20px;
+  display:flex;flex-direction:column;gap:8px;
+  pointer-events:all;
+}
+.stat-card{
+  background:rgba(8,14,24,.85);border:1px solid rgba(0,180,255,.15);
+  border-radius:10px;padding:12px 14px;min-width:160px;
+  backdrop-filter:blur(12px);cursor:default;transition:all .2s;
+}
+.stat-card:hover{border-color:rgba(0,180,255,.3);background:rgba(8,14,24,.95)}
+.sc-top{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.sc-dot{width:6px;height:6px;border-radius:50%}
+.sc-title{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,.35)}
+.sc-value{font-size:20px;font-weight:700;line-height:1;margin-bottom:3px}
+.sc-sub{font-size:9px;color:rgba(255,255,255,.3)}
+.sc-bar{height:2px;background:rgba(255,255,255,.08);border-radius:1px;overflow:hidden;margin-top:6px}
+.sc-bar-fill{height:100%;border-radius:1px;transition:width .8s}
+
+/* Agent list panel */
+.agent-panel{
+  position:absolute;top:66px;left:20px;
+  background:rgba(8,14,24,.85);border:1px solid rgba(0,180,255,.15);
+  border-radius:10px;padding:14px;min-width:200px;
+  backdrop-filter:blur(12px);pointer-events:all;
+}
+.panel-title{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:10px}
+.agent-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.agent-row:last-child{border-bottom:none}
+.ar-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;animation:blink 2s ease-in-out infinite}
+.ar-name{font-size:11px;color:rgba(255,255,255,.7);flex:1}
+.ar-status{font-size:9px;padding:2px 6px;border-radius:3px}
+.ar-status.active{background:rgba(0,229,160,.1);color:#00e5a0}
+.ar-status.busy{background:rgba(255,184,0,.1);color:#ffb800}
+.ar-tasks{font-size:9px;color:rgba(255,255,255,.25);margin-left:auto}
+
+/* Bottom info bar */
+.bottom-bar{
+  position:absolute;bottom:0;left:0;right:0;
+  padding:12px 24px;
+  background:linear-gradient(0deg,rgba(8,14,24,.9) 0%,transparent 100%);
+  display:flex;align-items:center;gap:16px;
+}
+.bb-item{display:flex;align-items:center;gap:6px;font-size:10px;color:rgba(255,255,255,.3)}
+.bb-dot{width:4px;height:4px;border-radius:50%}
+.bb-sep{width:1px;height:12px;background:rgba(255,255,255,.1)}
+.bb-pulse{animation:blink 2.5s ease-in-out infinite}
+
+/* Tooltip */
+.tooltip{
+  position:absolute;pointer-events:none;z-index:200;
+  background:rgba(8,14,24,.96);border:1px solid rgba(0,180,255,.25);
+  border-radius:8px;padding:10px 13px;
+  font-size:11px;color:rgba(255,255,255,.85);
+  min-width:140px;backdrop-filter:blur(16px);
+  display:none;transition:opacity .15s;
+}
+.tooltip.show{display:block}
+.tt-title{font-weight:700;margin-bottom:4px;color:#fff;font-size:12px}
+.tt-row{display:flex;justify-content:space-between;gap:12px;font-size:10px;margin-top:3px;color:rgba(255,255,255,.5)}
+.tt-val{color:rgba(255,255,255,.8)}
+
+/* Task feed */
+.task-feed{
+  position:absolute;bottom:50px;right:20px;
+  background:rgba(8,14,24,.82);border:1px solid rgba(0,180,255,.12);
+  border-radius:10px;padding:12px 14px;width:220px;
+  backdrop-filter:blur(12px);pointer-events:all;
+  max-height:200px;overflow:hidden;
+}
+.tf-title{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:8px}
+.tf-item{
+  font-size:9px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);
+  display:flex;gap:6px;align-items:flex-start;
+}
+.tf-item:last-child{border-bottom:none}
+.tf-icon{flex-shrink:0;width:14px;text-align:center}
+.tf-text{color:rgba(255,255,255,.5);line-height:1.4;flex:1}
+.tf-time{color:rgba(255,255,255,.2);font-size:8px;white-space:nowrap}
+
+/* ── Floating data lines ── */
+.data-line{
+  position:absolute;height:1px;background:linear-gradient(90deg,transparent,rgba(0,180,255,.5),transparent);
+  pointer-events:none;animation:dataFlow 3s linear infinite;opacity:0;
+}
+@keyframes dataFlow{0%{opacity:0;transform:translateX(-100%)}20%{opacity:1}80%{opacity:1}100%{opacity:0;transform:translateX(100%)}}
+
+/* ── Character speech bubble ── */
+.speech-bubble{
+  position:absolute;background:rgba(8,14,24,.92);border:1px solid rgba(0,180,255,.3);
+  border-radius:8px 8px 8px 0;padding:7px 10px;font-size:10px;color:#fff;
+  pointer-events:none;white-space:nowrap;backdrop-filter:blur(8px);
+  animation:float 3s ease-in-out infinite;
+}
+.speech-bubble::before{
+  content:'';position:absolute;bottom:-6px;left:8px;
+  border:3px solid transparent;border-top-color:rgba(0,180,255,.3);
+}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+
+/* Notification popup */
+.notif{
+  position:absolute;right:190px;top:80px;
+  background:rgba(8,14,24,.92);border:1px solid rgba(0,229,160,.25);
+  border-radius:8px;padding:10px 14px;font-size:10px;
+  color:rgba(255,255,255,.7);backdrop-filter:blur(12px);
+  animation:slideIn .4s ease both;pointer-events:none;
+}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+.notif-title{color:#00e5a0;font-weight:700;font-size:11px;margin-bottom:3px}
+
+</style>
+
+</head>
+<body>
+<div id="bg"></div>
+<div class="bg-grid"></div>
+<div class="bg-glow1"></div>
+<div class="bg-glow2"></div>
+
+<!-- Scene SVG -->
+<div id="scene">
+  <div id="scene-inner">
+    <svg id="office-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" style="display:block;filter:drop-shadow(0 40px 80px rgba(0,0,0,.8))">
+      <defs>
+        <linearGradient id="floorGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1a2535"/>
+          <stop offset="100%" stop-color="#0f1824"/>
+        </linearGradient>
+        <linearGradient id="wallGradL" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#1e2d42"/>
+          <stop offset="100%" stop-color="#162030"/>
+        </linearGradient>
+        <linearGradient id="wallGradR" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#12192a"/>
+          <stop offset="100%" stop-color="#0e1520"/>
+        </linearGradient>
+        <linearGradient id="deskGradTop" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#2a3a50"/>
+          <stop offset="100%" stop-color="#1e2d40"/>
+        </linearGradient>
+        <linearGradient id="screenGlow" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#0044aa"/>
+          <stop offset="50%" stop-color="#0066ff"/>
+          <stop offset="100%" stop-color="#0033aa"/>
+        </linearGradient>
+        <linearGradient id="screenGlow2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#004422"/>
+          <stop offset="100%" stop-color="#006633"/>
+        </linearGradient>
+        <linearGradient id="ceilingGrad" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0%" stop-color="#1a2535" stop-opacity="0"/>
+          <stop offset="100%" stop-color="#1a2535" stop-opacity=".3"/>
+        </linearGradient>
+        <filter id="screenBloom" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="4" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="softShadow">
+          <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity=".4"/>
+        </filter>
+        <filter id="charShadow">
+          <feDropShadow dx="2" dy="4" stdDeviation="3" flood-color="#000" flood-opacity=".5"/>
+        </filter>
+
+        <!-- Isometric tile pattern for floor -->
+        <pattern id="isoGrid" x="0" y="0" width="60" height="34.6" patternUnits="userSpaceOnUse">
+          <polygon points="30,0 60,17.3 30,34.6 0,17.3" fill="none" stroke="rgba(0,150,255,.06)" stroke-width=".8"/>
+        </pattern>
+
+        <!-- Window light gradient -->
+        <linearGradient id="winLight" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#4488ff" stop-opacity=".15"/>
+          <stop offset="100%" stop-color="#0044aa" stop-opacity="0"/>
+        </linearGradient>
+
+        <!-- Plant gradient -->
+        <radialGradient id="plantGrad" cx="50%" cy="40%" r="50%">
+          <stop offset="0%" stop-color="#2d6a3f"/>
+          <stop offset="100%" stop-color="#1a3d25"/>
+        </radialGradient>
+
+        <!-- Character gradients -->
+        <linearGradient id="charBody1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3a7bd5"/>
+          <stop offset="100%" stop-color="#2a5baa"/>
+        </linearGradient>
+        <linearGradient id="charBody2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#e8a84e"/>
+          <stop offset="100%" stop-color="#c8882e"/>
+        </linearGradient>
+        <linearGradient id="charBody3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#d95050"/>
+          <stop offset="100%" stop-color="#b03030"/>
+        </linearGradient>
+        <linearGradient id="charBody4" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#5db866"/>
+          <stop offset="100%" stop-color="#3d9846"/>
+        </linearGradient>
+        <linearGradient id="skinGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f5c89a"/>
+          <stop offset="100%" stop-color="#d9a070"/>
+        </linearGradient>
+        <linearGradient id="skinGrad2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#c8834c"/>
+          <stop offset="100%" stop-color="#a86030"/>
+        </linearGradient>
+
+        <!-- LED strip gradient -->
+        <linearGradient id="ledStrip" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#00aaff" stop-opacity="0"/>
+          <stop offset="20%" stop-color="#00aaff" stop-opacity=".6"/>
+          <stop offset="50%" stop-color="#0066ff" stop-opacity=".8"/>
+          <stop offset="80%" stop-color="#00aaff" stop-opacity=".6"/>
+          <stop offset="100%" stop-color="#00aaff" stop-opacity="0"/>
+        </linearGradient>
+
+        <clipPath id="sceneClip">
+          <rect x="0" y="0" width="1400" height="900"/>
+        </clipPath>
+      </defs>
+
+      <g clip-path="url(#sceneClip)">
+
+      <!-- ═══ ROOM STRUCTURE ═══════════════════════════════ -->
+
+      <!-- Floor -->
+      <polygon points="100,650 700,380 1300,650 700,920" fill="url(#floorGrad)"/>
+      <!-- Floor iso grid overlay -->
+      <polygon points="100,650 700,380 1300,650 700,920" fill="url(#isoGrid)" opacity=".7"/>
+      <!-- Floor edge highlight -->
+      <line x1="100" y1="650" x2="1300" y2="650" stroke="rgba(0,150,255,.1)" stroke-width="1"/>
+
+      <!-- Left wall -->
+      <polygon points="100,200 100,650 700,380 700,820 100,200" fill="url(#wallGradL)" opacity=".0"/>
+      <polygon points="100,200 700,820" fill="none"/>
+
+      <!-- Back left wall -->
+      <polygon points="100,200 700,820 700,380 100,650" fill="none"/>
+      <!-- Actually the walls: -->
+      <!-- Left wall (going up-left) -->
+      <polygon points="100,650 100,200 400,50 400,490" fill="url(#wallGradL)"/>
+      <!-- Right wall (going up-right) -->
+      <polygon points="1300,650 1300,200 900,50 900,500" fill="url(#wallGradR)"/>
+      <!-- Back wall (top) -->
+      <polygon points="400,50 700,140 900,50 700,380" fill="#111d2d" opacity=".95"/>
+      <!-- Back wall extended -->
+      <polygon points="400,50 400,490 700,380 900,500 900,50 700,140" fill="#111d2d"/>
+      <!-- Back wall highlight lines -->
+      <line x1="400" y1="50" x2="700" y2="140" stroke="rgba(0,150,255,.08)" stroke-width="1"/>
+      <line x1="700" y1="140" x2="900" y2="50" stroke="rgba(0,150,255,.08)" stroke-width="1"/>
+      <line x1="400" y1="490" x2="700" y2="380" stroke="rgba(0,150,255,.1)" stroke-width="1"/>
+      <line x1="700" y1="380" x2="900" y2="500" stroke="rgba(0,150,255,.1)" stroke-width="1"/>
+
+      <!-- Ceiling frame -->
+      <polygon points="400,50 900,50 1300,200 700,140" fill="rgba(10,18,30,.6)"/>
+      <polygon points="100,200 400,50 700,140 100,200" fill="rgba(10,18,30,.5)"/>
+      <line x1="100" y1="200" x2="1300" y2="200" stroke="rgba(0,150,255,.08)" stroke-width="1"/>
+
+      <!-- LED ceiling strip -->
+      <line x1="200" y1="195" x2="700" y2="160" stroke="url(#ledStrip)" stroke-width="3" filter="url(#glow)" opacity=".8"/>
+      <line x1="700" y1="160" x2="1200" y2="195" stroke="url(#ledStrip)" stroke-width="3" filter="url(#glow)" opacity=".8"/>
+      <!-- Ceiling ambient light cones -->
+      <polygon points="350,195 200,650 500,700" fill="rgba(0,100,255,.015)" opacity=".8"/>
+      <polygon points="700,170 550,640 850,640" fill="rgba(0,100,255,.018)" opacity=".8"/>
+      <polygon points="1050,195 900,650 1200,700" fill="rgba(0,100,255,.015)" opacity=".8"/>
+
+      <!-- Window on back wall -->
+      <g id="window">
+        <!-- Window frame -->
+        <polygon points="540,80 660,118 660,270 540,232" fill="rgba(0,60,140,.3)"/>
+        <polygon points="540,80 660,118 660,270 540,232" fill="url(#winLight)"/>
+        <!-- Window bars -->
+        <line x1="540" y1="80" x2="540" y2="232" stroke="rgba(80,140,255,.4)" stroke-width="2"/>
+        <line x1="660" y1="118" x2="660" y2="270" stroke="rgba(80,140,255,.4)" stroke-width="2"/>
+        <line x1="540" y1="80" x2="660" y2="118" stroke="rgba(80,140,255,.4)" stroke-width="2"/>
+        <line x1="540" y1="155" x2="660" y2="194" stroke="rgba(80,140,255,.25)" stroke-width="1.5"/>
+        <line x1="540" y1="232" x2="660" y2="270" stroke="rgba(80,140,255,.4)" stroke-width="2"/>
+        <line x1="600" y1="80" x2="600" y2="232" stroke="rgba(80,140,255,.25)" stroke-width="1"/>
+        <!-- Window glow -->
+        <polygon points="540,80 660,118 660,270 540,232" fill="rgba(100,160,255,.04)" filter="url(#glow)"/>
+        <!-- City view in window (simplified skyline) -->
+        <polygon points="545,220 555,190 565,200 575,170 585,185 595,165 605,178 615,158 625,172 635,185 645,175 655,200 660,220" fill="rgba(0,40,80,.6)"/>
+        <rect x="545" y="100" width="3" height="80" fill="rgba(0,60,140,.4)"/>
+        <rect x="560" y="120" width="2" height="60" fill="rgba(0,60,140,.3)"/>
+        <!-- Stars in window -->
+        <circle cx="555" cy="95" r="1" fill="#fff" opacity=".6"><animate attributeName="opacity" values=".6;1;.6" dur="2s" repeatCount="indefinite"/></circle>
+        <circle cx="580" cy="88" r=".8" fill="#fff" opacity=".5"><animate attributeName="opacity" values=".5;.9;.5" dur="3s" repeatCount="indefinite"/></circle>
+        <circle cx="640" cy="100" r="1" fill="#fff" opacity=".4"><animate attributeName="opacity" values=".4;.8;.4" dur="2.5s" repeatCount="indefinite"/></circle>
+        <circle cx="620" cy="92" r=".6" fill="#adf" opacity=".5"><animate attributeName="opacity" values=".5;1;.5" dur="1.8s" repeatCount="indefinite"/></circle>
+      </g>
+
+      <!-- Second window right side -->
+      <g>
+        <polygon points="760,118 880,80 880,232 760,270" fill="rgba(0,60,140,.25)"/>
+        <polygon points="760,118 880,80 880,232 760,270" fill="url(#winLight)" opacity=".8"/>
+        <line x1="760" y1="118" x2="760" y2="270" stroke="rgba(80,140,255,.35)" stroke-width="2"/>
+        <line x1="880" y1="80" x2="880" y2="232" stroke="rgba(80,140,255,.35)" stroke-width="2"/>
+        <line x1="760" y1="118" x2="880" y2="80" stroke="rgba(80,140,255,.35)" stroke-width="2"/>
+        <line x1="760" y1="194" x2="880" y2="155" stroke="rgba(80,140,255,.2)" stroke-width="1.5"/>
+        <line x1="760" y1="270" x2="880" y2="232" stroke="rgba(80,140,255,.35)" stroke-width="2"/>
+        <line x1="820" y1="118" x2="820" y2="270" stroke="rgba(80,140,255,.2)" stroke-width="1"/>
+        <polygon points="760,118 880,80 880,232 760,270" fill="rgba(100,160,255,.03)" filter="url(#glow)"/>
+        <!-- City in 2nd window -->
+        <polygon points="765,255 778,215 790,230 802,195 815,208 828,185 840,200 855,175 868,190 877,210 880,255" fill="rgba(0,40,80,.55)"/>
+      </g>
+      <!-- ═══ FURNITURE & OBJECTS ══════════════════════════ -->
+
+      <!-- ── DESK CLUSTER 1 (back-left area, 3 desks in L-shape) ── -->
+      <!-- Desk 1A top surface -->
+      <g id="desk1a" filter="url(#softShadow)">
+        <!-- Desk top face -->
+        <polygon points="220,450 360,375 440,418 300,493" fill="url(#deskGradTop)"/>
+        <!-- Desk front face -->
+        <polygon points="220,450 300,493 300,533 220,490" fill="#172030"/>
+        <!-- Desk right face -->
+        <polygon points="440,418 300,493 300,533 440,458" fill="#111825"/>
+        <!-- Desk edge highlight -->
+        <line x1="220" y1="450" x2="440" y2="418" stroke="rgba(80,140,255,.25)" stroke-width="1.2"/>
+        <!-- Monitor -->
+        <!-- Stand -->
+        <polygon points="312,436 326,428 334,432 320,440" fill="#0d1520"/>
+        <rect x="315" y="430" width="8" height="18" fill="#0d1520" transform="rotate(-18,319,440)"/>
+        <!-- Screen back -->
+        <polygon points="298,392 332,373 348,382 314,401" fill="#0a1020"/>
+        <!-- Screen (glowing) -->
+        <polygon points="300,393 330,375 346,383 316,401" fill="url(#screenGlow)" filter="url(#screenBloom)"/>
+        <!-- Screen UI elements -->
+        <line x1="305" y1="380" x2="340" y2="363" stroke="rgba(100,180,255,.5)" stroke-width=".8"/>
+        <line x1="305" y1="385" x2="335" y2="370" stroke="rgba(100,180,255,.3)" stroke-width=".8"/>
+        <line x1="305" y1="390" x2="330" y2="376" stroke="rgba(100,180,255,.4)" stroke-width=".8"/>
+        <polygon points="305,396 318,390 318,394 305,400" fill="rgba(0,200,100,.5)"/>
+        <!-- Screen glow on desk -->
+        <polygon points="298,392 332,373 348,382 314,401" fill="rgba(0,80,255,.08)" filter="url(#glow)"/>
+        <!-- Keyboard -->
+        <polygon points="295,440 335,420 343,424 303,444" fill="#1a2535" rx="3"/>
+        <polygon points="295,440 303,444 303,447 295,443" fill="#0f1820"/>
+        <!-- Mouse -->
+        <ellipse cx="352" cy="428" rx="7" ry="4.5" fill="#1a2535" transform="rotate(-25,352,428)"/>
+        <!-- Coffee mug -->
+        <ellipse cx="260" cy="455" rx="8" ry="5" fill="#2a3545"/>
+        <path d="M268,455 Q272,452 272,449" stroke="#2a3545" stroke-width="3" fill="none"/>
+        <!-- Steam from coffee -->
+        <path d="M259,448 Q261,444 259,440" stroke="rgba(255,255,255,.2)" stroke-width="1.2" fill="none" stroke-linecap="round"><animate attributeName="opacity" values="0;.5;0" dur="2.5s" repeatCount="indefinite"/></path>
+        <path d="M262,447 Q264,443 262,439" stroke="rgba(255,255,255,.15)" stroke-width="1" fill="none" stroke-linecap="round"><animate attributeName="opacity" values="0;.4;0" dur="2s" begin=".5s" repeatCount="indefinite"/></path>
+        <!-- Notepad -->
+        <polygon points="245,466 270,453 278,458 253,471" fill="#eef2ff" opacity=".9"/>
+        <line x1="250" y1="462" x2="272" y2="451" stroke="rgba(100,120,200,.4)" stroke-width=".6"/>
+        <line x1="250" y1="465" x2="270" y2="455" stroke="rgba(100,120,200,.4)" stroke-width=".6"/>
+      </g>
+
+      <!-- Desk 1B (right of 1A) -->
+      <g id="desk1b" filter="url(#softShadow)">
+        <polygon points="380,420 520,345 600,388 460,463" fill="url(#deskGradTop)"/>
+        <polygon points="380,420 460,463 460,503 380,460" fill="#172030"/>
+        <polygon points="600,388 460,463 460,503 600,428" fill="#111825"/>
+        <line x1="380" y1="420" x2="600" y2="388" stroke="rgba(80,140,255,.2)" stroke-width="1"/>
+        <!-- Dual monitor setup -->
+        <!-- Monitor 1 -->
+        <polygon points="430,365 460,350 474,358 444,373" fill="#0a1020"/>
+        <polygon points="432,366 458,352 472,359 446,373" fill="url(#screenGlow2)" filter="url(#screenBloom)"/>
+        <!-- Code lines on green screen -->
+        <line x1="437" y1="357" x2="466" y2="343" stroke="rgba(100,255,160,.6)" stroke-width=".7"/>
+        <line x1="437" y1="361" x2="462" y2="348" stroke="rgba(100,255,160,.4)" stroke-width=".7"/>
+        <line x1="437" y1="365" x2="459" y2="352" stroke="rgba(100,255,160,.5)" stroke-width=".7"/>
+        <!-- Monitor 2 -->
+        <polygon points="475,353 505,338 519,346 489,361" fill="#0a1020"/>
+        <polygon points="477,354 503,340 517,347 491,361" fill="url(#screenGlow)" filter="url(#screenBloom)"/>
+        <line x1="481" y1="345" x2="511" y2="331" stroke="rgba(100,180,255,.5)" stroke-width=".7"/>
+        <line x1="481" y1="349" x2="508" y2="336" stroke="rgba(100,180,255,.35)" stroke-width=".7"/>
+        <!-- Plant on corner -->
+        <ellipse cx="413" cy="417" rx="9" ry="5.5" fill="#1a2d1e"/>
+        <path d="M413,415 Q408,400 415,390" stroke="#2d6a3f" stroke-width="3" fill="none"/>
+        <ellipse cx="408" cy="395" rx="7" ry="4" fill="#2d6a3f" transform="rotate(-30,408,395)"/>
+        <path d="M413,415 Q418,402 414,390" stroke="#25562f" stroke-width="2" fill="none"/>
+        <ellipse cx="416" cy="393" rx="6" ry="3.5" fill="#256030" transform="rotate(20,416,393)"/>
+        <!-- Headphones on desk -->
+        <path d="M515,385 Q520,375 530,375 Q540,375 545,385" stroke="#2a3545" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <circle cx="515" cy="387" r="5" fill="#2a3545"/>
+        <circle cx="545" cy="387" r="5" fill="#2a3545"/>
+        <!-- Snack bottle -->
+        <rect x="550" y="390" width="8" height="14" rx="3" fill="#1e3040" transform="rotate(-10,554,397)"/>
+        <rect x="551" y="388" width="6" height="3" rx="1" fill="#2a4050" transform="rotate(-10,554,390)"/>
+      </g>
+
+      <!-- ── STANDING DESK (center-right area) ── -->
+      <g id="standingDesk" filter="url(#softShadow)">
+        <!-- Taller desk legs -->
+        <line x1="680" y1="500" x2="680" y2="555" stroke="#0d1825" stroke-width="8"/>
+        <line x1="780" y1="460" x2="780" y2="515" stroke="#0d1825" stroke-width="8"/>
+        <line x1="730" y1="480" x2="730" y2="535" stroke="#0d1825" stroke-width="4"/>
+        <!-- Desk surface -->
+        <polygon points="640,460 760,398 820,428 700,490" fill="#243548"/>
+        <polygon points="640,460 700,490 700,510 640,480" fill="#172030"/>
+        <polygon points="820,428 700,490 700,510 820,448" fill="#111825"/>
+        <line x1="640" y1="460" x2="820" y2="428" stroke="rgba(80,140,255,.22)" stroke-width="1.2"/>
+        <!-- Wide curved ultrawide monitor -->
+        <path d="M652,425 Q700,408 748,426" stroke="#0a1020" stroke-width="28" fill="none" stroke-linecap="round"/>
+        <path d="M654,425 Q700,409 746,426" stroke="#0066ff" stroke-width="22" fill="none" stroke-linecap="round" filter="url(#screenBloom)" opacity=".8"/>
+        <!-- Content on ultrawide -->
+        <line x1="660" y1="420" x2="695" y2="408" stroke="rgba(150,200,255,.5)" stroke-width=".8"/>
+        <line x1="660" y1="424" x2="690" y2="413" stroke="rgba(150,200,255,.35)" stroke-width=".8"/>
+        <line x1="710" y1="414" x2="740" y2="420" stroke="rgba(150,200,255,.45)" stroke-width=".8"/>
+        <line x1="710" y1="418" x2="738" y2="423" stroke="rgba(150,200,255,.3)" stroke-width=".8"/>
+        <!-- Tablet/iPad next to keyboard -->
+        <polygon points="703,462 720,454 726,457 709,465" fill="#0a1020"/>
+        <polygon points="704,462 719,455 725,458 710,465" fill="rgba(0,100,200,.6)" filter="url(#screenBloom)"/>
+        <!-- Pen holder -->
+        <ellipse cx="802" cy="436" rx="6" ry="3.5" fill="#1a2535"/>
+        <rect x="799" y="422" width="2" height="16" rx="1" fill="#3a5070" transform="rotate(-5,800,430)"/>
+        <rect x="802" y="420" width="2" height="18" rx="1" fill="#4a6080" transform="rotate(3,803,429)"/>
+        <rect x="805" y="423" width="1.5" height="15" rx="1" fill="#2a4060" transform="rotate(-8,806,431)"/>
+      </g>
+
+      <!-- ── ROUND MEETING TABLE (center) ── -->
+      <g id="meetingTable" filter="url(#softShadow)">
+        <!-- Table leg -->
+        <ellipse cx="700" cy="575" rx="15" ry="8" fill="#0d1520"/>
+        <ellipse cx="700" cy="570" rx="15" ry="8" fill="#1a2535"/>
+        <!-- Table surface (ellipse in iso) -->
+        <ellipse cx="700" cy="530" rx="105" ry="58" fill="#1e2d40"/>
+        <ellipse cx="700" cy="528" rx="103" ry="56" fill="#243548"/>
+        <!-- Table surface highlight -->
+        <ellipse cx="692" cy="520" rx="50" ry="22" fill="rgba(80,140,255,.06)"/>
+        <!-- Table edge -->
+        <ellipse cx="700" cy="530" rx="105" ry="58" fill="none" stroke="rgba(80,140,255,.2)" stroke-width="1.5"/>
+        <!-- Items on table: laptop -->
+        <polygon points="670,510 695,498 710,505 685,517" fill="#1a2535"/>
+        <polygon points="672,511 693,499 708,506 687,518" fill="url(#screenGlow)" filter="url(#screenBloom)" opacity=".7"/>
+        <!-- Doc papers -->
+        <polygon points="720,520 740,511 745,513 725,522" fill="#dde8ff" opacity=".8"/>
+        <polygon points="723,524 743,515 748,517 728,526" fill="#c8d8ff" opacity=".7"/>
+        <!-- Coffee cups on table -->
+        <ellipse cx="660" cy="532" rx="7" ry="4" fill="#2a3545"/>
+        <ellipse cx="735" cy="520" rx="7" ry="4" fill="#2a3545"/>
+        <!-- Tablet on table -->
+        <polygon points="740,538 758,530 764,533 746,541" fill="#0a1020"/>
+        <polygon points="741,538 757,531 763,534 747,541" fill="rgba(0,150,80,.5)" filter="url(#screenBloom)"/>
+        <!-- Chair indicators around table -->
+        <!-- Chair 1 (front) -->
+        <ellipse cx="700" cy="598" rx="22" ry="12" fill="#1a2535" opacity=".7"/>
+        <ellipse cx="700" cy="596" rx="20" ry="10" fill="#243040" opacity=".8"/>
+        <!-- Chair 2 (left) -->
+        <ellipse cx="617" cy="558" rx="18" ry="9" fill="#1a2535" opacity=".7" transform="rotate(-25,617,558)"/>
+        <ellipse cx="618" cy="556" rx="16" ry="8" fill="#243040" opacity=".8" transform="rotate(-25,618,556)"/>
+        <!-- Chair 3 (right) -->
+        <ellipse cx="783" cy="558" rx="18" ry="9" fill="#1a2535" opacity=".7" transform="rotate(25,783,558)"/>
+        <ellipse cx="782" cy="556" rx="16" ry="8" fill="#243040" opacity=".8" transform="rotate(25,782,556)"/>
+        <!-- Chair 4 (back-left) -->
+        <ellipse cx="640" cy="498" rx="18" ry="9" fill="#1a2535" opacity=".6" transform="rotate(-40,640,498)"/>
+        <!-- Chair 5 (back-right) -->
+        <ellipse cx="760" cy="498" rx="18" ry="9" fill="#1a2535" opacity=".6" transform="rotate(40,760,498)"/>
+      </g>
+
+      <!-- ── SERVER/COMPUTER RACK (back-right corner) ── -->
+      <g id="serverRack" filter="url(#softShadow)">
+        <!-- Cabinet body -->
+        <polygon points="1050,340 1120,305 1160,325 1090,360" fill="#1a2535"/>
+        <polygon points="1050,340 1090,360 1090,460 1050,440" fill="#131d2c"/>
+        <polygon points="1160,325 1090,360 1090,460 1160,425" fill="#0d1520"/>
+        <!-- Rack top -->
+        <polygon points="1050,340 1120,305 1160,325 1090,360" fill="#1e2d42" stroke="rgba(0,150,255,.2)" stroke-width="1"/>
+        <!-- Blinking lights -->
+        <circle cx="1100" cy="338" r="3" fill="#00ff88"><animate attributeName="opacity" values="1;.2;1" dur=".8s" repeatCount="indefinite"/></circle>
+        <circle cx="1110" cy="334" r="2.5" fill="#00aaff"><animate attributeName="opacity" values=".2;1;.2" dur="1.2s" repeatCount="indefinite"/></circle>
+        <circle cx="1120" cy="330" r="3" fill="#ff4488"><animate attributeName="opacity" values="1;.3;1" dur="1.5s" repeatCount="indefinite"/></circle>
+        <!-- Server unit lines -->
+        <line x1="1055" y1="360" x2="1085" y2="345" stroke="rgba(0,150,255,.2)" stroke-width="1"/>
+        <line x1="1055" y1="370" x2="1085" y2="355" stroke="rgba(0,150,255,.15)" stroke-width="1"/>
+        <line x1="1055" y1="380" x2="1085" y2="365" stroke="rgba(0,150,255,.2)" stroke-width="1"/>
+        <line x1="1055" y1="390" x2="1085" y2="375" stroke="rgba(0,150,255,.15)" stroke-width="1"/>
+        <line x1="1055" y1="400" x2="1085" y2="385" stroke="rgba(0,150,255,.2)" stroke-width="1"/>
+        <!-- Server status LEDs on right face -->
+        <circle cx="1095" cy="378" r="2" fill="#00ff88" opacity=".8"><animate attributeName="opacity" values=".8;.2;.8" dur="1s" repeatCount="indefinite"/></circle>
+        <circle cx="1095" cy="390" r="2" fill="#00aaff" opacity=".7"><animate attributeName="opacity" values=".3;.9;.3" dur="1.4s" repeatCount="indefinite"/></circle>
+        <circle cx="1095" cy="402" r="2" fill="#00ff88" opacity=".6"><animate attributeName="opacity" values=".6;1;.6" dur="2s" repeatCount="indefinite"/></circle>
+        <!-- Cabinet ventilation grill right -->
+        <line x1="1098" y1="370" x2="1155" y2="342" stroke="rgba(0,100,200,.15)" stroke-width="1"/>
+        <line x1="1098" y1="380" x2="1155" y2="352" stroke="rgba(0,100,200,.15)" stroke-width="1"/>
+        <line x1="1098" y1="390" x2="1155" y2="362" stroke="rgba(0,100,200,.12)" stroke-width="1"/>
+      </g>
+
+      <!-- ── WHITEBOARD (left wall) ── -->
+      <g id="whiteboard">
+        <!-- Board frame -->
+        <polygon points="155,320 155,480 270,418 270,258" fill="#0a1520"/>
+        <polygon points="158,323 158,477 267,416 267,262" fill="#1e3055"/>
+        <!-- Board content (wireframe diagram) -->
+        <!-- Boxes representing agent architecture -->
+        <polygon points="168,350 190,339 200,344 178,355" fill="rgba(0,150,255,.3)" stroke="rgba(100,180,255,.5)" stroke-width=".8"/>
+        <polygon points="168,365 190,354 200,359 178,370" fill="rgba(0,200,100,.2)" stroke="rgba(80,200,100,.4)" stroke-width=".8"/>
+        <polygon points="210,340 232,329 242,334 220,345" fill="rgba(200,80,200,.2)" stroke="rgba(200,80,200,.4)" stroke-width=".8"/>
+        <!-- Arrow lines -->
+        <line x1="195" y1="344" x2="210" y2="340" stroke="rgba(150,200,255,.5)" stroke-width=".8"/>
+        <line x1="195" y1="356" x2="210" y2="352" stroke="rgba(150,200,255,.4)" stroke-width=".8"/>
+        <line x1="220" y1="345" x2="220" y2="355" stroke="rgba(150,200,255,.4)" stroke-width=".8"/>
+        <!-- Diagram text labels (tiny) -->
+        <text x="174" y="349" font-size="4" fill="rgba(200,220,255,.7)" font-family="monospace">LLM</text>
+        <text x="175" y="364" font-size="4" fill="rgba(150,255,150,.7)" font-family="monospace">AGT</text>
+        <text x="214" y="339" font-size="4" fill="rgba(255,150,255,.7)" font-family="monospace">SYNC</text>
+        <!-- Chart on bottom of board -->
+        <line x1="168" y1="420" x2="255" y2="378" stroke="rgba(0,180,255,.3)" stroke-width=".8"/>
+        <polyline points="172,418 185,408 200,400 215,395 230,388 245,382" fill="none" stroke="rgba(0,220,140,.6)" stroke-width="1.2"/>
+        <!-- Whiteboard markers on ledge -->
+        <rect x="163" y="476" width="12" height="3" rx="1" fill="#e44" transform="rotate(-18,169,477)"/>
+        <rect x="178" y="469" width="10" height="3" rx="1" fill="#44e" transform="rotate(-18,183,470)"/>
+        <rect x="193" y="462" width="10" height="3" rx="1" fill="#4e4" transform="rotate(-18,198,463)"/>
+        <!-- Whiteboard eraser -->
+        <polygon points="210,458 225,451 228,453 213,460" fill="#ddd" opacity=".6"/>
+      </g>
+
+      <!-- ── BOOKSHELF (right wall) ── -->
+      <g id="bookshelf">
+        <!-- Shelf unit sides -->
+        <polygon points="1060,440 1100,420 1100,600 1060,620" fill="#111d2c"/>
+        <polygon points="1170,400 1210,380 1210,560 1170,580" fill="#0d1825"/>
+        <!-- Shelf boards -->
+        <polygon points="1060,440 1170,400 1210,380 1100,420" fill="#1a2840"/>
+        <line x1="1060" y1="440" x2="1210" y2="380" stroke="rgba(80,130,200,.2)" stroke-width="1"/>
+        <polygon points="1060,490 1170,450 1210,430 1100,470" fill="#1a2840"/>
+        <line x1="1060" y1="490" x2="1210" y2="430" stroke="rgba(80,130,200,.2)" stroke-width="1"/>
+        <polygon points="1060,540 1170,500 1210,480 1100,520" fill="#1a2840"/>
+        <line x1="1060" y1="540" x2="1210" y2="480" stroke="rgba(80,130,200,.2)" stroke-width="1"/>
+        <polygon points="1060,590 1170,550 1210,530 1100,570" fill="#1a2840"/>
+        <!-- Books row 1 (shelf 1) -->
+        <polygon points="1065,438 1075,433 1075,453 1065,458" fill="#d44444"/>
+        <polygon points="1077,432 1086,428 1086,448 1077,452" fill="#4488ee"/>
+        <polygon points="1088,427 1095,423 1095,443 1088,447" fill="#44cc88"/>
+        <polygon points="1097,422 1107,418 1107,438 1097,442" fill="#ee8844"/>
+        <polygon points="1109,418 1117,414 1117,434 1109,438" fill="#aa44ee"/>
+        <polygon points="1119,413 1128,409 1128,429 1119,433" fill="#4444cc"/>
+        <polygon points="1130,408 1138,404 1138,424 1130,428" fill="#cc4488"/>
+        <!-- Books row 2 -->
+        <polygon points="1065,488 1073,484 1073,504 1065,508" fill="#4488dd"/>
+        <polygon points="1075,483 1085,479 1085,499 1075,503" fill="#eebb44"/>
+        <polygon points="1087,478 1094,474 1094,494 1087,498" fill="#55cc55"/>
+        <polygon points="1096,474 1104,470 1104,490 1096,494" fill="#dd5555"/>
+        <!-- Small device/item on shelf 3 -->
+        <polygon points="1070,536 1085,529 1091,532 1076,539" fill="#1a2840"/>
+        <polygon points="1071,536 1084,530 1090,533 1077,539" fill="rgba(0,100,255,.6)" filter="url(#screenBloom)"/>
+        <!-- Trophy/award -->
+        <polygon points="1100,534 1108,530 1108,525 1100,529" fill="#f0c030"/>
+        <polygon points="1103,524 1106,519 1109,522 1106,527" fill="#d4a020"/>
+        <polygon points="1101,519 1110,515 1111,518 1102,522" fill="#f0c030"/>
+      </g>
+
+      <!-- ── PLANTS (corners) ── -->
+      <!-- Plant pot left-front -->
+      <g id="plantL">
+        <ellipse cx="195" cy="645" rx="16" ry="9" fill="#152030"/>
+        <polygon points="183,638 207,626 208,638 184,650" fill="#1a2a3a"/>
+        <!-- Leaves -->
+        <path d="M195,638 Q185,610 190,590" stroke="#2d7a3f" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <ellipse cx="188" cy="596" rx="12" ry="7" fill="url(#plantGrad)" transform="rotate(-40,188,596)"/>
+        <path d="M195,638 Q205,612 200,590" stroke="#258a34" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <ellipse cx="200" cy="595" rx="11" ry="6" fill="url(#plantGrad)" transform="rotate(30,200,595)"/>
+        <path d="M195,638 Q215,618 210,600" stroke="#2d7a3f" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <ellipse cx="210" cy="604" rx="9" ry="5" fill="#256a30" transform="rotate(50,210,604)"/>
+        <path d="M195,638 Q178,620 182,605" stroke="#25703a" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <ellipse cx="181" cy="608" rx="9" ry="5" fill="#2d7a3f" transform="rotate(-55,181,608)"/>
+        <!-- Pot highlight -->
+        <ellipse cx="195" cy="644" rx="12" ry="6" fill="rgba(50,100,150,.2)"/>
+      </g>
+
+      <!-- Tall plant right-front -->
+      <g id="plantR">
+        <ellipse cx="1100" cy="660" rx="16" ry="9" fill="#152030"/>
+        <polygon points="1088,653 1112,641 1113,653 1089,665" fill="#1a2a3a"/>
+        <path d="M1100,652 Q1095,615 1100,580" stroke="#2d7a3f" stroke-width="6" fill="none" stroke-linecap="round"/>
+        <path d="M1100,610 Q1085,595 1078,575" stroke="#258a34" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <ellipse cx="1077" cy="572" rx="13" ry="7" fill="url(#plantGrad)" transform="rotate(-35,1077,572)"/>
+        <path d="M1100,610 Q1115,596 1120,578" stroke="#2d7a3f" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <ellipse cx="1121" cy="575" rx="12" ry="6" fill="url(#plantGrad)" transform="rotate(30,1121,575)"/>
+        <path d="M1100,580 Q1084,565 1080,545" stroke="#25703a" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <ellipse cx="1079" cy="542" rx="11" ry="6" fill="#256a30" transform="rotate(-40,1079,542)"/>
+        <path d="M1100,580 Q1116,565 1118,546" stroke="#2d7a3f" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <ellipse cx="1118" cy="543" rx="11" ry="6" fill="#2d7a3f" transform="rotate(45,1118,543)"/>
+        <ellipse cx="1100" cy="574" rx="8" ry="4" fill="url(#plantGrad)" transform="rotate(0,1100,574)"/>
+        <ellipse cx="1100" cy="659" rx="12" ry="6" fill="rgba(50,100,150,.2)"/>
+      </g>
+
+      <!-- ── COUCH/SOFA (front-right) ── -->
+      <g id="sofa">
+        <!-- Back cushions -->
+        <polygon points="870,560 960,517 1000,537 910,580" fill="#1e3050"/>
+        <!-- Seat -->
+        <polygon points="870,580 960,537 1000,557 910,600" fill="#243560"/>
+        <polygon points="870,580 870,600 910,620 910,600" fill="#1a2848"/>
+        <polygon points="1000,557 1000,577 910,620 910,600" fill="#162038"/>
+        <!-- Arm rests -->
+        <polygon points="862,558 878,550 878,600 862,608" fill="#1e3050"/>
+        <polygon points="1000,535 1016,527 1016,577 1000,585" fill="#1e3050"/>
+        <!-- Cushion lines -->
+        <line x1="885" y1="526" x2="885" y2="576" stroke="rgba(80,120,200,.3)" stroke-width="1"/>
+        <line x1="940" y1="505" x2="940" y2="555" stroke="rgba(80,120,200,.3)" stroke-width="1"/>
+        <!-- Pillow on sofa -->
+        <polygon points="888,545 910,535 918,539 896,549" fill="#2a4070"/>
+        <polygon points="892,549 914,539 920,543 898,553" fill="#324888"/>
+        <!-- Small table next to sofa -->
+        <ellipse cx="845" cy="570" rx="22" ry="12" fill="#1a2838"/>
+        <ellipse cx="845" cy="568" rx="20" ry="10" fill="#243045"/>
+        <line x1="845" y1="580" x2="845" y2="600" stroke="#0d1820" stroke-width="6"/>
+        <!-- Coffee on side table -->
+        <ellipse cx="845" cy="568" rx="7" ry="4" fill="#2a3545"/>
+      </g>
+      <!-- ═══ CHARACTERS ═══════════════════════════════════ -->
+
+      <!-- ── Character 1: Blue shirt, at desk 1A, typing ── -->
+      <g id="char1" class="character" data-name="张晓明" data-role="AI 产品经理" data-agent="Master Orchestrator" data-status="设计中" filter="url(#charShadow)">
+        <!-- Shadow -->
+        <ellipse cx="300" cy="498" rx="25" ry="8" fill="rgba(0,0,0,.3)"/>
+        <!-- Legs/lower body -->
+        <polygon points="285,490 295,485 298,510 288,515" fill="#1a2845"/>
+        <polygon points="298,510 308,505 308,530 298,535" fill="#1a2845"/>
+        <!-- Body/torso -->
+        <polygon points="278,462 308,447 315,468 285,483" fill="url(#charBody1)"/>
+        <!-- Left arm (raised to keyboard) -->
+        <polygon points="278,462 268,470 262,460 272,452" fill="url(#charBody1)"/>
+        <!-- Right arm -->
+        <polygon points="308,447 320,440 325,450 313,457" fill="url(#charBody1)"/>
+        <!-- Hand left -->
+        <ellipse cx="262" cy="458" rx="6" ry="4" fill="url(#skinGrad)" transform="rotate(-20,262,458)"/>
+        <!-- Hand right -->
+        <ellipse cx="326" cy="449" rx="6" ry="4" fill="url(#skinGrad)" transform="rotate(-10,326,449)"/>
+        <!-- Head -->
+        <ellipse cx="295" cy="444" rx="16" ry="14" fill="url(#skinGrad)"/>
+        <!-- Hair -->
+        <path d="M280,440 Q280,428 295,428 Q310,428 310,440" fill="#1a1010"/>
+        <!-- Eyes (looking at screen) -->
+        <ellipse cx="289" cy="441" rx="3" ry="2.5" fill="#333"/>
+        <ellipse cx="302" cy="438" rx="3" ry="2.5" fill="#333"/>
+        <circle cx="290" cy="440" r="1" fill="#fff" opacity=".6"/>
+        <circle cx="303" cy="437" r="1" fill="#fff" opacity=".6"/>
+        <!-- Glasses -->
+        <path d="M284,440 Q289,437 294,440 Q289,443 284,440" fill="none" stroke="#4a6080" stroke-width="1.2"/>
+        <path d="M295,438 Q300,435 306,437 Q300,441 295,438" fill="none" stroke="#4a6080" stroke-width="1.2"/>
+        <line x1="294" y1="439" x2="295" y2="438" stroke="#4a6080" stroke-width="1"/>
+        <!-- Mouth (slight smile) -->
+        <path d="M290,446 Q295,449 300,446" stroke="#b08060" stroke-width="1" fill="none" stroke-linecap="round"/>
+        <!-- Headphones -->
+        <path d="M280,438 Q278,430 283,425" stroke="#2a3a50" stroke-width="3" fill="none"/>
+        <circle cx="279" cy="438" r="5" fill="#2a3a50"/>
+        <!-- Ear right -->
+        <ellipse cx="310" cy="441" rx="3" ry="4" fill="url(#skinGrad)"/>
+        <!-- Screen glow on face -->
+        <ellipse cx="292" cy="440" rx="10" ry="8" fill="rgba(0,100,255,.08)"/>
+      </g>
+
+      <!-- ── Character 2: Yellow shirt, standing at standing desk ── -->
+      <g id="char2" class="character" data-name="李雯雯" data-role="数据科学家" data-agent="Data Agent" data-status="分析数据" filter="url(#charShadow)">
+        <ellipse cx="710" cy="510" rx="22" ry="7" fill="rgba(0,0,0,.3)"/>
+        <!-- Legs -->
+        <polygon points="700,500 710,495 713,520 703,525" fill="#243048"/>
+        <polygon points="712,520 722,515 722,540 712,545" fill="#243048"/>
+        <!-- Body -->
+        <polygon points="692,468 722,453 730,475 700,490" fill="url(#charBody2)"/>
+        <!-- Arms (one pointing at screen) -->
+        <polygon points="692,468 680,462 676,452 688,458" fill="url(#charBody2)"/>
+        <polygon points="722,453 738,444 742,454 726,463" fill="url(#charBody2)"/>
+        <!-- Hands -->
+        <ellipse cx="676" cy="450" rx="6" ry="4" fill="url(#skinGrad2)" transform="rotate(-25,676,450)"/>
+        <ellipse cx="742" cy="453" rx="6" ry="4" fill="url(#skinGrad)" transform="rotate(-5,742,453)"/>
+        <!-- Head -->
+        <ellipse cx="710" cy="450" rx="15" ry="13" fill="url(#skinGrad)"/>
+        <!-- Hair (bun) -->
+        <path d="M696,446 Q696,435 710,435 Q724,435 724,446" fill="#2a1a10"/>
+        <ellipse cx="710" cy="434" rx="8" ry="6" fill="#2a1a10"/>
+        <!-- Face looking sideways at screen -->
+        <ellipse cx="706" cy="448" rx="2.5" ry="2" fill="#333"/>
+        <ellipse cx="714" cy="446" rx="2.5" ry="2" fill="#333"/>
+        <circle cx="707" cy="447" r=".8" fill="#fff" opacity=".5"/>
+        <circle cx="715" cy="445" r=".8" fill="#fff" opacity=".5"/>
+        <path d="M705,453 Q710,456 715,453" stroke="#b08060" stroke-width="1" fill="none" stroke-linecap="round"/>
+        <!-- Ear -->
+        <ellipse cx="695" cy="450" rx="2.5" ry="3.5" fill="url(#skinGrad)"/>
+        <ellipse cx="724" cy="448" rx="2.5" ry="3.5" fill="url(#skinGrad)"/>
+        <!-- Screen reflection on face -->
+        <ellipse cx="708" cy="447" rx="9" ry="7" fill="rgba(0,150,80,.06)"/>
+      </g>
+
+      <!-- ── Character 3: Red shirt, at meeting table ── -->
+      <g id="char3" class="character" data-name="王建国" data-role="后端工程师" data-agent="Code Agent" data-status="讨论架构" filter="url(#charShadow)">
+        <ellipse cx="700" cy="610" rx="20" ry="7" fill="rgba(0,0,0,.3)"/>
+        <!-- Sitting position - only upper body visible behind table -->
+        <!-- Body -->
+        <polygon points="685,578 712,565 718,580 691,593" fill="url(#charBody3)"/>
+        <!-- Arms on table -->
+        <polygon points="685,578 672,582 670,572 683,568" fill="url(#charBody3)"/>
+        <polygon points="712,565 726,559 728,569 714,575" fill="url(#charBody3)"/>
+        <!-- Hands -->
+        <ellipse cx="670" cy="570" rx="6" ry="3.5" fill="url(#skinGrad)" transform="rotate(-10,670,570)"/>
+        <ellipse cx="729" cy="568" rx="6" ry="3.5" fill="url(#skinGrad)" transform="rotate(10,729,568)"/>
+        <!-- Head -->
+        <ellipse cx="700" cy="562" rx="15" ry="13" fill="url(#skinGrad2)"/>
+        <!-- Hair -->
+        <path d="M686,558 Q686,547 700,547 Q714,547 714,558" fill="#111"/>
+        <!-- Eyes (looking at laptop) -->
+        <ellipse cx="695" cy="560" rx="2.5" ry="2" fill="#333"/>
+        <ellipse cx="705" cy="558" rx="2.5" ry="2" fill="#333"/>
+        <circle cx="696" cy="559" r=".8" fill="#fff" opacity=".5"/>
+        <path d="M694,564 Q700,567 706,564" stroke="#a07050" stroke-width="1" fill="none" stroke-linecap="round"/>
+        <!-- Ear -->
+        <ellipse cx="686" cy="561" rx="2.5" ry="3.5" fill="url(#skinGrad2)"/>
+      </g>
+
+      <!-- ── Character 4: Green shirt, on sofa, on phone ── -->
+      <g id="char4" class="character" data-name="陈静" data-role="NLP 研究员" data-agent="NLP Agent" data-status="远程会议中" filter="url(#charShadow)">
+        <!-- Sitting on sofa - lounging position -->
+        <ellipse cx="930" cy="580" rx="20" ry="7" fill="rgba(0,0,0,.3)"/>
+        <!-- Lower body on seat -->
+        <polygon points="900,572 935,556 938,570 903,586" fill="#243048"/>
+        <!-- Body (leaning back) -->
+        <polygon points="900,550 928,537 935,555 907,568" fill="url(#charBody4)"/>
+        <!-- Arm holding phone up -->
+        <polygon points="900,550 888,540 886,528 898,538" fill="url(#charBody4)"/>
+        <!-- Phone in hand -->
+        <rect x="879" y="515" width="12" height="18" rx="2" fill="#1a2535"/>
+        <rect x="880" y="516" width="10" height="16" rx="1" fill="rgba(0,100,255,.7)" filter="url(#screenBloom)"/>
+        <!-- Other arm -->
+        <polygon points="928,537 942,530 944,540 930,547" fill="url(#charBody4)"/>
+        <!-- Head tilted looking at phone -->
+        <ellipse cx="908" cy="534" rx="14" ry="13" fill="url(#skinGrad)"/>
+        <!-- Hair -->
+        <path d="M895,530 Q895,520 908,520 Q921,520 921,530" fill="#1a0a20"/>
+        <path d="M895,530 Q890,538 895,548" fill="#1a0a20"/>
+        <!-- Eyes -->
+        <ellipse cx="903" cy="532" rx="2.5" ry="2" fill="#333"/>
+        <ellipse cx="913" cy="530" rx="2.5" ry="2" fill="#333"/>
+        <!-- Smile - on a call -->
+        <path d="M902,537 Q907,541 913,537" stroke="#b08060" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+        <!-- Earring little dot -->
+        <circle cx="921" cy="533" r="2" fill="#f0c030"/>
+      </g>
+
+      <!-- ═══ FLOATING DATA CONNECTIONS ════════════════════ -->
+      <!-- Data flow lines between agents (animated) -->
+      <g id="dataConnections">
+        <!-- Char1 desk to server rack -->
+        <line x1="320" y1="440" x2="1050" y2="350" stroke="rgba(0,150,255,.15)" stroke-width="1" stroke-dasharray="8,6">
+          <animate attributeName="stroke-dashoffset" values="0;-28" dur="2s" repeatCount="indefinite"/>
+        </line>
+        <!-- Meeting table to server -->
+        <line x1="760" y1="500" x2="1055" y2="390" stroke="rgba(0,200,100,.1)" stroke-width="1" stroke-dasharray="6,5">
+          <animate attributeName="stroke-dashoffset" values="0;-22" dur="1.8s" repeatCount="indefinite"/>
+        </line>
+        <!-- Char2 desk to char3 desk (data flow) -->
+        <line x1="690" y1="465" x2="580" y2="430" stroke="rgba(100,150,255,.12)" stroke-width="1" stroke-dasharray="5,4">
+          <animate attributeName="stroke-dashoffset" values="0;-18" dur="1.5s" repeatCount="indefinite"/>
+        </line>
+        <!-- Data packet dots moving along lines -->
+        <circle r="4" fill="rgba(0,180,255,.8)" filter="url(#glow)">
+          <animateMotion dur="3s" repeatCount="indefinite" path="M320,440 L1050,350"/>
+          <animate attributeName="opacity" values="0;1;1;0" dur="3s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="3" fill="rgba(0,220,120,.8)" filter="url(#glow)">
+          <animateMotion dur="2.5s" repeatCount="indefinite" begin="1s" path="M760,500 L1055,390"/>
+          <animate attributeName="opacity" values="0;1;1;0" dur="2.5s" repeatCount="indefinite" begin="1s"/>
+        </circle>
+        <circle r="3" fill="rgba(150,100,255,.9)" filter="url(#glow)">
+          <animateMotion dur="2s" repeatCount="indefinite" begin=".5s" path="M690,465 L580,430"/>
+          <animate attributeName="opacity" values="0;1;1;0" dur="2s" repeatCount="indefinite" begin=".5s"/>
+        </circle>
+      </g>
+
+      <!-- ═══ CEILING LIGHTS ════════════════════════════════ -->
+      <g id="lights">
+        <!-- Light 1 -->
+        <ellipse cx="350" cy="260" rx="15" ry="5" fill="#cce8ff" opacity=".9"/>
+        <polygon points="340,260 360,260 365,310 345,320" fill="rgba(100,180,255,.04)"/>
+        <ellipse cx="350" cy="260" rx="15" ry="5" fill="#aad4ff" filter="url(#glow)" opacity=".6"/>
+        <!-- Light 2 -->
+        <ellipse cx="650" cy="240" rx="15" ry="5" fill="#cce8ff" opacity=".9"/>
+        <polygon points="640,240 660,240 668,295 648,305" fill="rgba(100,180,255,.035)"/>
+        <ellipse cx="650" cy="240" rx="15" ry="5" fill="#aad4ff" filter="url(#glow)" opacity=".6"/>
+        <!-- Light 3 -->
+        <ellipse cx="900" cy="250" rx="15" ry="5" fill="#cce8ff" opacity=".9"/>
+        <polygon points="890,250 910,250 918,305 898,315" fill="rgba(100,180,255,.035)"/>
+        <ellipse cx="900" cy="250" rx="15" ry="5" fill="#aad4ff" filter="url(#glow)" opacity=".6"/>
+        <!-- Light 4 -->
+        <ellipse cx="1140" cy="268" rx="14" ry="5" fill="#cce8ff" opacity=".8"/>
+        <polygon points="1130,268 1150,268 1156,318 1136,328" fill="rgba(100,180,255,.03)"/>
+        <ellipse cx="1140" cy="268" rx="14" ry="5" fill="#aad4ff" filter="url(#glow)" opacity=".5"/>
+      </g>
+
+      <!-- ═══ FLOOR REFLECTIONS / AMBIENT ══════════════════ -->
+      <g opacity=".4">
+        <!-- Desk reflections on floor -->
+        <ellipse cx="340" cy="510" rx="70" ry="22" fill="rgba(0,100,255,.06)"/>
+        <ellipse cx="530" cy="480" rx="70" ry="22" fill="rgba(0,100,255,.05)"/>
+        <ellipse cx="720" cy="510" rx="60" ry="18" fill="rgba(0,200,100,.05)"/>
+        <ellipse cx="700" cy="580" rx="80" ry="25" fill="rgba(0,100,255,.04)"/>
+      </g>
+
+      <!-- ═══ HUD LABELS (subtle node indicators) ═══════════ -->
+      <g id="hud-labels" opacity=".85">
+        <!-- Agent node label - char1 -->
+        <line x1="295" y1="430" x2="275" y2="400" stroke="rgba(0,180,255,.4)" stroke-width=".8"/>
+        <circle cx="275" cy="400" r="3" fill="rgba(0,180,255,.6)"><animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;.2;.6" dur="2s" repeatCount="indefinite"/></circle>
+        <!-- Agent node label - char2 -->
+        <line x1="710" y1="437" x2="730" y2="408" stroke="rgba(0,200,120,.4)" stroke-width=".8"/>
+        <circle cx="730" cy="408" r="3" fill="rgba(0,200,120,.6)"><animate attributeName="r" values="3;5;3" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;.2;.6" dur="2.5s" repeatCount="indefinite"/></circle>
+        <!-- Agent node label - char3 -->
+        <line x1="700" y1="548" x2="720" y2="522" stroke="rgba(255,80,80,.4)" stroke-width=".8"/>
+        <circle cx="720" cy="522" r="3" fill="rgba(255,80,80,.6)"><animate attributeName="r" values="3;5;3" dur="1.8s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;.2;.6" dur="1.8s" repeatCount="indefinite"/></circle>
+        <!-- Agent node label - char4 -->
+        <line x1="908" y1="520" x2="928" y2="492" stroke="rgba(80,200,80,.4)" stroke-width=".8"/>
+        <circle cx="928" cy="492" r="3" fill="rgba(80,200,80,.6)"><animate attributeName="r" values="3;5;3" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;.2;.6" dur="3s" repeatCount="indefinite"/></circle>
+      </g>
+
+      <!-- ═══ DECORATIVE ELEMENTS ════════════════════════════ -->
+      <!-- Company logo on back wall -->
+      <g transform="translate(620, 200)">
+        <circle cx="80" cy="50" r="18" fill="rgba(0,150,255,.15)" stroke="rgba(0,150,255,.4)" stroke-width="1.5"/>
+        <circle cx="80" cy="50" r="18" fill="rgba(0,150,255,.05)" filter="url(#glow)"/>
+        <text x="80" y="55" text-anchor="middle" font-size="14" fill="rgba(0,200,255,.8)" font-family="monospace" font-weight="bold">A</text>
+        <text x="80" y="72" text-anchor="middle" font-size="7" fill="rgba(100,180,255,.5)" font-family="sans-serif" letter-spacing="2">AGENTOS</text>
+      </g>
+
+      <!-- Air vent on ceiling -->
+      <g transform="translate(480,180)">
+        <rect x="0" y="0" width="40" height="25" rx="2" fill="#1a2535" transform="skewX(-30)"/>
+        <line x1="5" y1="0" x2="5" y2="25" stroke="rgba(100,150,200,.3)" stroke-width="1" transform="skewX(-30)"/>
+        <line x1="12" y1="0" x2="12" y2="25" stroke="rgba(100,150,200,.3)" stroke-width="1" transform="skewX(-30)"/>
+        <line x1="19" y1="0" x2="19" y2="25" stroke="rgba(100,150,200,.3)" stroke-width="1" transform="skewX(-30)"/>
+        <line x1="26" y1="0" x2="26" y2="25" stroke="rgba(100,150,200,.3)" stroke-width="1" transform="skewX(-30)"/>
+      </g>
+
+      <!-- Door on right wall -->
+      <g id="door">
+        <polygon points="1140,350 1180,330 1180,490 1140,510" fill="#0d1825"/>
+        <polygon points="1142,353 1178,334 1178,488 1142,507" fill="#111d2e"/>
+        <!-- Door handle -->
+        <circle cx="1150" cy="430" r="4" fill="#2a4060"/>
+        <path d="M1149,430 Q1145,428 1144,422" stroke="#2a4060" stroke-width="2" fill="none"/>
+        <!-- Door frame -->
+        <line x1="1140" y1="350" x2="1140" y2="510" stroke="rgba(80,130,200,.3)" stroke-width="2"/>
+        <line x1="1140" y1="350" x2="1180" y2="330" stroke="rgba(80,130,200,.3)" stroke-width="2"/>
+        <line x1="1180" y1="330" x2="1180" y2="490" stroke="rgba(80,130,200,.2)" stroke-width="2"/>
+        <!-- Door bottom line -->
+        <line x1="1140" y1="510" x2="1180" y2="490" stroke="rgba(80,130,200,.25)" stroke-width="1.5"/>
+      </g>
+
+      <!-- Rugs on floor -->
+      <ellipse cx="700" cy="580" rx="120" ry="50" fill="rgba(30,50,80,.4)" stroke="rgba(50,80,120,.3)" stroke-width="1.5"/>
+      <!-- Rug pattern -->
+      <ellipse cx="700" cy="580" rx="100" ry="42" fill="none" stroke="rgba(50,80,120,.2)" stroke-width="1"/>
+      <ellipse cx="700" cy="580" rx="70" ry="29" fill="none" stroke="rgba(50,80,120,.15)" stroke-width=".8"/>
+
+      <!-- Small rug near desks -->
+      <ellipse cx="330" cy="510" rx="80" ry="30" fill="rgba(40,30,60,.35)" stroke="rgba(80,60,120,.25)" stroke-width="1"/>
+
+      </g><!-- end scene group -->
+    </svg>
+  </div>
+</div>
+
+<!-- ── UI OVERLAY ── -->
+<div id="ui-overlay">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="tb-logo"><div class="tb-logo-icon"></div>AgentOS</div>
+    <nav class="tb-nav">
+      <a class="active">总览</a>
+      <a onclick="showPage('agents')">集群</a>
+      <a onclick="showPage('tasks')">任务</a>
+      <a onclick="showPage('employees')">员工</a>
+      <a onclick="showPage('models')">模型</a>
+    </nav>
+    <div class="tb-right">
+      <div class="live-pill"><div class="live-dot"></div>12 agents · 在线</div>
+      <div class="tb-clock" id="clock">--:--:--</div>
+      <div class="tb-btn">进入控制台 →</div>
+    </div>
+  </div>
+
+  <!-- Left agent panel -->
+  <div class="agent-panel">
+    <div class="panel-title">在线 Agents</div>
+    <div class="agent-row"><div class="ar-dot" style="background:#00e5a0"></div><div class="ar-name">Master Orchestrator</div><span class="ar-status active">active</span><div class="ar-tasks">47</div></div>
+    <div class="agent-row"><div class="ar-dot" style="background:#3b82f6;animation-delay:.3s"></div><div class="ar-name">Code Agent</div><span class="ar-status active">active</span><div class="ar-tasks">62</div></div>
+    <div class="agent-row"><div class="ar-dot" style="background:#06b6d4;animation-delay:.6s"></div><div class="ar-name">Data Agent</div><span class="ar-status busy">busy</span><div class="ar-tasks">44</div></div>
+    <div class="agent-row"><div class="ar-dot" style="background:#10b981;animation-delay:.9s"></div><div class="ar-name">NLP Agent</div><span class="ar-status active">active</span><div class="ar-tasks">38</div></div>
+    <div class="agent-row"><div class="ar-dot" style="background:#f59e0b;animation-delay:1.2s"></div><div class="ar-name">Search Agent</div><span class="ar-status busy">busy</span><div class="ar-tasks">55</div></div>
+    <div class="agent-row"><div class="ar-dot" style="background:#ec4899;animation-delay:1.5s"></div><div class="ar-name">Vision Agent</div><span class="ar-status active">active</span><div class="ar-tasks">19</div></div>
+    <div class="agent-row"><div class="ar-dot" style="background:#a855f7;animation-delay:1.8s"></div><div class="ar-name">Sync Agent</div><span class="ar-status active">active</span><div class="ar-tasks">320</div></div>
+  </div>
+
+  <!-- Right stat cards -->
+  <div class="stat-cards">
+    <div class="stat-card">
+      <div class="sc-top"><div class="sc-dot" style="background:#00e5a0"></div><div class="sc-title">任务吞吐量</div></div>
+      <div class="sc-value" style="color:#00e5a0" id="stat-tput">247<span style="font-size:12px;opacity:.5">/min</span></div>
+      <div class="sc-sub">↑ 较昨日 +18%</div>
+      <div class="sc-bar"><div class="sc-bar-fill" style="width:78%;background:#00e5a0"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="sc-top"><div class="sc-dot" style="background:#3b82f6"></div><div class="sc-title">平均延迟</div></div>
+      <div class="sc-value" style="color:#ffb800" id="stat-lat">142<span style="font-size:12px;opacity:.5">ms</span></div>
+      <div class="sc-sub">基线 130ms</div>
+      <div class="sc-bar"><div class="sc-bar-fill" style="width:42%;background:#ffb800"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="sc-top"><div class="sc-dot" style="background:#a855f7"></div><div class="sc-title">成功率</div></div>
+      <div class="sc-value" style="color:#a855f7" id="stat-succ">98.7%</div>
+      <div class="sc-sub">↑ 极优</div>
+      <div class="sc-bar"><div class="sc-bar-fill" style="width:98%;background:#a855f7"></div></div>
+    </div>
+  </div>
+
+  <!-- Task feed (bottom-right) -->
+  <div class="task-feed">
+    <div class="tf-title">实时任务流</div>
+    <div id="task-feed-list"></div>
+  </div>
+
+  <!-- Bottom info bar -->
+  <div class="bottom-bar">
+    <div class="bb-item"><div class="bb-dot" style="background:#00e5a0"></div>集群健康</div>
+    <div class="bb-sep"></div>
+    <div class="bb-item"><div class="bb-dot" style="background:#3b82f6"></div>12 节点在线</div>
+    <div class="bb-sep"></div>
+    <div class="bb-item"><div class="bb-dot" style="background:#ffb800" class="bb-pulse"></div>1 告警待处理</div>
+    <div class="bb-sep"></div>
+    <div class="bb-item">8 客户端已连接</div>
+    <div class="bb-sep"></div>
+    <div class="bb-item" style="margin-left:auto;color:rgba(255,255,255,.2)">AgentOS v2.4.1 · 上海数据中心 · 运行 14d 6h</div>
+  </div>
+
+  <!-- Tooltip -->
+  <div class="tooltip" id="tooltip">
+    <div class="tt-title" id="tt-name">Agent</div>
+    <div class="tt-row"><span>角色</span><span class="tt-val" id="tt-role">-</span></div>
+    <div class="tt-row"><span>绑定</span><span class="tt-val" id="tt-agent">-</span></div>
+    <div class="tt-row"><span>状态</span><span class="tt-val" id="tt-status">-</span></div>
+  </div>
+</div>
+
+<script>
+// ── Clock ──
+function updateClock(){
+  const n=new Date();
+  document.getElementById('clock').textContent=
+    `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+}
+setInterval(updateClock,1000); updateClock();
+
+// ── Responsive scale ──
+function scaleScene(){
+  const inner=document.getElementById('scene-inner');
+  const sw=window.innerWidth, sh=window.innerHeight;
+  const svgW=1400,svgH=900;
+  const scale=Math.min((sw-40)/svgW,(sh-60)/svgH)*.98;
+  inner.style.transform=`scale(${scale})`;
+  inner.style.width=svgW+'px';
+  inner.style.height=svgH+'px';
+}
+window.addEventListener('resize',scaleScene); scaleScene();
+
+// ── Live metrics ──
+function updateMetrics(){
+  const t=Math.round(220+Math.random()*60);
+  const l=Math.round(115+Math.random()*60);
+  const s=(97+Math.random()*2.5).toFixed(1);
+  const tp=document.getElementById('stat-tput');
+  const lt=document.getElementById('stat-lat');
+  const su=document.getElementById('stat-succ');
+  if(tp) tp.innerHTML=t+'<span style="font-size:12px;opacity:.5">/min</span>';
+  if(lt){ lt.innerHTML=l+'<span style="font-size:12px;opacity:.5">ms</span>'; lt.style.color=l>160?'#ff4466':l>130?'#ffb800':'#00e5a0'; }
+  if(su) su.textContent=s+'%';
+}
+setInterval(updateMetrics,2800);
+
+// ── Character hover tooltip ──
+const chars=document.querySelectorAll('.character');
+const tooltip=document.getElementById('tooltip');
+chars.forEach(c=>{
+  c.style.cursor='pointer';
+  c.addEventListener('mouseenter',function(e){
+    document.getElementById('tt-name').textContent=this.dataset.name||'';
+    document.getElementById('tt-role').textContent=this.dataset.role||'';
+    document.getElementById('tt-agent').textContent=this.dataset.agent||'';
+    document.getElementById('tt-status').textContent=this.dataset.status||'';
+    tooltip.classList.add('show');
+    moveTooltip(e);
+  });
+  c.addEventListener('mousemove',moveTooltip);
+  c.addEventListener('mouseleave',()=>tooltip.classList.remove('show'));
+});
+function moveTooltip(e){
+  const x=e.clientX+16,y=e.clientY-30;
+  const tw=tooltip.offsetWidth||160,th=tooltip.offsetHeight||80;
+  tooltip.style.left=Math.min(x,window.innerWidth-tw-10)+'px';
+  tooltip.style.top=Math.max(10,Math.min(y,window.innerHeight-th-10))+'px';
+}
+
+// ── Character bounce animations ──
+const chars2=document.querySelectorAll('.character');
+chars2.forEach((c,i)=>{
+  const baseY=0;
+  let t=i*1.5;
+  function animate(){
+    const dy=Math.sin(t)*2;
+    c.style.transform=`translateY(${dy}px)`;
+    t+=0.02;
+    requestAnimationFrame(animate);
+  }
+  animate();
+});
+
+// ── Task feed ──
+const taskMessages=[
+  {icon:'⚡',text:'T-1024 · 分配至 Data Agent',time:'刚刚'},
+  {icon:'✅',text:'T-1022 · 报告生成完成',time:'1s'},
+  {icon:'🔄',text:'orch-1 · 负载均衡触发',time:'3s'},
+  {icon:'🧠',text:'NLP Agent · 情感分析 2840条',time:'5s'},
+  {icon:'⚠',text:'w-search · 延迟告警 89ms',time:'8s'},
+  {icon:'📊',text:'T-1021 · 图像识别进行中',time:'12s'},
+  {icon:'✅',text:'T-1018 · 翻译任务完成',time:'14s'},
+  {icon:'🔵',text:'client-ci-007 · 已连接',time:'18s'},
+  {icon:'⚡',text:'Exec Agent · 执行 API 调用',time:'21s'},
+  {icon:'🧬',text:'向量索引更新 1.2M 文档',time:'24s'},
+];
+let feedIdx=0;
+function updateFeed(){
+  const list=document.getElementById('task-feed-list');
+  if(!list) return;
+  const msg=taskMessages[feedIdx%taskMessages.length]; feedIdx++;
+  const div=document.createElement('div');
+  div.className='tf-item';
+  div.innerHTML=`<div class="tf-icon">${msg.icon}</div><div class="tf-text">${msg.text}</div><div class="tf-time">${msg.time}</div>`;
+  list.insertBefore(div,list.firstChild);
+  if(list.children.length>6) list.removeChild(list.lastChild);
+}
+// Init feed
+for(let i=0;i<5;i++) updateFeed();
+setInterval(updateFeed,3000);
+
+// ── Nav placeholder ──
+function showPage(p){
+  // Placeholder - would open the full dashboard
+  const btn=document.querySelector('.tb-btn');
+  if(btn){ btn.textContent='切换到: '+p+' →'; setTimeout(()=>{btn.textContent='进入控制台 →'},2000); }
+}
+
+// ── Ambient screen flicker ──
+const screens=document.querySelectorAll('[filter="url(#screenBloom)"]');
+setInterval(()=>{
+  screens.forEach(s=>{
+    const base=parseFloat(s.getAttribute('opacity')||'1');
+    s.style.opacity=0.75+Math.random()*0.3;
+    setTimeout(()=>{s.style.opacity=''},100);
+  });
+},4000);
+
+// ── Periodic notification popup ──
+const notifMessages=[
+  {t:'T-1024 任务完成','d':'用户画像分析已完成，质量分 0.94'},
+  {t:'w-search 延迟恢复','d':'响应延迟已恢复至 28ms'},
+  {t:'新客户端连接','d':'client-mob-009 已接入同步流'},
+  {t:'Agent 扩容完成','d':'2 个 worker agents 已上线'},
+];
+let notifIdx=0;
+function showNotif(){
+  const old=document.querySelector('.notif');
+  if(old) old.remove();
+  const m=notifMessages[notifIdx%notifMessages.length]; notifIdx++;
+  const el=document.createElement('div');
+  el.className='notif';
+  el.innerHTML=`<div class="notif-title">${m.t}</div><div style="font-size:10px;color:rgba(255,255,255,.5)">${m.d}</div>`;
+  document.getElementById('ui-overlay').appendChild(el);
+  setTimeout(()=>{el.style.opacity='0';el.style.transition='opacity .5s';setTimeout(()=>el.remove(),500)},3500);
+}
+setTimeout(showNotif,4000);
+setInterval(showNotif,12000);
+</script>
+</body>
+</html>

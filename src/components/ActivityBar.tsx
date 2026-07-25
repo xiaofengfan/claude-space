@@ -73,7 +73,7 @@ export function ActivityBar({ activeView, onViewChange, onToggleLeft, leftCollap
           onClick={() => onViewChange(view.id)}
           title={view.label}
         >
-          <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
             <path d={ICONS[view.id] || ''} fillRule="evenodd" clipRule="evenodd" />
           </svg>
           {view.badge !== undefined && view.badge > 0 && (

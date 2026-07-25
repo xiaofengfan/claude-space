@@ -1,6 +1,7 @@
 import type { AppSettingsSafe, ModelConfigSafe } from './settings'
 import type { ConnectionHealth, CliDetectionResult, ApiTestResult } from './connection'
 import type { SkillScanResult, MarketSource } from './skill'
+import type { KnowledgeGraph, GraphAnalysisConfig } from './knowledgeGraph'
 
 export interface ElectronAPI {
   // Claude session
@@ -176,6 +177,7 @@ export interface ElectronAPI {
   loopResume: (id: string) => Promise<{ success: boolean; error?: string }>
   loopHistory: (loopId?: string) => Promise<{ success: boolean; runs?: any[]; error?: string }>
   workflowListRuns: () => Promise<{ success: boolean; runs?: any[]; error?: string }>
+  /** @deprecated 已被 window.orchestrator.create / createWithTemplate 取代，原简单模式 phases 执行路径 */
   workflowRun: (opts: { templateId: string; name: string; phases: Array<{ name: string; type: string; prompt: string; model: string }> }) => Promise<{ success: boolean; run?: any; error?: string }>
   onLoopStatus: (callback: (data: any) => void) => () => void
   onLoopOutput: (callback: (data: { loopId: string; runId: string; text: string }) => void) => () => void
@@ -228,10 +230,57 @@ export interface ElectronAPI {
   syncFromClaudeEnv: () => Promise<{ success: boolean; added?: number; models?: Array<{ id: string; name: string; model: string }>; error?: string }>
   onClaudeEnvChanged: (callback: (config: { baseUrl: string; authToken: string; defaultModel: string; models: Array<{ name: string; model: string; fromEnv: string }>; mtime: string }) => void) => () => void
   onSettingsMigrated: (callback: (data: { activeModelId: string | null }) => void) => () => void
+
+  // ── Knowledge Graph ──────────────────────────────────────
+  graphLoad: (projectPath: string) => Promise<{ success: boolean; data?: KnowledgeGraph; error?: string }>
+  graphSave: (projectPath: string, data: KnowledgeGraph) => Promise<{ success: boolean; error?: string }>
+  graphAnalyze: (projectPath: string) => Promise<{ success: boolean; data?: KnowledgeGraph; error?: string }>
+  graphImportFromClaude: (opts: { projectPath: string; sessionId: string }) => Promise<{ success: boolean; data?: KnowledgeGraph; error?: string; message?: string }>
+  graphConfigLoad: (projectPath: string) => Promise<{ success: boolean; config?: GraphAnalysisConfig; error?: string }>
+  graphConfigSave: (projectPath: string, config: GraphAnalysisConfig) => Promise<{ success: boolean; error?: string }>
+  graphAiAnalyze: (opts: { projectPath: string; prompt: string }) => Promise<{ success: boolean; result?: string; sessionId?: string; error?: string }>
+  graphAiStop: () => Promise<{ success: boolean }>
+  onGraphAiProgress: (callback: (progress: { stage: string; preview?: string; sessionId?: string; text?: string }) => void) => () => void
+  // 依赖关系编辑
+  graphUpdateEdge: (projectPath: string, edgeId: string, patch: { type?: string; label?: string; depKind?: string }) => Promise<{ ok: boolean; data?: any; error?: string }>
+  graphDeleteEdge: (projectPath: string, edgeId: string) => Promise<{ ok: boolean; data?: any; error?: string }>
+  graphAddEdge: (projectPath: string, edge: { source: string; target: string; type: string; label?: string; depKind?: string }) => Promise<{ ok: boolean; data?: any; error?: string }>
 }
 
 declare global {
   interface Window {
     electronAPI: ElectronAPI
+    orchestrator: OrchestratorApi
   }
 }
+
+// ── Orchestrator API 类型声明 ──────────────────────
+interface OrchestratorApi {
+  create(opts: { repoPath?: string; templateId: string; goal: string; autoApprove?: boolean; testCommand?: string; model?: string }): Promise<any>
+  /** 使用完整模板对象创建编排（自定义模板走统一编辑器路径）*/
+  createWithTemplate(opts: { template: any; goal: string; autoApprove?: boolean; testCommand?: string; model?: string; repoPath?: string }): Promise<any>
+  start(orchestrationId: string): Promise<any>
+  pause(orchestrationId: string): Promise<any>
+  resume(orchestrationId: string): Promise<any>
+  stop(orchestrationId: string): Promise<any>
+  /** 更新任务的输入/输出配置 */
+  updateTaskIO(opts: { taskId: string; inputs?: any[]; outputs?: any[]; repoPath?: string }): Promise<any>
+  status(orchestrationId: string): Promise<any>
+  list(repoPath?: string): Promise<any>
+  taskDetail(taskId: string): Promise<any>
+  taskList(orchestrationId: string): Promise<any>
+  approve(orchestrationId: string, taskId: string, decision?: 'approve' | 'reject'): Promise<any>
+  reject(orchestrationId: string, taskId: string): Promise<any>
+  takeover(orchestrationId: string, taskId: string): Promise<any>
+  templates(): Promise<any>
+  cleanup(): Promise<any>
+  healthCheck(): Promise<any>
+  on(event: string, cb: (payload: any) => void): () => void
+  onStatusChange(cb: (payload: any) => void): () => void
+  onTaskStarted(cb: (payload: any) => void): () => void
+  onTaskCompleted(cb: (payload: any) => void): () => void
+  onTaskLog(cb: (payload: any) => void): () => void
+  onAwaitApproval(cb: (payload: any) => void): () => void
+  onLog(cb: (payload: any) => void): () => void
+}
+

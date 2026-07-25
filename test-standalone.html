@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Template Browser Test</title>
+  <link rel="stylesheet" href="/src/components/orchestrator/orchestrator.css" />
+  <style>
+    body { background: #1a1a1a; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 20px; height: 100vh; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React, { useState, useEffect } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { TemplateBrowser } from '/src/components/orchestrator/TemplateBrowser.tsx';
+
+    // Mock orchestrator
+    window.orchestrator = {
+      templates: async () => ({ ok: true, data: [
+        { id: 'greenfield', name: '全新项目', description: '从零创建', kind: 'greenfield', tasks: [{id:'a',title:'t1',kind:'phase',deps:[]}], entry: 'a', terminals: ['a'] },
+        { id: 'refactor', name: '项目重构', description: '重构', kind: 'refactor', tasks: [{id:'a',title:'t1',kind:'phase',deps:[]}], entry: 'a', terminals: ['a'] },
+      ]}),
+      list: async () => ({ ok: true, data: [] }),
+      create: async () => ({ ok: true, data: { id: 'test' } }),
+      createWithTemplate: async () => ({ ok: true, data: { id: 'test' } }),
+    };
+
+    function App() {
+      return React.createElement(TemplateBrowser, {
+        repoPath: 'C:/test',
+        onOrchestrationCreated: () => console.log('created'),
+      });
+    }
+
+    createRoot(document.getElementById('root')).render(React.createElement(App));
+  </script>
+</body>
+</html>

@@ -2,6 +2,8 @@
  * Preload script — 通过 contextBridge 暴露安全 API 给渲染进程。
  */
 import { contextBridge, ipcRenderer } from 'electron'
+import { exposeOrchestratorApi } from './orchestrator/preload'
+import { exposeKnowledgeGraphApi } from './knowledgeGraph/preload'
 
 const listenerMap = new Map<string, Map<(...args: any[]) => void, (...args: any[]) => void>>()
 
@@ -229,6 +231,28 @@ const electronAPI = {
   knowledgeCreate: (opts: { projectPath: string; title: string; content: string; type: string; tags: string; sources?: string }) => ipcRenderer.invoke('knowledge:create', opts),
   knowledgeDelete: (opts: { projectPath: string; fileName: string }) => ipcRenderer.invoke('knowledge:delete', opts),
 
+  // ── 知识图谱 ──────────────────────────────────────────
+  graphLoad: (projectPath: string) => ipcRenderer.invoke('graph:load', projectPath),
+  graphSave: (projectPath: string, data: any) => ipcRenderer.invoke('graph:save', projectPath, data),
+  graphAnalyze: (projectPath: string) => ipcRenderer.invoke('graph:analyze', projectPath),
+  graphImportFromClaude: (opts: { projectPath: string; sessionId: string }) => ipcRenderer.invoke('graph:import-from-claude', opts),
+  graphConfigLoad: (projectPath: string) => ipcRenderer.invoke('graph:config-load', projectPath),
+  graphConfigSave: (projectPath: string, config: any) => ipcRenderer.invoke('graph:config-save', projectPath, config),
+  graphAiAnalyze: (opts: { projectPath: string; prompt: string }) => ipcRenderer.invoke('graph:ai-analyze', opts),
+  graphAiStop: () => ipcRenderer.invoke('graph:ai-stop'),
+  onGraphAiProgress: (callback: (progress: { stage: string; preview?: string; sessionId?: string; text?: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('graph:ai-progress', handler)
+    return () => ipcRenderer.removeListener('graph:ai-progress', handler)
+  },
+  // 依赖关系编辑：更新/删除/新增（同时持久化到磁盘）
+  graphUpdateEdge: (projectPath: string, edgeId: string, patch: { type?: string; label?: string; depKind?: string }) =>
+    ipcRenderer.invoke('knowledge-graph:v1:update-edge', projectPath, edgeId, patch),
+  graphDeleteEdge: (projectPath: string, edgeId: string) =>
+    ipcRenderer.invoke('knowledge-graph:v1:delete-edge', projectPath, edgeId),
+  graphAddEdge: (projectPath: string, edge: { source: string; target: string; type: string; label?: string; depKind?: string }) =>
+    ipcRenderer.invoke('knowledge-graph:v1:add-edge', projectPath, edge),
+
   // ── 技能管理 ────────────────────────────────────────────
   skillList: () => ipcRenderer.invoke('skill:list'),
   skillRead: (name: string) => ipcRenderer.invoke('skill:read', name),
@@ -262,6 +286,7 @@ const electronAPI = {
   loopResume: (id: string) => ipcRenderer.invoke('loop:resume', id),
   loopHistory: (loopId?: string) => ipcRenderer.invoke('loop:history', loopId),
   workflowListRuns: () => ipcRenderer.invoke('workflow:list-runs'),
+  /** @deprecated 已被 window.orchestrator.create / createWithTemplate 取代，原简单模式 phases 执行路径 */
   workflowRun: (opts: { templateId: string; name: string; phases: Array<{ name: string; type: string; prompt: string; model: string }> }) => ipcRenderer.invoke('workflow:run', opts),
   onLoopStatus: (callback: (data: any) => void) => { const f = (_e: any, d: any) => callback(d); ipcRenderer.on('loop:status', f); return () => ipcRenderer.removeListener('loop:status', f) },
   onLoopOutput: (callback: (data: { loopId: string; runId: string; text: string }) => void) => { const f = (_e: any, d: any) => callback(d); ipcRenderer.on('loop:output', f); return () => ipcRenderer.removeListener('loop:output', f) },
@@ -389,5 +414,13 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('settings:migrated', handler)
   },
 }
+
+
+
+// 暴露 orchestrator API
+exposeOrchestratorApi()
+
+// 暴露 knowledgeGraph API
+exposeKnowledgeGraphApi()
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

@@ -26,7 +26,7 @@ interface TerminalState {
 
 const DARK_THEME = {
   background: '#0d0d0d', foreground: '#e0e0e0', cursor: '#00ff88',
-  cursorAccent: '#0d0d0d', selectionBackground: '#ffffff25',
+  cursorAccent: '#0d0d0d', selectionBackground: '#ffffff50',
   black: '#2a2a4a', red: '#e05555', green: '#4caf50',
   yellow: '#e89030', blue: '#6c8cff', magenta: '#b05090',
   cyan: '#3a9cc0', white: '#ccc',
@@ -64,6 +64,8 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
       theme: theme === 'light' ? LIGHT_THEME : DARK_THEME,
       cursorBlink: true, cursorStyle: 'bar',
       scrollback: 5000, tabStopWidth: 4,
+      // 容器不可见时用默认尺寸，避免 cols=0 导致 pty 输出错位乱码
+      cols: 120, rows: 30,
     })
 
     const fitAddon = new FitAddon()
@@ -71,7 +73,10 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
     try { term.loadAddon(new WebglAddon()) } catch { /* Canvas fallback */ }
 
     term.open(containerRef.current)
-    fitAddon.fit()
+    // 容器不可见时（display:none）跳过 fit，保持默认 cols/rows，避免 0 尺寸导致 pty 输出错位
+    if (containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
+      fitAddon.fit()
+    }
 
     termRef.current = term
     fitAddonRef.current = fitAddon
@@ -88,11 +93,11 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
     // ── 剪贴板：自定义键盘事件处理 ──────────────────────
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ctrl+Shift+C → 复制选中文本
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
         const selection = term.getSelection()
         if (selection) {
           navigator.clipboard.writeText(selection).catch(() => {
-            // fallback for older browsers / non-HTTPS
+            // fallback
             const textarea = document.createElement('textarea')
             textarea.value = selection
             textarea.style.position = 'fixed'
@@ -102,6 +107,7 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
             try { document.execCommand('copy') } catch { /* silent */ }
             document.body.removeChild(textarea)
           })
+          term.clearSelection()
         }
         return false // 阻止默认行为
       }
@@ -197,7 +203,12 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
     })
 
     // 容器尺寸变化
-    const observer = new ResizeObserver(() => fitAddon.fit())
+    const observer = new ResizeObserver(() => {
+      // 容器不可见时跳过 fit，避免 0 尺寸重置 xterm
+      if (containerRef.current && containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
+        fitAddon.fit()
+      }
+    })
     observer.observe(containerRef.current)
 
     return () => {
@@ -217,14 +228,18 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
   // 可见性切换 & resize
   useEffect(() => {
     if (visible && fitAddonRef.current && termRef.current) {
+      // 容器从 display:none 切到 flex 需要时间布局，延迟 300ms 确保 xterm 能算出正确尺寸
       setTimeout(() => {
-        fitAddonRef.current?.fit()
-        if (termRef.current) {
-          window.electronAPI?.terminalResize({
-            cols: termRef.current.cols, rows: termRef.current.rows,
-          })
+        if (!fitAddonRef.current || !termRef.current) return
+        fitAddonRef.current.fit()
+        const newCols = termRef.current.cols
+        const newRows = termRef.current.rows
+        if (newCols > 0 && newRows > 0) {
+          window.electronAPI?.terminalResize({ cols: newCols, rows: newRows })
         }
-      }, 100)
+        // 强制 xterm 重新渲染，修复历史内容的错位
+        termRef.current.refresh(0, termRef.current.rows - 1)
+      }, 300)
     }
     // 终端不可见时 blur，防止 xterm.js 捕获键盘事件发送到 PTY
     if (!visible && termRef.current) {
@@ -239,6 +254,17 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
     })
     return () => cleanup?.()
   }, [])
+
+  // 切换至终端视图时聚焦并刷新选区
+  useEffect(() => {
+    if (visible && termRef.current) {
+      setTimeout(() => {
+        if (!termRef.current) return
+        termRef.current.focus()
+        termRef.current.refresh(0, termRef.current.rows - 1)
+      }, 100)
+    }
+  }, [visible])
 
   // 监听 terminal:status (push)
   useEffect(() => {

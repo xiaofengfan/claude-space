@@ -1,3 +1,13 @@
+/**
+ * @deprecated 已被统一编辑器 TemplateEditor 取代
+ *
+ * 原简单模式模板管理对话框。其「阶段管理」与「详细信息设置」能力
+ * 已融合进 src/components/orchestrator/TemplateEditor.tsx。
+ *
+ * 本文件不再被任何模块 import，仅保留作为兼容入口与回滚参考。
+ * 底层执行依赖的 window.electronAPI.workflowRun 也已废弃，
+ * 所有模板应改走 window.orchestrator.create / createWithTemplate。
+ */
 import { useState, useEffect, useCallback } from 'react'
 
 interface Phase {

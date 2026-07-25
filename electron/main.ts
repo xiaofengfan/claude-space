@@ -64,17 +64,20 @@ function unregisterTerminalWindow(windowId: number): void {
 
 function broadcastTerminalEvent(sessionId: string, channel: string, ...args: any[]): void {
   const winIds = terminalWindowBindings.get(sessionId)
-  if (!winIds || winIds.size === 0) {
-    // 未注册窗口则丢弃事件（避免跨窗口粘连）
+  if (winIds && winIds.size > 0) {
+    for (const winId of winIds) {
+      try {
+        const win = BrowserWindow.fromId(winId)
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(channel, ...args)
+        }
+      } catch (_e) { /* 窗口可能已关闭 */ }
+    }
     return
   }
-  for (const winId of winIds) {
-    try {
-      const win = BrowserWindow.fromId(winId)
-      if (win && !win.isDestroyed()) {
-        win.webContents.send(channel, ...args)
-      }
-    } catch (_e) { /* 窗口可能已关闭 */ }
+  // 兜底：无绑定时发 mainWindow（首次启动时终端可能先于窗口绑定就绪）
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send(channel, ...args) } catch {}
   }
 }
 const sshService = new SshService()               // SSH 连接池与文件操作
@@ -331,7 +334,11 @@ function applyMenu(): void {
       label: '视图',
       submenu: [
         { role: 'reload', label: '刷新' },
-        { role: 'toggleDevTools', label: '开发者工具' },
+        { role: 'toggleDevTools', label: '开发者工具', click: () => {
+          for (const w of windows) {
+            if (w && !w.isDestroyed()) w.webContents.toggleDevTools()
+          }
+        } },
         { type: 'separator' },
         { role: 'zoomIn', label: '放大' },
         { role: 'zoomOut', label: '缩小' },

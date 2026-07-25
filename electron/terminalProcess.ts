@@ -77,12 +77,15 @@ export class TerminalProcess extends EventEmitter {
 
     // claude 命令：优先用传入的绝对路径，其次用系统 PATH 解析
     const claudeBin = this.options.claudePath || resolveClaudePath()
-    const args: string[] = []
+    const args: string[] = [
+      '--verbose',
+    ]
     if (this.options.permissionMode === 'auto') {
       args.push('--permission-mode', 'bypassPermissions')
     }
     if (this._sessionId) {
       args.push('--resume', this._sessionId)
+      debugLog(`start: resuming session ${this._sessionId}`)
     }
 
     const env: Record<string, string> = { ...(process.env as Record<string, string>) }
@@ -112,6 +115,8 @@ export class TerminalProcess extends EventEmitter {
     }
     try {
       debugLog(`start: spawning PTY...`)
+      // PTY 模式下 spawn Claude，不带 --print 和 stdin 输入
+      // 输出通过 PTY onData 直接推送到 xterm.js 渲染
       this.ptyProcess = pty.spawn(claudeBin, args, {
         name: 'xterm-256color',
         cols: this.options.cols || 120,
@@ -120,6 +125,14 @@ export class TerminalProcess extends EventEmitter {
         env,
       })
       debugLog(`PTY spawned: ${claudeBin} args: ${args.join(' ')} cwd: ${this.cwd} pid: ${this.ptyProcess?.pid}`)
+
+      // 立即发射 running 状态，让 UI 侧知道终端已经启动
+      this.emit('status', {
+        running: true, connected: false,
+        claudeRunning: false,
+        sessionId: this._sessionId,
+        error: '',
+      })
 
       debugLog(`start: setting up onData handler`)
       // PTY stdout → xterm.js 渲染 + 权限提示检测
@@ -149,6 +162,18 @@ export class TerminalProcess extends EventEmitter {
         debugLog(`PTY exited code=${exitCode} pid=${this.ptyProcess?.pid}`)
         this._claudeRunning = false
         this.stopJsonlWatch()
+
+        // PTY 进程退出时，如果还有尚未读取完的 JSONL 数据，再尝试读取一次
+        if (this.jsonlPath) {
+          try {
+            const stat = fs.statSync(this.jsonlPath)
+            if (stat.size > this.jsonlTailSize) {
+              debugLog(`onExit: reading remaining JSONL data: ${stat.size - this.jsonlTailSize} bytes`)
+              this.tailFrom(this.jsonlTailSize)
+            }
+          } catch (_e) { /* silent */ }
+        }
+
         this.emit('status', {
           running: true, connected: false,
           claudeRunning: false,
@@ -174,6 +199,23 @@ export class TerminalProcess extends EventEmitter {
       try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: about to call discoverSessionFile\n`, 'utf-8') } catch {}
       this.discoverSessionFile(sessionDir, beforeFiles)
       try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] start: after discoverSessionFile\n`, 'utf-8') } catch {}
+
+      // 如果是 --resume 模式且 session 文件存在，发送一个空 prompt 让 Claude 继续会话
+      // 修复 "No deferred tool marker" 错误 — Claude 在 --resume 后需要 stdin 输入来继续
+      if (this._sessionId && this.ptyProcess) {
+        const resumeFile = path.join(sessionDir, `${this._sessionId}.jsonl`)
+        if (fs.existsSync(resumeFile)) {
+          debugLog(`start: --resume mode, waiting for jsonl then sending continue`)
+          // 延迟发送继续指令（等待 Claude 初始化完成）
+          setTimeout(() => {
+            try {
+              if (!this.ptyProcess) return
+              debugLog(`start: sending empty prompt to continue session`)
+              this.ptyProcess.write('\r')
+            } catch (e) {}
+          }, 2000)
+        }
+      }
 
     } catch (err: any) {
       this._running = false

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { background: #1a1a1a; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 20px; }
+  </style>
+</head>
+<body>
+  <div id="root">加载中...</div>
+  <script type="module">
+    // Mock orchestrator API
+    window.orchestrator = {
+      templates: async () => ({ ok: true, data: [
+        { id: 'greenfield', name: '全新项目', description: '从零创建', kind: 'greenfield', tasks: [{id:'a',title:'t1',kind:'phase',deps:[]}], entry: 'a', terminals: ['a'] },
+        { id: 'greenfield-adv', name: '全新项目·高级', description: '高级版', kind: 'greenfield', tasks: [{id:'a',title:'t1',kind:'phase',deps:[]}], entry: 'a', terminals: ['a'] },
+        { id: 'refactor', name: '项目重构', description: '重构', kind: 'refactor', tasks: [{id:'a',title:'t1',kind:'phase',deps:[]}], entry: 'a', terminals: ['a'] },
+      ]}),
+      list: async () => ({ ok: true, data: [] }),
+      create: async () => ({ ok: true, data: { id: 'test' } }),
+      createWithTemplate: async () => ({ ok: true, data: { id: 'test' } }),
+    };
+    import('/src/main.tsx').catch(e => console.error('main load error:', e));
+  </script>
+</body>
+</html>

@@ -1,0 +1,3737 @@
+/* ── Orchestrator 面板样式 ────────────────────────────
+ * 使用 CSS 变量适配 claude-space 的深/浅主题
+ * 命名前缀：orch-
+ */
+
+/* ── 主容器 ───────────────────────────────────────── */
+.orch-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-elevated, #1a1a1a);
+  color: var(--text-main, #e0e0e0);
+  font-size: 13px;
+  overflow: hidden;
+  position: relative;
+}
+
+.orch-panel-error {
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── 顶部工具栏 ────────────────────────────────────── */
+.orch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.orch-toolbar-left,
+.orch-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orch-toolbar-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-main, #e0e0e0);
+}
+
+.orch-toolbar-select {
+  background: var(--bg-tool, #111);
+  color: var(--text-main, #e0e0e0);
+  border: 1px solid var(--border-light, #333);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  min-width: 260px;
+  max-width: 380px;
+}
+
+.orch-toolbar-select:focus {
+  outline: none;
+  border-color: var(--accent, #6c8cff);
+}
+
+/* ── 通用按钮 ──────────────────────────────────────── */
+.orch-btn {
+  background: var(--bg-hover, #222);
+  color: var(--text-main, #e0e0e0);
+  border: 1px solid var(--border-light, #333);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.orch-btn:hover:not(:disabled) {
+  background: var(--bg-active, #262626);
+  border-color: var(--accent, #6c8cff);
+}
+
+.orch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.orch-btn-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.orch-btn-primary {
+  background: var(--accent, #6c8cff);
+  color: #fff;
+  border-color: var(--accent-border, var(--accent, #6c8cff));
+}
+
+.orch-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover, #5a7aee);
+  border-color: var(--accent-hover, #5a7aee);
+}
+
+.orch-btn-danger {
+  background: #ef4444;
+  color: #fff;
+  border-color: #ef4444;
+}
+
+.orch-btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.orch-btn-warn {
+  background: #f59e0b;
+  color: #fff;
+  border-color: #f59e0b;
+}
+
+.orch-btn-warn:hover:not(:disabled) {
+  background: #d97706;
+}
+
+/* ── 创建表单 ──────────────────────────────────────── */
+.orch-create-form {
+  padding: 16px;
+  background: var(--bg-surface, #141414);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60%;
+  overflow-y: auto;
+}
+
+.orch-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+/* ── 模板选择器 ────────────────────────────────────── */
+.orch-template-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orch-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.orch-template-card {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text-main, #e0e0e0);
+}
+
+.orch-template-card:hover {
+  border-color: var(--accent, #6c8cff);
+  background: var(--bg-hover, #222);
+}
+
+.orch-template-card.active {
+  border-color: var(--accent, #6c8cff);
+  background: var(--accent-bg-subtle, rgba(108, 140, 255, 0.15));
+}
+
+.orch-template-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.orch-template-icon {
+  font-size: 18px;
+}
+
+.orch-template-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.orch-template-desc {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.orch-template-meta {
+  display: flex;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+}
+
+/* ── 表单 ──────────────────────────────────────────── */
+.orch-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orch-form-label {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  font-weight: 600;
+}
+
+.orch-form-input,
+.orch-form-textarea {
+  background: var(--bg-tool, #111);
+  color: var(--text-main, #e0e0e0);
+  border: 1px solid var(--border-light, #333);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.orch-form-textarea {
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+.orch-form-input:focus,
+.orch-form-textarea:focus {
+  outline: none;
+  border-color: var(--accent, #6c8cff);
+}
+
+.orch-form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.orch-form-checkbox input {
+  cursor: pointer;
+}
+
+/* ── 空状态 / 错误 ──────────────────────────────────── */
+.orch-empty,
+.orch-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.orch-empty-state {
+  flex: 1;
+}
+
+.orch-empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
+
+.orch-empty-text {
+  color: var(--text-muted, #888);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 360px;
+}
+
+.orch-hint {
+  color: var(--text-muted, #888);
+  font-size: 12px;
+  padding: 16px 12px;
+  text-align: center;
+}
+
+.orch-error {
+  color: #ef4444;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 4px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.orch-error-block {
+  text-align: center;
+  padding: 32px;
+  max-width: 480px;
+}
+
+.orch-error-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.orch-error-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.orch-error-desc {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  line-height: 1.6;
+}
+
+/* ── 主内容区 ──────────────────────────────────────── */
+.orch-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.orch-main-top {
+  display: flex;
+  flex: 1 1 60%;
+  min-height: 0;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.orch-main-dag {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.orch-main-control {
+  width: 320px;
+  border-left: 1px solid var(--border, #2a2a2a);
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.orch-main-bottom {
+  display: flex;
+  flex: 1 1 40%;
+  min-height: 0;
+}
+
+.orch-main-list {
+  width: 280px;
+  border-right: 1px solid var(--border, #2a2a2a);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.orch-main-detail {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+/* ── DAG 流程图 ────────────────────────────────────── */
+.orch-dag-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.orch-dag-stats {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orch-dag-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.orch-dag-progress-label {
+  color: var(--text-muted, #888);
+  font-weight: 600;
+}
+
+.orch-dag-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-tool, #111);
+  border-radius: 3px;
+  overflow: hidden;
+  max-width: 240px;
+}
+
+.orch-dag-progress-fill {
+  height: 100%;
+  background: var(--accent, #6c8cff);
+  transition: width 0.3s ease;
+}
+
+.orch-dag-progress-text {
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.orch-dag-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+}
+
+.orch-dag-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.orch-dag-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.orch-dag-legend-icon {
+  font-size: 11px;
+}
+
+.orch-dag-legend-line {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  border-top: 1.5px dashed #ef4444;
+}
+
+.orch-dag-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+.orch-dag-svg {
+  display: block;
+}
+
+.orch-dag-node {
+  transition: opacity 0.15s;
+}
+
+.orch-dag-node:hover .orch-dag-node-rect {
+  filter: brightness(1.1);
+}
+
+.orch-dag-node.selected .orch-dag-node-rect {
+  filter: brightness(1.2);
+}
+
+.orch-dag-node.running .orch-dag-node-rect {
+  animation: orch-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes orch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ── 控制面板 ──────────────────────────────────────── */
+.orch-control-panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orch-control-card {
+  background: var(--bg-surface, #141414);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.orch-control-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.orch-control-card-row + .orch-control-card-row {
+  border-top: 1px solid var(--border, #2a2a2a);
+}
+
+.orch-control-label {
+  color: var(--text-muted, #888);
+  flex-shrink: 0;
+  min-width: 60px;
+}
+
+.orch-control-value {
+  color: var(--text-main, #e0e0e0);
+  text-align: right;
+  word-break: break-all;
+}
+
+.orch-control-status {
+  font-weight: 600;
+}
+
+.orch-control-code {
+  background: var(--bg-tool, #111);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+}
+
+.orch-control-card-error .orch-control-value {
+  color: #ef4444;
+}
+
+.orch-control-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.orch-control-actions .orch-btn {
+  flex: 1;
+  min-width: 80px;
+}
+
+.orch-control-section {
+  border-top: 1px solid var(--border, #2a2a2a);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orch-control-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.orch-approval-item {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orch-approval-item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.orch-approval-item-icon {
+  font-size: 14px;
+}
+
+.orch-approval-item-title {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.orch-approval-item-prompt {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  line-height: 1.5;
+  background: var(--bg-tool, #111);
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+
+.orch-approval-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ── 任务列表 ──────────────────────────────────────── */
+.orch-task-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.orch-task-list-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}
+
+.orch-task-list-body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.orch-task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  transition: background 0.15s;
+}
+
+.orch-task-row:hover {
+  background: var(--bg-hover, #222);
+}
+
+.orch-task-row.selected {
+  background: var(--accent-bg-subtle, rgba(108, 140, 255, 0.15));
+}
+
+.orch-task-row.running {
+  background: rgba(108, 140, 255, 0.08);
+}
+
+.orch-task-row.failed {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.orch-task-row-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.orch-task-row-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orch-task-row-title {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.orch-task-row-sub {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+}
+
+.orch-task-row-attempts {
+  color: #f59e0b;
+}
+
+.orch-task-row-status {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+/* ── 任务详情 ──────────────────────────────────────── */
+.orch-detail-panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.orch-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.orch-detail-icon {
+  font-size: 20px;
+}
+
+.orch-detail-title-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.orch-detail-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.orch-detail-subtitle {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+}
+
+.orch-detail-status {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.orch-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orch-detail-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.orch-detail-loading {
+  color: var(--text-muted, #888);
+  font-weight: normal;
+  text-transform: none;
+}
+
+.orch-detail-error-text {
+  color: #ef4444;
+  font-weight: normal;
+  text-transform: none;
+}
+
+/* ── 任务详情：IO 编辑器 ──────────────────────────────── */
+.orch-io-edit-hint {
+  font-size: 10px;
+  font-weight: normal;
+  color: var(--accent, #6c8cff);
+  margin-left: 6px;
+}
+.orch-io-edit-hint.orch-io-readonly {
+  color: var(--text-muted, #888);
+}
+.orch-io-block {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 5px;
+  background: var(--bg-base, #161616);
+}
+.orch-io-block-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #aaa);
+  margin-bottom: 6px;
+}
+.orch-io-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.orch-io-select {
+  width: 100px;
+  flex: 0 0 100px;
+  padding: 3px 5px;
+  font-size: 11px;
+  background: var(--bg-card, #1e1e1e);
+  color: var(--text-main, #e0e0e0);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 4px;
+}
+.orch-io-input {
+  padding: 3px 6px;
+  font-size: 11px;
+  background: var(--bg-card, #1e1e1e);
+  color: var(--text-main, #e0e0e0);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 4px;
+}
+.orch-io-input-name {
+  flex: 1;
+  min-width: 80px;
+}
+.orch-io-input-path {
+  flex: 2;
+  min-width: 120px;
+}
+.orch-io-input:disabled,
+.orch-io-select:disabled {
+  opacity: 0.6;
+}
+.orch-io-required {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.orch-io-required input {
+  margin: 0;
+}
+.orch-io-remove {
+  padding: 2px 6px;
+  font-size: 11px;
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.orch-io-remove:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+.orch-io-add {
+  margin-top: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: rgba(108, 140, 255, 0.1);
+  color: var(--accent, #6c8cff);
+  border: 1px dashed var(--accent, #6c8cff);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.orch-io-add:hover {
+  background: rgba(108, 140, 255, 0.2);
+}
+.orch-io-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.orch-io-save-btn {
+  padding: 4px 12px;
+  font-size: 11px;
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.orch-io-save-btn:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.2);
+}
+.orch-io-save-btn:disabled {
+  opacity: 0.6;
+}
+.orch-io-saved-hint {
+  font-size: 10px;
+  color: #4ade80;
+}
+
+.orch-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.orch-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-surface, #141414);
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.orch-detail-field-full {
+  grid-column: 1 / -1;
+}
+
+.orch-detail-field-label {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.orch-detail-field-value {
+  font-size: 12px;
+  color: var(--text-main, #e0e0e0);
+  word-break: break-all;
+}
+
+.orch-detail-code {
+  background: var(--bg-tool, #111);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.orch-detail-pre {
+  background: var(--bg-tool, #111);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-main, #e0e0e0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.orch-detail-error {
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.orch-detail-approval-prompt {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.orch-detail-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orch-detail-run {
+  background: var(--bg-surface, #141414);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.orch-detail-run-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.orch-detail-run-label {
+  font-weight: 600;
+}
+
+.orch-detail-run-outcome {
+  font-weight: 600;
+}
+
+.orch-detail-run-commit {
+  background: var(--bg-tool, #111);
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 10px;
+}
+
+.orch-detail-run-time {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+
+.orch-detail-run-error {
+  margin-top: 6px;
+  max-height: 100px;
+}
+
+.orch-detail-logs {
+  max-height: 280px;
+  font-size: 10px;
+}
+
+/* ── Toast ─────────────────────────────────────────── */
+.orch-toast {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #fff;
+  max-width: 360px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  animation: orch-toast-in 0.2s ease-out;
+}
+
+@keyframes orch-toast-in {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.orch-toast-error { background: #ef4444; }
+.orch-toast-success { background: #4ade80; color: #0d0d0d; }
+.orch-toast-info { background: #6c8cff; }
+
+/* ── 响应式调整 ────────────────────────────────────── */
+@media (max-width: 1200px) {
+  .orch-main-control { width: 280px; }
+  .orch-main-list { width: 240px; }
+}
+
+@media (max-width: 900px) {
+  .orch-main-top,
+  .orch-main-bottom {
+    flex-direction: column;
+  }
+  .orch-main-control,
+  .orch-main-list {
+    width: 100%;
+    border-left: none;
+    border-right: none;
+    border-top: 1px solid var(--border, #2a2a2a);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+ * 工作流模板浏览器样式（借鉴 Foundry WorkflowsPage）
+ * ════════════════════════════════════════════════════════════ */
+
+/* ── Tab 栏 ──────────────────────────────────────────── */
+.orch-tab-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--bg-elevated, #1a1a1a);
+  border-bottom: 1px solid var(--border-color, #333);
+}
+.orch-tab-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.orch-tab-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+}
+.orch-tabs {
+  display: flex;
+  gap: 4px;
+}
+.orch-tab {
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+  position: relative;
+}
+.orch-tab:hover {
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text-main, #e0e0e0);
+}
+.orch-tab.active {
+  background: var(--accent-bg, #2a3a5a);
+  color: var(--accent-color, #6c8cff);
+  border-color: var(--accent-border, #4a6a9a);
+}
+.orch-tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: var(--accent-color, #6c8cff);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.orch-tab-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── 模板浏览器两栏布局 ──────────────────────────────── */
+.orch-browser {
+  display: flex;
+  height: calc(100% - 49px);
+  overflow: hidden;
+}
+.orch-browser-sidebar {
+  width: 280px;
+  min-width: 240px;
+  border-right: 1px solid var(--border-color, #333);
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--bg-sidebar, #141414);
+}
+.orch-browser-sidebar-head h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: var(--text-main, #e0e0e0);
+}
+.orch-browser-hint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--text-muted, #666);
+  line-height: 1.4;
+}
+.orch-browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-browser-card {
+  padding: 12px;
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.orch-browser-card:hover {
+  border-color: var(--accent-border, #4a6a9a);
+  background: var(--bg-hover, #222);
+}
+.orch-browser-card.active {
+  border-color: var(--accent-color, #6c8cff);
+  background: var(--accent-bg, #1a2a4a);
+}
+.orch-browser-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.orch-browser-card-icon {
+  font-size: 16px;
+}
+.orch-browser-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+}
+.orch-browser-card-kind {
+  margin-left: auto;
+  padding: 1px 6px;
+  background: var(--bg-tag, #2a2a2a);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-muted, #aaa);
+}
+.orch-browser-card-desc {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+.orch-browser-card-meta {
+  display: flex;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted, #666);
+}
+
+/* ── 模板详情主区域 ──────────────────────────────────── */
+.orch-browser-main {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.orch-browser-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.orch-wf-detail {
+  max-width: 900px;
+}
+.orch-wf-detail-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: var(--text-main, #e0e0e0);
+}
+.orch-wf-detail-desc {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-muted, #aaa);
+}
+.orch-wf-summary {
+  font-size: 11px;
+  margin-bottom: 16px;
+}
+.orch-wf-summary code {
+  background: var(--bg-code, #222);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.orch-section-h {
+  margin: 20px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  border-bottom: 1px solid var(--border-color, #333);
+  padding-bottom: 4px;
+}
+.orch-muted {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+
+/* ── ApplyPanel ──────────────────────────────────────── */
+.orch-apply-panel {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+.orch-apply-panel .orch-section-h {
+  margin-top: 0;
+}
+.orch-apply-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.orch-apply-row-center {
+  align-items: center;
+}
+.orch-apply-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-input, #0d0d0d);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 4px;
+  color: var(--text-main, #e0e0e0);
+  font-size: 12px;
+}
+.orch-apply-input:focus {
+  outline: none;
+  border-color: var(--accent-color, #6c8cff);
+}
+.orch-apply-textarea {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-input, #0d0d0d);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 4px;
+  color: var(--text-main, #e0e0e0);
+  font-size: 12px;
+  resize: vertical;
+  margin-bottom: 8px;
+  font-family: inherit;
+}
+.orch-apply-textarea:focus {
+  outline: none;
+  border-color: var(--accent-color, #6c8cff);
+}
+.orch-apply-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted, #aaa);
+  cursor: pointer;
+}
+.orch-apply-ok {
+  color: #4ade80;
+  font-size: 11px;
+}
+.orch-apply-err {
+  color: #ef4444;
+  font-size: 11px;
+}
+
+/* ── 执行流程说明 ────────────────────────────────────── */
+.orch-flow-explanation {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  padding: 12px;
+}
+.orch-flow-step {
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-main, #ddd);
+  line-height: 1.5;
+  border-bottom: 1px solid var(--border-color-light, #222);
+}
+.orch-flow-step:last-child {
+  border-bottom: none;
+}
+.orch-flow-step-num {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--accent-bg, #2a3a5a);
+  color: var(--accent-color, #6c8cff);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.orch-flow-step-id {
+  background: var(--bg-code, #222);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-bright, #fff);
+}
+.orch-flow-step-kind {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+.orch-flow-explanation-summary {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color, #333);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted, #aaa);
+}
+
+/* ── Loop 摘要 ───────────────────────────────────────── */
+.orch-loop-summary {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  padding: 12px;
+}
+.orch-loop-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color-light, #222);
+}
+.orch-loop-row:last-child {
+  border-bottom: none;
+}
+.orch-loop-icon {
+  font-size: 16px;
+  width: 24px;
+  text-align: center;
+}
+.orch-loop-retry { color: #fa5; }
+.orch-loop-human { color: #fa5; }
+.orch-loop-gate { color: #5f5; }
+.orch-loop-fallback { color: #e74c3c; }
+.orch-loop-label {
+  font-size: 12px;
+  color: var(--text-main, #ddd);
+  font-weight: 600;
+  min-width: 180px;
+}
+.orch-loop-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.orch-loop-tag {
+  padding: 2px 6px;
+  background: var(--bg-tag, #2a2a2a);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-muted, #aaa);
+}
+.orch-loop-tag code {
+  color: var(--text-bright, #fff);
+  font-size: 10px;
+}
+.orch-loop-empty {
+  color: var(--text-muted, #666);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ── SVG 流程图 ──────────────────────────────────────── */
+.orch-flow-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 11px;
+  color: var(--text-muted, #aaa);
+}
+.orch-flow-legend-loop {
+  color: #e74c3c;
+}
+.orch-wf-graph-wrap {
+  background: var(--bg-graph, #0f0f0f);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  user-select: none;
+}
+.orch-wf-graph-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-elevated, rgba(26, 26, 26, 0.9));
+  border-radius: 4px;
+  font-size: 11px;
+}
+.orch-link-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent-color, #6c8cff);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.orch-link-btn:hover {
+  text-decoration: underline;
+}
+.orch-wf-graph-zoom {
+  color: var(--text-muted, #888);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.orch-wf-graph {
+  width: 100%;
+  height: 360px;
+  display: block;
+}
+
+/* ── 节点配置面板 ────────────────────────────────────── */
+.orch-node-config-panel {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--accent-color, #6c8cff);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 12px;
+}
+.orch-node-config-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+.orch-node-config-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.orch-node-config-title code {
+  background: var(--bg-code, #222);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--text-bright, #fff);
+}
+.orch-node-tag {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.orch-node-tag.entry {
+  background: #1a3a5a;
+  color: #5af;
+}
+.orch-node-tag.term {
+  background: #3a3a1a;
+  color: #ffd700;
+}
+.orch-node-config-section {
+  margin-bottom: 12px;
+}
+.orch-node-config-section h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-muted, #aaa);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.orch-node-config-desc {
+  font-size: 13px;
+  color: var(--text-main, #e0e0e0);
+  margin-bottom: 4px;
+}
+.orch-node-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+}
+.orch-nc-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-input, #0d0d0d);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.orch-nc-k {
+  color: var(--text-muted, #888);
+  min-width: 80px;
+}
+.orch-nc-v {
+  color: var(--text-main, #ddd);
+}
+.orch-nc-v code {
+  background: var(--bg-code, #222);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-bright, #fff);
+}
+.orch-nc-io-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.orch-nc-io-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-input, #0d0d0d);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.orch-nc-io-row code {
+  background: var(--bg-code, #222);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text-bright, #fff);
+}
+.orch-nc-arrow {
+  color: var(--text-muted, #888);
+}
+.orch-nc-cond {
+  margin-left: auto;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  background: var(--bg-tag, #2a2a2a);
+  color: var(--text-muted, #aaa);
+}
+.orch-nc-cond.fallback {
+  background: #3a1a1a;
+  color: #e74c3c;
+}
+.orch-nc-prompt {
+  background: var(--bg-input, #0d0d0d);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-muted, #aaa);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* ── 节点表 / 边表 ───────────────────────────────────── */
+.orch-wf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+.orch-wf-table th {
+  text-align: left;
+  padding: 6px 8px;
+  background: var(--bg-elevated, #1a1a1a);
+  border-bottom: 2px solid var(--border-color, #333);
+  color: var(--text-muted, #aaa);
+  font-weight: 600;
+  font-size: 11px;
+}
+.orch-wf-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color-light, #222);
+  color: var(--text-main, #ddd);
+}
+.orch-wf-table tr:hover {
+  background: var(--bg-hover, #222);
+}
+.orch-wf-table tr.selected {
+  background: var(--accent-bg, #1a2a4a);
+}
+.orch-wf-table code {
+  background: var(--bg-code, #222);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-bright, #fff);
+}
+.orch-kind-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #fff;
+  font-weight: 600;
+}
+.orch-edge-tag {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.orch-edge-tag.fallback {
+  background: #3a1a1a;
+  color: #e74c3c;
+}
+.orch-edge-tag.normal {
+  background: var(--bg-tag, #2a2a2a);
+  color: var(--text-muted, #888);
+}
+.orch-wf-table tr.edge-fallback {
+  background: rgba(231, 76, 60, 0.05);
+}
+
+/* ── 全屏布局 ──────────────────────────────────────── */
+.orch-fullscreen-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.orch-fullscreen-content {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ── 执行监控容器 ──────────────────────────────────── */
+.orch-exec-monitor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* ── 顶部目标 + 控制 ──────────────────────────────── */
+.orch-exec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  gap: 12px;
+  flex-shrink: 0;
+  background: var(--bg-elevated, #1a1a1a);
+}
+
+.orch-exec-goal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.orch-exec-goal-label {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  flex-shrink: 0;
+}
+
+.orch-exec-goal-text {
+  font-size: 13px;
+  color: var(--text-main, #e0e0e0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orch-exec-controls {
+  flex-shrink: 0;
+}
+
+/* ── Stepper 阶段步进器 ───────────────────────────── */
+.orch-stepper {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  overflow-x: auto;
+  flex-shrink: 0;
+  background: var(--bg-main, #1e1e1e);
+  gap: 0;
+}
+
+.orch-step {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.orch-step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text-muted, #888);
+  border: 2px solid var(--border-light, #333);
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.orch-step.current .orch-step-dot {
+  background: var(--accent, #6c8cff);
+  color: #fff;
+  border-color: var(--accent, #6c8cff);
+  box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.2);
+}
+
+.orch-step.done .orch-step-dot {
+  background: #4ade80;
+  color: #fff;
+  border-color: #4ade80;
+}
+
+.orch-step-label {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.orch-step.current .orch-step-label {
+  color: var(--text-main, #e0e0e0);
+  font-weight: 600;
+}
+
+.orch-step.done .orch-step-label {
+  color: #4ade80;
+}
+
+.orch-step-line {
+  width: 24px;
+  height: 2px;
+  background: var(--border-light, #333);
+  margin: 0 8px;
+}
+
+.orch-step.done .orch-step-line {
+  background: #4ade80;
+}
+
+/* ── Metrics 指标卡 ───────────────────────────────── */
+.orch-metrics {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+  background: var(--bg-main, #1e1e1e);
+  overflow-x: auto;
+}
+
+.orch-metric-card {
+  flex: 1;
+  min-width: 100px;
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-light, #2a2a2a);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transition: border-color 0.2s;
+}
+
+.orch-metric-card.alert {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.orch-metric-card.active {
+  border-color: var(--accent, #6c8cff);
+  background: rgba(108, 140, 255, 0.08);
+}
+
+.orch-metric-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main, #e0e0e0);
+  line-height: 1.2;
+}
+
+.orch-metric-card.alert .orch-metric-value {
+  color: #ef4444;
+}
+
+.orch-metric-card.active .orch-metric-value {
+  color: var(--accent, #6c8cff);
+}
+
+.orch-metric-label {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+}
+
+.orch-metric-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-hover, #2a2a2a);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.orch-metric-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80, #6c8cff);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+/* ── 子 Tab 栏 ────────────────────────────────────── */
+.orch-subtab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+  background: var(--bg-elevated, #1a1a1a);
+}
+
+.orch-subtab {
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.orch-subtab:hover {
+  color: var(--text-main, #e0e0e0);
+}
+
+.orch-subtab.active {
+  color: var(--text-main, #e0e0e0);
+  border-bottom-color: var(--accent, #6c8cff);
+  font-weight: 600;
+}
+
+/* ── 子 Tab 内容区 ────────────────────────────────── */
+.orch-subtab-content {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  min-height: 0;
+}
+
+/* ── 概览网格 ─────────────────────────────────────── */
+.orch-overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.orch-info-card {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-light, #2a2a2a);
+  border-radius: 6px;
+  padding: 14px;
+}
+
+.orch-info-card-wide {
+  grid-column: 1 / -1;
+}
+
+.orch-info-card h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-light, #2a2a2a);
+}
+
+.orch-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.orch-info-key {
+  color: var(--text-muted, #888);
+  flex-shrink: 0;
+}
+
+.orch-info-val {
+  color: var(--text-main, #e0e0e0);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+/* ── 统计网格 ─────────────────────────────────────── */
+.orch-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.orch-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  padding: 4px 0;
+}
+
+.orch-stat-item strong {
+  margin-left: auto;
+  color: var(--text-main, #e0e0e0);
+  font-size: 14px;
+}
+
+.orch-stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── 流程图 Tab ───────────────────────────────────── */
+.orch-graph-tab {
+  height: 100%;
+  min-height: 400px;
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-light, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* ── 任务 Tab ─────────────────────────────────────── */
+.orch-tasks-tab {
+  display: flex;
+  gap: 12px;
+  height: 100%;
+  min-height: 400px;
+}
+
+.orch-tasks-list {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-light, #2a2a2a);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.orch-tasks-detail {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-light, #2a2a2a);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+/* ── 日志 Tab ─────────────────────────────────────── */
+.orch-logs-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.orch-log-block {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-light, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.orch-log-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  background: var(--bg-hover, #222);
+  border-bottom: 1px solid var(--border-light, #2a2a2a);
+}
+
+.orch-log-content {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--text-muted, #aaa);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow: auto;
+}
+
+/* ── 空状态 ───────────────────────────────────────── */
+.orch-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted, #888);
+}
+
+.orch-empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.orch-empty-text {
+  font-size: 13px;
+  text-align: center;
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+/* ── 浏览器两栏布局增强 ────────────────────────────── */
+.orch-browser {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.orch-browser-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border, #2a2a2a);
+  overflow-y: auto;
+  background: var(--bg-elevated, #1a1a1a);
+}
+
+.orch-browser-main {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Tab 栏增强 ────────────────────────────────────── */
+.orch-tab-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+  background: var(--bg-elevated, #1a1a1a);
+}
+
+.orch-tab-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.orch-tab-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+}
+
+.orch-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.orch-tab {
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  position: relative;
+}
+
+.orch-tab:hover {
+  color: var(--text-main, #e0e0e0);
+  background: var(--bg-hover, #222);
+}
+
+.orch-tab.active {
+  color: var(--text-main, #e0e0e0);
+  background: var(--bg-active, #262626);
+  border-color: var(--border-light, #333);
+  font-weight: 600;
+}
+
+.orch-tab-badge {
+  margin-left: 6px;
+  background: var(--accent, #6c8cff);
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.orch-tab-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orch-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 错误提示块 ────────────────────────────────────── */
+.orch-panel-error {
+  align-items: center;
+  justify-content: center;
+}
+
+.orch-error-block {
+  text-align: center;
+  padding: 40px;
+}
+
+.orch-error-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.orch-error-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  margin-bottom: 8px;
+}
+
+.orch-error-desc {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+/* ── Toast ────────────────────────────────────────── */
+.orch-toast {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  z-index: 1000;
+  max-width: 400px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: orch-toast-in 0.2s ease-out;
+}
+
+@keyframes orch-toast-in {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.orch-toast-error {
+  background: #ef4444;
+  color: #fff;
+}
+
+.orch-toast-success {
+  background: #4ade80;
+  color: #1a1a1a;
+}
+
+.orch-toast-info {
+  background: var(--accent, #6c8cff);
+  color: #fff;
+}
+
+
+/* ── 模式切换（已废弃，融合为统一形式）───────────── */
+/* .orch-mode-toggle / .orch-mode-btn / .orch-mode-hint 已移除 */
+.orch-browser-card.advanced {
+  border-left: 3px solid #6c8cff;
+}
+.orch-browser-card.simple {
+  border-left: 3px solid #4ade80;
+}
+.orch-tag-adv {
+  color: #6c8cff;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+
+/* ════════════════════════════════════════════════════════════
+ * v4 融合版样式 — 左侧任务列表 + 右侧运行状态
+ * ════════════════════════════════════════════════════════════ */
+
+/* ── v4 主布局 ─────────────────────────────────────── */
+.orch-panel-v4 {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── 左侧栏 ───────────────────────────────────────── */
+.orch-sidebar-v4 {
+  width: 300px;
+  min-width: 300px;
+  border-right: 1px solid var(--border, #333);
+  background: var(--bg-base, #1e1e1e);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.orch-sidebar-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border, #333);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.orch-sidebar-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-main, #e0e0e0);
+  white-space: nowrap;
+}
+.orch-sidebar-actions {
+  display: flex;
+  gap: 4px;
+}
+.orch-sidebar-actions .orch-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* ── 任务列表 ─────────────────────────────────────── */
+.orch-task-list-v4 {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.orch-sidebar-empty {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text-muted, #666);
+}
+.orch-sidebar-empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+.orch-sidebar-empty p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+.orch-sidebar-empty-hint {
+  font-size: 11px !important;
+  line-height: 1.4;
+  margin-top: 8px !important;
+  color: var(--text-muted, #888);
+}
+
+/* ── 任务卡片 ─────────────────────────────────────── */
+.orch-task-item-v4 {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+}
+.orch-task-item-v4:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.orch-task-item-v4.active {
+  background: rgba(108, 140, 255, 0.12);
+  border-color: rgba(108, 140, 255, 0.3);
+}
+.orch-task-item-v4.running {
+  border-left: 3px solid #6c8cff;
+}
+.orch-task-item-status {
+  font-size: 16px;
+  line-height: 1;
+  margin-top: 2px;
+}
+.orch-task-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.orch-task-item-title {
+  font-size: 13px;
+  color: var(--text-main, #e0e0e0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.orch-task-item-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+}
+.orch-task-item-tpl {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.orch-task-item-status-text.status-running { color: #6c8cff; }
+.orch-task-item-status-text.status-success { color: #4ade80; }
+.orch-task-item-status-text.status-failed { color: #ef4444; }
+.orch-task-item-status-text.status-paused { color: #f59e0b; }
+
+/* ── 右侧主区 ─────────────────────────────────────── */
+.orch-main-v4 {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--bg-main, #252526);
+}
+
+/* ── 统一模板对话框 ───────────────────────────────── */
+.unified-template-dialog {
+  background: var(--bg-elevated, #252526) !important;
+  color: var(--text-main, #e0e0e0);
+  width: 90vw !important;
+  max-width: 1400px !important;
+  height: 85vh !important;
+  max-height: 85vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border: 1px solid var(--accent-border, #3a3a5a) !important;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6) !important;
+}
+.unified-template-dialog.maximized {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  border-radius: 0 !important;
+}
+.unified-template-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border, #333);
+  flex-shrink: 0;
+}
+.unified-template-title {
+  flex: 1;
+  min-width: 0;
+}
+.unified-template-title h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: var(--text-main, #e0e0e0);
+}
+.unified-template-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+/* ── 窗口按钮组 ───────────────────────────────────── */
+.unified-template-window-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.dialog-window-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #888);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background .15s, color .15s;
+}
+.dialog-window-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main, #e0e0e0);
+}
+.dialog-close-btn:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+/* ── 模式说明条 ───────────────────────────────────── */
+.unified-template-info-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 20px;
+  background: var(--bg-elevated, #2a2a2a);
+  border-bottom: 1px solid var(--border, #333);
+  font-size: 12px;
+  color: var(--text-muted, #aaa);
+  line-height: 1.5;
+}
+.unified-info-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.unified-info-text {
+  flex: 1;
+}
+.unified-info-tip {
+  display: block;
+  margin-top: 4px;
+  color: var(--accent, #6c8cff);
+  font-style: italic;
+}
+
+/* ── 内容区 ───────────────────────────────────────── */
+.unified-template-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.unified-simple-wrap,
+.unified-advanced-wrap {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 让嵌入的 TemplateManagerDialog 不显示自己的 overlay */
+.unified-simple-wrap .dialog-overlay {
+  position: static !important;
+  background: transparent !important;
+}
+.unified-simple-wrap .dialog {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* 让嵌入的 TemplateBrowser 占满空间 */
+.unified-advanced-wrap .orch-browser,
+.unified-advanced-wrap .orch-tpl-list-view,
+.unified-advanced-wrap .orch-tpl-edit-view {
+  height: 100%;
+  flex: 1;
+}
+
+
+/* ── 模板标签 ─────────────────────────────────────── */
+.orch-tpl-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(108, 140, 255, 0.15);
+  color: #6c8cff;
+  border: 1px solid rgba(108, 140, 255, 0.3);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.orch-tpl-badge-inline {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+
+/* ════════════════════════════════════════════════════════════
+ * v13 分栏模式样式
+ * ════════════════════════════════════════════════════════════ */
+
+/* ── 分栏布局 ─────────────────────────────────────── */
+.orch-split-layout-v13 {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.orch-sidebar-pane-v13 {
+  width: 260px;
+  min-width: 260px;
+  border-right: 1px solid var(--border, #333);
+  background: var(--bg-base, #1e1e1e);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.orch-main-pane-v13 {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg-main, #252526);
+  padding: 16px 20px;
+}
+
+/* ── 侧边栏（窄） ─────────────────────────────────── */
+.orch-sidebar-v13 {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.orch-sidebar-head-v13 {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, #333);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.orch-sidebar-head-v13 h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-main, #e0e0e0);
+}
+.orch-sidebar-actions-v13 {
+  display: flex;
+  gap: 4px;
+}
+/* Tab 切换条（编排任务 / 循环任务） */
+.orch-sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border, #333);
+  flex-shrink: 0;
+}
+.orch-sidebar-tab {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.orch-sidebar-tab:hover {
+  color: var(--text-main, #e0e0e0);
+  background: rgba(255, 255, 255, 0.03);
+}
+.orch-sidebar-tab.active {
+  color: var(--accent, #6c8cff);
+  border-bottom-color: var(--accent, #6c8cff);
+  background: rgba(108, 140, 255, 0.05);
+}
+.orch-icon-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border, #333);
+  background: var(--bg-elevated, #2a2a2a);
+  color: var(--text-main, #e0e0e0);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.orch-icon-btn:hover {
+  border-color: var(--accent, #6c8cff);
+  color: var(--accent, #6c8cff);
+}
+
+/* ── 任务列表（窄） ───────────────────────────────── */
+.orch-task-list-v13 {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+.orch-task-item-v13 {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 3px;
+  border: 1px solid transparent;
+}
+.orch-task-item-v13:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.orch-task-item-v13.active {
+  background: rgba(108, 140, 255, 0.12);
+  border-color: rgba(108, 140, 255, 0.3);
+}
+.orch-task-item-v13.running {
+  border-left: 3px solid #6c8cff;
+}
+.orch-task-icon {
+  font-size: 14px;
+  line-height: 1;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.orch-task-body {
+  flex: 1;
+  min-width: 0;
+}
+.orch-task-title {
+  font-size: 12px;
+  color: var(--text-main, #e0e0e0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+.orch-task-meta {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+}
+.orch-task-tpl {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.orch-task-status.status-running { color: #6c8cff; }
+.orch-task-status.status-success { color: #4ade80; }
+.orch-task-status.status-failed { color: #ef4444; }
+.orch-task-status.status-paused { color: #f59e0b; }
+
+/* ── 详情视图 ─────────────────────────────────────── */
+.orch-detail-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.orch-detail-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted, #888);
+}
+
+/* ── 横向布局：目标 + 基本信息 ────────────────────── */
+.orch-detail-header-h {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-elevated, #2a2a2a);
+  border-radius: 8px;
+  border: 1px solid var(--border, #333);
+  flex-wrap: wrap;
+}
+.orch-detail-info-h {
+  flex: 1;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.orch-detail-goal-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.orch-detail-goal-h .orch-detail-goal-label {
+  font-size: 16px;
+  white-space: nowrap;
+}
+.orch-detail-goal-h .orch-detail-goal-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.orch-detail-meta-h {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.orch-detail-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.orch-detail-meta-label {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+.orch-detail-header-h .orch-detail-controls {
+  flex-shrink: 0;
+}
+.orch-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--bg-elevated, #2a2a2a);
+  border-radius: 8px;
+  border: 1px solid var(--border, #333);
+}
+.orch-detail-goal {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.orch-detail-goal-label {
+  font-size: 13px;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+}
+.orch-detail-goal-text {
+  font-size: 14px;
+  color: var(--text-main, #e0e0e0);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.orch-detail-controls {
+  flex-shrink: 0;
+}
+
+/* ════════════════════════════════════════════════════════════
+ * v2 融合版 TemplateEditor 样式
+ * 替代原 TemplateManagerDialog + 高级模式 TemplateBrowser 详情
+ * ════════════════════════════════════════════════════════════ */
+
+/* ── 主容器 ─────────────────────────────────────────── */
+.tmpl-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* ── 顶部工具栏 ── */
+.tmpl-editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #333);
+}
+.tmpl-back-btn {
+  background: transparent;
+  border: 1px solid var(--border, #444);
+  color: var(--text-main, #e0e0e0);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.tmpl-back-btn:hover { background: var(--bg-hover, #2a2a2a); }
+.tmpl-basic-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.tmpl-input-icon { width: 36px !important; text-align: center; }
+.tmpl-input-name { flex: 1; min-width: 120px; }
+.tmpl-input-kind { width: 110px !important; }
+.tmpl-input-desc { flex: 2; min-width: 160px; }
+.tmpl-apply-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tmpl-input-goal { flex: 2; min-width: 180px; }
+.tmpl-input-testcmd { flex: 1; min-width: 120px; }
+
+/* ── 三栏布局 ── */
+.tmpl-editor-split {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+.tmpl-editor-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+}
+.tmpl-editor-col-stagelist {
+  flex: 0 0 440px;
+  width: 440px;
+  overflow: hidden;
+}
+.tmpl-editor-col-taskdetail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.tmpl-editor-col-graph {
+  flex: 0 0 600px;
+  width: 600px;
+  overflow-y: auto;
+}
+
+/* ── 拖拽分隔条 ── */
+.tmpl-col-resizer {
+  flex: 0 0 6px;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+}
+.tmpl-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  background: var(--border, #333);
+  transition: background 0.15s;
+}
+.tmpl-col-resizer:hover::after,
+.tmpl-col-resizer:active::after {
+  background: var(--accent, #4a9eff);
+  width: 3px;
+}
+
+/* ── 列表视图（模板选择） ── */
+.orch-tpl-list-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 18px;
+  box-sizing: border-box;
+}
+.orch-tpl-list-head {
+  margin-bottom: 14px;
+}
+.orch-tpl-list-head h3 { margin: 0 0 4px; }
+.orch-tpl-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.orch-tpl-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.orch-tpl-list-view .orch-browser-card {
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.orch-tpl-list-view .orch-browser-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.orch-browser-card-tag.inuse {
+  background: #4caf50;
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+[data-theme="light"] .orch-browser-card-tag.inuse { background: #2e7d32; }
+
+/* ── 阶段列表项（左栏） ── */
+.tmpl-stages-section { height: 100%; }
+.tmpl-stages-section .tmpl-editor-section-body { flex: 1; overflow-y: auto; }
+.tmpl-stage-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 4px;
+  transition: background 0.1s;
+}
+.tmpl-stage-item:hover { background: var(--bg-hover, #2a2a2a); }
+.tmpl-stage-item.active {
+  background: var(--bg-active, #2d2d44);
+  border-color: var(--accent, #4a9eff);
+}
+.tmpl-stage-item.entry { border-left: 3px solid #4a9eff; }
+.tmpl-stage-item.terminal { border-right: 3px solid #f5a623; }
+.tmpl-stage-num {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  min-width: 22px;
+}
+.tmpl-stage-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.tmpl-stage-title {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tmpl-stage-ops {
+  display: none;
+  gap: 2px;
+}
+.tmpl-stage-item:hover .tmpl-stage-ops { display: flex; }
+.tmpl-stage-ops .tmpl-btn-icon {
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+/* ── 阶段详情面板（中栏） ── */
+.tmpl-task-detail {
+  background: var(--bg-card, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 12px;
+}
+.tmpl-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.tmpl-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tmpl-detail-head .tmpl-task-title-input { flex: 1; min-width: 120px; }
+.tmpl-detail-head .tmpl-task-kind-select { width: 130px; }
+
+/* ── 键值对编辑器 ── */
+.tmpl-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tmpl-kv-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tmpl-input-kv-key { flex: 1; }
+.tmpl-input-kv-val { flex: 1.5; }
+
+.tmpl-flow-section { height: 100%; }
+.tmpl-flow-section .wf-flow-graph {
+  max-height: none;
+}
+
+/* ── Section 通用 ───────────────────────────────────── */
+.tmpl-editor-section {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 8px;
+  background: var(--bg-elevated, #1f1f1f);
+  overflow: hidden;
+}
+.tmpl-editor-section-h {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  background: rgba(255, 255, 255, 0.02);
+}
+.tmpl-editor-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  background: rgba(255, 255, 255, 0.02);
+}
+.tmpl-editor-section-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tmpl-editor-section-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── 基本信息网格 ──────────────────────────────────── */
+.tmpl-basic-grid {
+  display: grid;
+  grid-template-columns: 80px 1fr 140px;
+  gap: 10px 12px;
+  align-items: end;
+}
+.tmpl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.tmpl-field-grow {
+  flex: 1;
+}
+.tmpl-field-full {
+  grid-column: 1 / -1;
+}
+.tmpl-field label {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  font-weight: 500;
+}
+.tmpl-input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg-base, #1a1a1a);
+  color: var(--text-main, #e0e0e0);
+  border: 1px solid var(--border, #333);
+  border-radius: 5px;
+  outline: none;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.tmpl-input:focus {
+  border-color: var(--accent, #6c8cff);
+}
+.tmpl-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.tmpl-input-mono {
+  font-family: 'Cascadia Code', 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+}
+.tmpl-input-narrow {
+  max-width: 100px;
+}
+textarea.tmpl-input {
+  resize: vertical;
+  min-height: 50px;
+}
+
+/* ── 按钮 ──────────────────────────────────────────── */
+.tmpl-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  border: 1px solid var(--border, #333);
+  background: var(--bg-elevated, #2a2a2a);
+  color: var(--text-main, #e0e0e0);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tmpl-btn:hover:not(:disabled) {
+  border-color: var(--accent, #6c8cff);
+}
+.tmpl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tmpl-btn-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+.tmpl-btn-primary {
+  background: var(--accent, #6c8cff);
+  border-color: var(--accent, #6c8cff);
+  color: #fff;
+}
+.tmpl-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.tmpl-btn-danger {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+.tmpl-btn-danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: #ff6b6b;
+}
+.tmpl-btn-icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  border: 1px solid var(--border, #333);
+  background: transparent;
+  color: var(--text-muted, #888);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.tmpl-btn-icon:hover:not(:disabled) {
+  border-color: var(--accent, #6c8cff);
+  color: var(--accent, #6c8cff);
+}
+.tmpl-btn-icon:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.tmpl-btn-icon-danger:hover:not(:disabled) {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+/* ── 任务卡片 ──────────────────────────────────────── */
+.tmpl-task-card {
+  border: 1px solid var(--border, #2a2a2a);
+  border-left: 3px solid #4a9eff;
+  border-radius: 6px;
+  background: var(--bg-base, #1a1a1a);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.tmpl-task-card.entry {
+  border-left-color: #4ade80;
+}
+.tmpl-task-card.terminal {
+  border-left-color: #ffd700;
+}
+.tmpl-task-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.tmpl-task-num {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  font-weight: 600;
+  min-width: 24px;
+}
+.tmpl-task-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  color: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tmpl-task-title-input {
+  flex: 1;
+  min-width: 100px;
+}
+
+/* ── 浅色主题覆盖 ─────────────────────────────────── */
+[data-theme="light"] .unified-template-dialog {
+  background: #ffffff !important;
+  border: 1px solid #d0d0e0 !important;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.2) !important;
+}
+[data-theme="light"] .unified-template-header {
+  border-bottom-color: #e0e0e0;
+}
+[data-theme="light"] .unified-template-info-bar {
+  background: #f5f6fa;
+  border-bottom-color: #e0e0e0;
+}
+.tmpl-task-kind-select {
+  width: auto;
+  min-width: 120px;
+}
+.tmpl-task-card-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tmpl-task-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tmpl-task-row .tmpl-field {
+  flex: 1;
+  min-width: 120px;
+}
+.tmpl-task-deps {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ── 折叠区：高级配置 ──────────────────────────────── */
+.tmpl-task-advanced {
+  border-top: 1px dashed var(--border, #2a2a2a);
+  padding: 12px;
+  background: rgba(108, 140, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tmpl-adv-h {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #6c8cff);
+}
+.tmpl-adv-h-inline {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+}
+.tmpl-adv-section {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 5px;
+  padding: 10px;
+  background: var(--bg-base, #161616);
+}
+.tmpl-adv-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tmpl-adv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+/* ── 标签 ──────────────────────────────────────────── */
+.tmpl-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.tmpl-tag.entry {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+.tmpl-tag.terminal {
+  background: rgba(255, 215, 0, 0.2);
+  color: #ffd700;
+}
+.tmpl-tag.dep {
+  background: rgba(108, 140, 255, 0.15);
+  color: #6c8cff;
+}
+.tmpl-tag.fallback {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+.tmpl-tag.adv {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+/* ── 复选框 ────────────────────────────────────────── */
+.tmpl-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-main, #e0e0e0);
+}
+.tmpl-checkbox input {
+  margin: 0;
+}
+.tmpl-inline-checkbox {
+  display: inline-flex;
+}
+.tmpl-inline {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* ── 列表（advisors/params/edges/cases） ─────────── */
+.tmpl-advisors-list,
+.tmpl-params-list,
+.tmpl-edges-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tmpl-advisor-row,
+.tmpl-param-row,
+.tmpl-edge-row,
+.tmpl-case-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tmpl-advisor-row .tmpl-input,
+.tmpl-param-row .tmpl-input,
+.tmpl-edge-row .tmpl-input,
+.tmpl-case-row .tmpl-input {
+  flex: 1;
+  min-width: 80px;
+}
+
+/* ── 折叠按钮 ──────────────────────────────────────── */
+.tmpl-collapse-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-main, #e0e0e0);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.tmpl-collapse-btn:hover {
+  color: var(--accent, #6c8cff);
+}
+
+/* ── 应用到项目 ────────────────────────────────────── */
+.tmpl-apply-row {
+  display: flex;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.tmpl-apply-row-center {
+  align-items: center;
+  justify-content: space-between;
+}
+.tmpl-apply-ok {
+  color: #4ade80;
+  font-size: 11px;
+}
+.tmpl-apply-err {
+  color: #ef4444;
+  font-size: 11px;
+}
+
+/* ── 操作栏 ────────────────────────────────────────── */
+.tmpl-editor-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border, #2a2a2a);
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-elevated, #1f1f1f);
+}
+
+/* ── 提示文字 ──────────────────────────────────────── */
+.tmpl-muted {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+.tmpl-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted, #888);
+  font-size: 12px;
+}
+.tmpl-empty-inline {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ── 模板列表分组（融合版）────────────────────────── */
+.orch-template-group {
+  margin-bottom: 8px;
+}
+.orch-template-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.orch-template-group-icon {
+  font-size: 12px;
+}
+.orch-template-group-label {
+  flex: 1;
+}
+.orch-template-group-count {
+  opacity: 0.6;
+}
+
+/* ── 模板卡片（融合版：内置/自定义 标签）──────────── */
+.orch-browser-card.builtin {
+  border-left: 3px solid #6c8cff;
+}
+.orch-browser-card.custom {
+  border-left: 3px solid #4ade80;
+}
+.orch-browser-card-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  margin-left: auto;
+}
+.orch-browser-card-tag.builtin {
+  background: rgba(108, 140, 255, 0.2);
+  color: #6c8cff;
+}
+.orch-browser-card-tag.custom {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+/* ── 新建模板按钮 ──────────────────────────────────── */
+.orch-new-template-btn {
+  margin: 8px 12px;
+  padding: 8px 12px;
+  background: var(--accent, #6c8cff);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.orch-new-template-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* ── 当前阶段内容面板（流程图下方）────────────────── */
+.tmpl-current-stage {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  background: var(--bg-card, #1e1e1e);
+}
+.tmpl-current-stage-h {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #6c8cff);
+}
+.tmpl-current-stage-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #e0e0e0);
+  margin-bottom: 4px;
+}
+.tmpl-current-stage-desc {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--text-muted, #aaa);
+  line-height: 1.5;
+}
+.tmpl-current-stage-steps {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 11px;
+  color: var(--text-main, #e0e0e0);
+  line-height: 1.7;
+}
+.tmpl-current-stage-steps li {
+  list-style: decimal;
+}
+.tmpl-current-stage-io {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border, #2a2a2a);
+}
+.tmpl-io-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+}
+.tmpl-io-label {
+  color: var(--text-muted, #888);
+  font-weight: 600;
+  margin-right: 2px;
+}
+.tmpl-io-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(108, 140, 255, 0.12);
+  color: var(--text-main, #e0e0e0);
+  font-size: 10px;
+  border: 1px solid rgba(108, 140, 255, 0.25);
+  cursor: help;
+}
+
+/* ── 输入/输出列表编辑器 ──────────────────────────── */
+.tmpl-io-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tmpl-io-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 5px;
+  background: var(--bg-base, #161616);
+}
+.tmpl-input-io-type {
+  width: 110px;
+  flex: 0 0 110px;
+}
+.tmpl-input-io-name {
+  flex: 1;
+  min-width: 90px;
+}
+.tmpl-input-io-path {
+  flex: 2;
+  min-width: 140px;
+}
+.tmpl-input-io-desc {
+  flex: 1 1 100%;
+  min-width: 120px;
+  margin-top: 2px;
+}
+.tmpl-io-required {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tmpl-io-required input {
+  margin: 0;
+}
+
+/* ── 测试操作面板（基本信息中）────────────────────── */
+.tmpl-basic-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.tmpl-test-panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tmpl-btn-test {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border, #333);
+  background: rgba(74, 222, 128, 0.08);
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.4);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tmpl-btn-test:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.18);
+  border-color: #4ade80;
+}
+.tmpl-btn-test.sim {
+  background: rgba(245, 158, 11, 0.08);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+.tmpl-btn-test.sim:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: #f59e0b;
+}
+.tmpl-btn-test:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tmpl-test-result {
+  margin-top: 8px;
+  padding: 8px 26px 8px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'Cascadia Code', 'Consolas', 'Monaco', monospace;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+  line-height: 1.6;
+  position: relative;
+}
+.tmpl-test-result.ok {
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  color: #4ade80;
+}
+.tmpl-test-result.fail {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+.tmpl-test-result.info {
+  background: rgba(108, 140, 255, 0.08);
+  border: 1px solid rgba(108, 140, 255, 0.3);
+  color: #6c8cff;
+}
+.tmpl-test-result-line {
+  display: block;
+}
+.tmpl-test-result-line.warn {
+  color: #f59e0b;
+}
+.tmpl-test-result-line.err {
+  color: #ef4444;
+}
+.tmpl-test-result-line.ok {
+  color: #4ade80;
+}
+
