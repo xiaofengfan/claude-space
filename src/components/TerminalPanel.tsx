@@ -118,6 +118,17 @@ export const TerminalPanel: React.FC<Props> = ({ cwd, sessionId, visible, theme,
         }).catch(() => { /* clipboard read denied */ })
         return false
       }
+      // Ctrl+C → 有选区时复制（否则传给 shell 作为中断）
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'C' || e.key === 'c')) {
+        const selection = term.getSelection()
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {})
+          term.clearSelection()
+          return false // 阻止默认行为（不发送 SIGINT）
+        }
+        // 无选区：放行给 PTY（作为中断信号）
+        return true
+      }
       // Ctrl+Insert → 复制
       if (e.ctrlKey && e.key === 'Insert') {
         const selection = term.getSelection()

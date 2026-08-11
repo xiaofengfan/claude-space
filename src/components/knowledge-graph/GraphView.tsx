@@ -68,7 +68,7 @@ export function GraphView({ nodes: rawNodes, edges: rawEdges, onNodeClick }: Pro
   const [simEdges, setSimEdges] = useState<GraphEdgeData[]>([]);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
-  const [dragging, setDragging] = useState<{ id: string; startX: number; startY: number } | null>(null);
+  const [dragging, setDragging] = useState<{ id: string; startX: number; startY: number; nodeX: number; nodeY: number } | null>(null);
   const [panning, setPanning] = useState<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const simRef = useRef<ReturnType<typeof forceSimulation> | null>(null);
   const [width, setWidth] = useState(800);
@@ -140,8 +140,8 @@ export function GraphView({ nodes: rawNodes, edges: rawEdges, onNodeClick }: Pro
       const dy = (e.clientY - dragging.startY) / transform.k;
       const node = simNodes.find((n) => n.id === dragging.id);
       if (node) {
-        node.fx = (node.x ?? 0) + dx - (node.x ?? 0) + (node.x ?? 0);
-        node.fy = (node.y ?? 0) + dy - (node.y ?? 0) + (node.y ?? 0);
+        node.fx = dragging.nodeX + dx;
+        node.fy = dragging.nodeY + dy;
         simRef.current?.alpha(0.3).restart();
       }
     };
@@ -250,7 +250,7 @@ export function GraphView({ nodes: rawNodes, edges: rawEdges, onNodeClick }: Pro
                 onClick={() => onNodeClick?.(node)}
                 onMouseDown={(e) => {
                   e.stopPropagation();
-                  setDragging({ id: node.id, startX: e.clientX, startY: e.clientY });
+                  setDragging({ id: node.id, startX: e.clientX, startY: e.clientY, nodeX: node.x ?? 0, nodeY: node.y ?? 0 });
                 }}
               >
                 <circle

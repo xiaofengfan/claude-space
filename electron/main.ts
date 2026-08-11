@@ -1703,17 +1703,16 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
         existing.kill()
         sshTerminals.delete(opts.serverId)
       }
-      const term = new SshTerminalProcess(opts.serverId, sshService)
+      const term = new SshTerminalProcess({ serverId: opts.serverId, sshService, cols: opts.cols || 120, rows: opts.rows || 40 })
       sshTerminals.set(opts.serverId, term)
       activeSshTerminal = term
-      term.on('data', (data: string) => {
-        const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
-        win?.webContents.send('ssh:terminal-data', data)
+      term.on('terminal-data', (data: string) => {
+        for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('ssh:terminal-data', data) } catch {} }
       })
       term.on('status', (status: any) => {
         for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send('ssh:terminal-status', status) } catch {} }
       })
-      term.start(opts.cols || 120, opts.rows || 40)
+      term.start()
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
@@ -1733,6 +1732,17 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
     return sshService.execCommand(opts.serverId, opts.command, opts.timeoutMs)
   })
 
+  /** ssh:terminal-input 远程终端用户输入（fire-and-forget） */
+  ipcMain.on('ssh:terminal-input', (_event, data: string) => {
+    if (activeSshTerminal) activeSshTerminal.write(data)
+  })
+
+  /** ssh:terminal-resize 远程终端尺寸调整 */
+  ipcMain.on('ssh:terminal-resize', (_event, opts: { cols: number; rows: number }) => {
+    const term = activeSshTerminal
+    if (term && opts.cols && opts.rows) term.resize(opts.cols, opts.rows)
+  })
+
   /** ssh:deploy 部署项目 */
   ipcMain.handle('ssh:deploy', async (_event, opts: { projectPath: string; deployTargetId: string }) => {
     const settings = loadSettings()
@@ -1743,10 +1753,27 @@ function migrateActiveModel(raw: AppSettings, claudeConfig?: { defaultModel: str
     })
   })
 
-  // ── 记忆管理（项目隔离）────────────────────────────────
+  // ── 记忆管理（项目隔离 + 工作区根兜底）────────────────
   function getMemoryDir(projectPath: string): string {
-    const encoded = encodeClaudePath(projectPath.replace(/\\/g, '/'))
-    return path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
+    if (projectPath) {
+      const encoded = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      const projMemory = path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
+      // 优先使用项目自身记忆目录（已有真实文档时）
+      if (fs.existsSync(projMemory)) return projMemory
+    }
+    // 兜底：回退到当前工作区根目录的记忆（Claude Code 把 claude-space 项目记忆挂在工作区根名下）
+    const root = getActiveWorkspaceRoot() || getWorkspaceRoot()
+    if (root) {
+      const rootEncoded = encodeClaudePath(root.replace(/\\/g, '/'))
+      const rootMemory = path.join(CLAUDE_HOME, 'projects', rootEncoded, 'memory')
+      if (fs.existsSync(rootMemory)) return rootMemory
+    }
+    // 最终兜底：仍然用项目自身目录（读不到时下方案会 mkdir 重建）
+    if (projectPath) {
+      const encoded = encodeClaudePath(projectPath.replace(/\\/g, '/'))
+      return path.join(CLAUDE_HOME, 'projects', encoded, 'memory')
+    }
+    return path.join(getWorkspaceRoot(), '.claude', 'memory')
   }
 
   ipcMain.handle('memory:list', async (_event, projectPath: string) => {

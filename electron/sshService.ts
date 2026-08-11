@@ -429,4 +429,65 @@ export class SshService extends EventEmitter {
       })
     })
   }
+
+  // ── 项目部署 ─────────────────────────────────────────
+
+  /**
+   * 部署项目到远程服务器：
+   * 1. 可选执行 preDeployCommands（在远程）
+   * 2. 递归上传本地目录（excludePatterns 过滤）
+   * 3. 可选执行 postDeployCommands（在远程）
+   */
+  async deploy(
+    projectPath: string,
+    target: DeployTarget,
+    onProgress: (msg: string) => void = () => {}
+  ): Promise<{ success: boolean; deployId?: string; error?: string }> {
+    const serverId = target.sshServerId
+    try {
+      // 连接检查
+      const status = this.getStatus(serverId)
+      if (!status.connected) {
+        return { success: false, error: `服务器 ${serverId} 未连接，请先在 SSH 面板建立连接` }
+      }
+
+      const deployId = 'deploy-' + Date.now().toString(36)
+
+      // 1. 前置命令
+      for (const cmd of target.preDeployCommands || []) {
+        if (!cmd.trim()) continue
+        onProgress(`执行前置命令: ${cmd}`)
+        const r = await this.execCommand(serverId, cmd, 60000)
+        if (!r.success) {
+          onProgress(`前置命令失败: ${r.stderr || r.error || cmd}`)
+          return { success: false, deployId, error: `前置命令失败: ${r.stderr || r.error || cmd}` }
+        }
+      }
+
+      // 2. 递归上传
+      if (!projectPath || !target.remotePath) {
+        return { success: false, deployId, error: '缺少本地项目路径或远程目标路径' }
+      }
+      onProgress(`开始上传 ${projectPath} → ${target.remotePath}`)
+      const up = await this.uploadDirectory(serverId, projectPath, target.remotePath, target.excludePatterns || [], onProgress)
+      if (!up.success) return { success: false, deployId, error: `上传失败: ${up.error}` }
+      onProgress(`上传完成，共 ${up.uploaded} 个文件`)
+
+      // 3. 后置命令
+      for (const cmd of target.postDeployCommands || []) {
+        if (!cmd.trim()) continue
+        onProgress(`执行后置命令: ${cmd}`)
+        const r = await this.execCommand(serverId, cmd, 60000)
+        if (!r.success) {
+          onProgress(`后置命令失败: ${r.stderr || r.error || cmd}`)
+          return { success: false, deployId, error: `后置命令失败: ${r.stderr || r.error || cmd}` }
+        }
+      }
+
+      onProgress('部署完成 ✓')
+      return { success: true, deployId }
+    } catch (err: any) {
+      return { success: false, error: err?.message || '部署失败' }
+    }
+  }
 }

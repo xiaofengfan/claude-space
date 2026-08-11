@@ -874,7 +874,7 @@ function TaskDetailPanel({ task, allTasks, entry, terminals, readOnly, onUpdate 
 
         {/* 输入参数（task.params：输入变量）*/}
         <div className="tmpl-field tmpl-field-full">
-          <label>� 输入参数 (params)</label>
+          <label>🧾 输入参数 (params)</label>
           <ParamsKeyValueEditor
             params={task.params || {}}
             onChange={params => onUpdate({ params })}
